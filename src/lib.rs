@@ -8,6 +8,9 @@ pub mod client;
 
 mod sha256;
 
+#[cfg(feature = "wgpu")]
+pub mod wgpu;
+
 const SWAP_DWORD_BYTE_ORDER: [usize; 64] = [
     3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12, 19, 18, 17, 16, 23, 22, 21, 20, 27, 26,
     25, 24, 31, 30, 29, 28, 35, 34, 33, 32, 39, 38, 37, 36, 43, 42, 41, 40, 47, 46, 45, 44, 51, 50,
@@ -17,14 +20,14 @@ const SWAP_DWORD_BYTE_ORDER: [usize; 64] = [
 #[repr(align(64))]
 struct Align64<T>(T);
 
-impl Deref for Align64<[u32; 16]> {
-    type Target = [u32; 16];
+impl<T> Deref for Align64<T> {
+    type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl DerefMut for Align64<[u32; 16]> {
+impl<T> DerefMut for Align64<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -46,6 +49,10 @@ pub fn build_prefix<W: std::io::Write>(
     Ok(())
 }
 
+pub const fn decompose_blocks(inp: &[u32; 16]) -> &[u8; 64] {
+    unsafe { core::mem::transmute(inp) }
+}
+
 pub const fn decompose_blocks_mut(inp: &mut [u32; 16]) -> &mut [u8; 64] {
     unsafe { core::mem::transmute(inp) }
 }
@@ -64,12 +71,14 @@ pub fn compute_target(difficulty_factor: u32) -> u128 {
 }
 
 pub trait Solver {
+    type Ctx;
+
     // construct a new solver instance from a prefix
     // prefix is the message that precedes the N in the single block of SHA-256 message
     // in mCaptcha it is the bincode serialized message then immediately the salt
     //
     // returns None when this solver cannot solve the prefix
-    fn new(prefix: &[u8]) -> Option<Self>
+    fn new(ctx: Self::Ctx, prefix: &[u8]) -> Option<Self>
     where
         Self: Sized;
 
@@ -85,22 +94,27 @@ pub trait Solver {
 // There are currently 6 out of 64 possible message length remainders that cross block boundaries,
 // this is a limitation of the current implementation, but the other >90% of the cases are covered.
 //
-// This is an adversarial implementation, so the only metric is throughput.
+// The main limitations are:
+// 1. No AVX2 fallback for more common hardware
+// 2. Doesn't handle ~10% of cases where message crosses block boundaries,
+// this is a periodic problem, using longer salt do not automatically mean immunity.
 #[derive(Debug, Clone)]
 pub struct SingleBlockSolver {
     // the SHA-256 state A-H for all prefix bytes
-    prefix_state: [u32; 8],
+    pub(crate) prefix_state: [u32; 8],
 
     // the message template for the final block
-    message: [u32; 16],
+    pub(crate) message: [u32; 16],
 
-    digit_index: usize,
+    pub(crate) digit_index: usize,
 
-    nonce_addend: u64,
+    pub(crate) nonce_addend: u64,
 }
 
 impl Solver for SingleBlockSolver {
-    fn new(mut prefix: &[u8]) -> Option<Self> {
+    type Ctx = ();
+
+    fn new(_ctx: Self::Ctx, mut prefix: &[u8]) -> Option<Self> {
         // construct the message buffer
         let mut prefix_state = [
             0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
@@ -302,7 +316,7 @@ mod tests {
             let config = pow_sha256::Config { salt: SALT.into() };
             const DIFFICULTY: u32 = 5000;
 
-            let solver = SingleBlockSolver::new(&concatenated_prefix);
+            let solver = SingleBlockSolver::new((), &concatenated_prefix);
             let Some(mut solver) = solver else {
                 eprintln!("solver is None for phrase_len: {}", phrase_len);
                 cannot_solve += 1;

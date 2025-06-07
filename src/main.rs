@@ -8,8 +8,9 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
-use simd_mcaptcha_solver::{SingleBlockSolver, Solver, client::solve_mcaptcha, compute_target};
 use tokio::task::JoinSet;
+
+use simd_mcaptcha_solver::{SingleBlockSolver, Solver, client::solve_mcaptcha, compute_target};
 
 #[derive(Parser)]
 struct Cli {
@@ -31,6 +32,10 @@ enum SubCommand {
 
         #[clap(long)]
         do_control: bool,
+
+        #[cfg(feature = "wgpu")]
+        #[clap(long)]
+        use_gpu: bool,
     },
     Profile {
         #[clap(short, long, default_value = "10000000")]
@@ -54,7 +59,7 @@ async fn main() {
             println!("entering busy loop, attach debugger to this process");
             for prefix in 0..u64::MAX {
                 let prefix = prefix.to_ne_bytes();
-                let mut solver = SingleBlockSolver::new(&prefix).expect("solver is None");
+                let mut solver = SingleBlockSolver::new((), &prefix).expect("solver is None");
                 let target = compute_target(difficulty);
                 let target_bytes = target.to_be_bytes();
                 let target_u32s = core::array::from_fn(|i| {
@@ -86,7 +91,8 @@ async fn main() {
             });
             let begin = Instant::now();
             for i in 0..10u64 {
-                let mut solver = SingleBlockSolver::new(&i.to_ne_bytes()).expect("solver is None");
+                let mut solver =
+                    SingleBlockSolver::new((), &i.to_ne_bytes()).expect("solver is None");
                 let inner_begin = Instant::now();
                 let (nonce, result) = solver.solve(target_u32s).expect("solver failed");
                 eprintln!(
@@ -130,6 +136,8 @@ async fn main() {
             site_key,
             n_workers,
             do_control,
+            #[cfg(feature = "wgpu")]
+            use_gpu,
         } => {
             eprintln!("You are hitting host {}", host);
             let pool = rayon::ThreadPoolBuilder::new()
@@ -137,6 +145,7 @@ async fn main() {
                 .build()
                 .unwrap();
             let pool = Arc::new(pool);
+
             if do_control {
                 let host = host.clone();
                 let site_key = site_key.clone();
@@ -184,8 +193,65 @@ async fn main() {
                 let failed_clone = failed.clone();
                 let site_key_clone = site_key.clone();
                 let pool = pool.clone();
+
+                #[cfg(feature = "wgpu")]
+                if use_gpu {
+                    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+                        backends: wgpu::Backends::VULKAN,
+                        ..Default::default()
+                    });
+                    let adapter = instance
+                        .request_adapter(&wgpu::RequestAdapterOptions {
+                            power_preference: wgpu::PowerPreference::HighPerformance,
+                            compatible_surface: None,
+                            force_fallback_adapter: false,
+                        })
+                        .await
+                        .unwrap();
+                    let mut features = wgpu::Features::empty();
+                    features.insert(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS);
+                    let (device, queue) = adapter
+                        .request_device(&wgpu::DeviceDescriptor {
+                            label: None,
+                            required_features: features,
+                            required_limits: wgpu::Limits::default(),
+                            memory_hints: wgpu::MemoryHints::Performance,
+                            trace: wgpu::Trace::Off,
+                        })
+                        .await
+                        .unwrap();
+                    let mut ctx =
+                        simd_mcaptcha_solver::wgpu::VulkanDeviceContext::new(device, queue);
+
+                    tokio::spawn(async move {
+                        let client = reqwest::ClientBuilder::new().build().unwrap();
+                        loop {
+                            match simd_mcaptcha_solver::client::solve_mcaptcha_wgpu(
+                                &mut ctx,
+                                &client,
+                                &host_clone,
+                                &site_key_clone,
+                                true,
+                            )
+                            .await
+                            {
+                                Ok(_) => {
+                                    succeeded_clone.fetch_add(1, Ordering::Relaxed);
+                                }
+                                Err(e) => {
+                                    eprintln!("wgpu error: {:?}", e);
+                                    failed_clone.fetch_add(1, Ordering::Relaxed);
+                                }
+                            }
+                        }
+                    });
+
+                    continue;
+                }
+
                 tokio::spawn(async move {
                     let client = reqwest::ClientBuilder::new().build().unwrap();
+
                     loop {
                         match solve_mcaptcha(&pool, &client, &host_clone, &site_key_clone, true)
                             .await

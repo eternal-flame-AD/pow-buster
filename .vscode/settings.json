@@ -2,6 +2,7 @@
     "rust-analyzer.cargo.features": [
         "client",
         "cli",
-        "official"
+        "official",
+        "wgpu"
     ]
 }
