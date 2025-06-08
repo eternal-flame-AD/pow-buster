@@ -13,7 +13,7 @@ browser.hps <- 5e6 / mean(c(
 hps <- tribble(
     ~environment, ~hps,
     "official.browser", browser.hps,
-    "simd.avx512.1thread", 5e7 / 0.67567,
+    "simd.avx512.1thread", 5e7 / 0.59855,
     "official.autovectorized.1thread", 5e7 / 2.6573,
     "official.generic.x86.1thread", 5e7 / 4.696,
     "gpu.wgpu (unoptimized)", 5e7 / 0.22723,
