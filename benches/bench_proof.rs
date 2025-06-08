@@ -76,10 +76,10 @@ pub fn bench_proof(c: &mut Criterion) {
                 })
             },
         );
-        counter = 0;
         #[cfg(feature = "wgpu")]
         {
             use simd_mcaptcha_solver::wgpu::VulkanDeviceContext;
+            counter = 0;
 
             let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
                 backends: wgpu::Backends::VULKAN,

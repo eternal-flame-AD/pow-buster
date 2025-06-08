@@ -1,7 +1,12 @@
 #![doc = include_str!("../README.md")]
 #![feature(stdarch_x86_avx512)]
 use core::arch::x86_64::*;
+use core::hint::unreachable_unchecked;
 use std::ops::{Deref, DerefMut};
+
+use generic_array::typenum::{
+    U0, U1, U2, U3, U4, U5, U6, U7, U8, U9, U10, U11, U12, U13, U14, U15, Unsigned,
+};
 
 #[cfg(feature = "client")]
 pub mod client;
@@ -202,100 +207,171 @@ impl Solver for SingleBlockSolver {
         // the official default difficulty is 5e6, so we design for 5e7
         // pgeom(64e7, 1/5e7, lower=F) = 2.76e-06
         // pgeom(16e7, 1/5e7, lower=F) = 0.0608, which is too much so we need the prefix to change as well
-        const KEYSPACE_SIZE: u64 = 64 * 10u64.pow(7);
 
         // pre-compute an OR to apply to the message to add the lane ID
         let lane_id_0_word_idx = self.digit_index / 4;
-        let lane_id_0_byte_idx = self.digit_index % 4;
         let lane_id_1_word_idx = (self.digit_index + 1) / 4;
-        let lane_id_1_byte_idx = (self.digit_index + 1) % 4;
-        // this string is longer than we need but good enough for all intents and purposes
-        let lane_id_0_or_value: [u32; 4 * 16] = core::array::from_fn(|i| {
-            (b"111111111122222222223333333333444444444455555555556666666666777777777788888888889999999999"[i] as u32) << ((3 - lane_id_0_byte_idx) * 8) as u32
-        });
-        let lane_id_0_or_value_v: [__m512i; 4] = core::array::from_fn(|i| unsafe {
-            _mm512_loadu_epi32(lane_id_0_or_value.as_ptr().add(i * 16).cast())
-        });
-        let lane_id_1_or_value: [u32; 4 * 16] = core::array::from_fn(|i| {
-            (b"012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"[i] as u32) << ((3 - lane_id_1_byte_idx) * 8) as u32
-        });
-        let lane_id_1_or_value_v: [__m512i; 4] = core::array::from_fn(|i| unsafe {
-            _mm512_loadu_epi32(lane_id_1_or_value.as_ptr().add(i * 16).cast())
-        });
 
-        let mut blocks: [__m512i; 16] = core::array::from_fn(|_| unsafe { _mm512_setzero_epi32() });
+        // make sure there are no runtime "register indexing" logic
+        fn solve_inner<DigitWordIdx0: Unsigned, DigitWordIdx1: Unsigned>(
+            this: &mut SingleBlockSolver,
+            target: u32,
+        ) -> Option<(u64, u128)> {
+            let lane_id_0_byte_idx = this.digit_index % 4;
+            let lane_id_1_byte_idx = (this.digit_index + 1) % 4;
+            // this string is longer than we need but good enough for all intents and purposes
+            let lane_id_0_or_value: [u32; 4 * 16] = core::array::from_fn(|i| {
+                (b"111111111122222222223333333333444444444455555555556666666666777777777788888888889999999999"[i] as u32) << ((3 - lane_id_0_byte_idx) * 8) as u32
+            });
 
-        for key in 0..KEYSPACE_SIZE {
-            unsafe {
-                let mut key_copy = key;
-                let prefix_set_index = key_copy % 4;
-                key_copy /= 4;
-                {
-                    let message_bytes = decompose_blocks_mut(&mut self.message);
+            let lane_id_1_or_value: [u32; 4 * 16] = core::array::from_fn(|i| {
+                (b"012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"[i] as u32) << ((3 - lane_id_1_byte_idx) * 8) as u32
+            });
 
-                    for i in 0..7 {
-                        let output = key_copy % 10;
-                        key_copy /= 10;
-                        *message_bytes.get_unchecked_mut(
-                            *SWAP_DWORD_BYTE_ORDER.get_unchecked(self.digit_index + i + 2),
-                        ) = output as u8 + b'0';
+            let mut blocks: [__m512i; 16] =
+                core::array::from_fn(|_| unsafe { _mm512_setzero_epi32() });
+
+            for prefix_set_index in 0..4 {
+                let lane_id_0_or_value_v = unsafe {
+                    _mm512_loadu_epi32(
+                        lane_id_0_or_value
+                            .as_ptr()
+                            .add(prefix_set_index as usize * 16)
+                            .cast(),
+                    )
+                };
+                let lane_id_1_or_value_v = unsafe {
+                    _mm512_loadu_epi32(
+                        lane_id_1_or_value
+                            .as_ptr()
+                            .add(prefix_set_index as usize * 16)
+                            .cast(),
+                    )
+                };
+                for inner_key in 0..10_000_000 {
+                    unsafe {
+                        let mut key_copy = inner_key;
+                        {
+                            let message_bytes = decompose_blocks_mut(&mut this.message);
+
+                            for i in 0..7 {
+                                let output = key_copy % 10;
+                                key_copy /= 10;
+                                *message_bytes.get_unchecked_mut(
+                                    *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + i + 2),
+                                ) = output as u8 + b'0';
+                            }
+                        }
+                        debug_assert_eq!(key_copy, 0);
+
+                        let mut state =
+                            core::array::from_fn(|i| _mm512_set1_epi32(this.prefix_state[i] as _));
+                        for i in 0..16 {
+                            blocks[i] = _mm512_set1_epi32(this.message[i] as _);
+                        }
+                        blocks[DigitWordIdx0::USIZE] = _mm512_or_epi32(
+                            *blocks.get_unchecked(DigitWordIdx0::USIZE),
+                            lane_id_0_or_value_v,
+                        );
+                        blocks[DigitWordIdx1::USIZE] = _mm512_or_epi32(
+                            *blocks.get_unchecked(DigitWordIdx1::USIZE),
+                            lane_id_1_or_value_v,
+                        );
+                        sha256::compress_16block_avx512_without_saved_state(
+                            &mut state,
+                            &mut blocks,
+                        );
+
+                        // the target is big endian interpretation of the first 16 bytes of the hash (A-D) >= target
+                        // however, the largest 32-bit digits is unlikely to be all ones (otherwise a legitimate challenger needs on average >2^(128-32) attempts)
+                        // so we can reduce this into simply testing H[0]
+                        // it would miss about 1/2^32 valid solutions but we don't care, speed and register pressure is everything
+                        let a_is_greater = _mm512_cmpgt_epu32_mask(
+                            _mm512_add_epi32(
+                                state[0],
+                                _mm512_set1_epi32(this.prefix_state[0] as _),
+                            ),
+                            _mm512_set1_epi32(target as _),
+                        );
+                        if a_is_greater != 0 {
+                            let success_lane_idx = _tzcnt_u32(a_is_greater as _) as usize;
+
+                            // reconstruct the actual nonce for this lane
+                            let mut nonce_tail = 0u64;
+                            for i in 0..7 {
+                                nonce_tail *= 10;
+                                let message_bytes = decompose_blocks_mut(&mut this.message);
+                                nonce_tail += (message_bytes
+                                    [SWAP_DWORD_BYTE_ORDER[this.digit_index + i + 2]]
+                                    as u64)
+                                    - b'0' as u64;
+                            }
+
+                            let nonce = (10 + 16 * prefix_set_index + success_lane_idx as u64)
+                                * 10u64.pow(7)
+                                + nonce_tail;
+
+                            let mut result = 0u128;
+                            let mut tmp: Align64<[u32; 16]> = Align64([0; 16]);
+                            for i in 0..4 {
+                                _mm512_store_si512(tmp.as_mut_ptr().cast(), state[i]);
+                                result <<= 32;
+                                result |= (tmp[success_lane_idx].wrapping_add(this.prefix_state[i]))
+                                    as u128;
+                            }
+                            return Some((nonce + this.nonce_addend, result));
+                        }
                     }
-                }
-                debug_assert_eq!(key_copy, 0);
-
-                let mut state =
-                    core::array::from_fn(|i| _mm512_set1_epi32(self.prefix_state[i] as _));
-                for i in 0..16 {
-                    blocks[i] = _mm512_set1_epi32(self.message[i] as _);
-                }
-                blocks[lane_id_0_word_idx] = _mm512_or_epi32(
-                    *blocks.get_unchecked(lane_id_0_word_idx),
-                    lane_id_0_or_value_v[prefix_set_index as usize],
-                );
-                blocks[lane_id_1_word_idx] = _mm512_or_epi32(
-                    *blocks.get_unchecked(lane_id_1_word_idx),
-                    lane_id_1_or_value_v[prefix_set_index as usize],
-                );
-                sha256::compress_16block_avx512_without_saved_state(&mut state, &mut blocks);
-
-                // the target is big endian interpretation of the first 16 bytes of the hash (A-D) >= target
-                // however, the largest 32-bit digits is unlikely to be all ones (otherwise a legitimate challenger needs on average >2^(128-32) attempts)
-                // so we can reduce this into simply testing H[0]
-                // it would miss about 1/2^32 valid solutions but we don't care, speed and register pressure is everything
-                let a_is_greater = _mm512_cmpgt_epu32_mask(
-                    _mm512_add_epi32(state[0], _mm512_set1_epi32(self.prefix_state[0] as _)),
-                    _mm512_set1_epi32(target[0] as _),
-                );
-                if a_is_greater != 0 {
-                    let success_lane_idx = _tzcnt_u32(a_is_greater as _) as usize;
-
-                    // reconstruct the actual nonce for this lane
-                    let mut nonce_tail = 0u64;
-                    for i in 0..7 {
-                        nonce_tail *= 10;
-                        let message_bytes = decompose_blocks_mut(&mut self.message);
-                        nonce_tail +=
-                            (message_bytes[SWAP_DWORD_BYTE_ORDER[self.digit_index + i + 2]] as u64)
-                                - b'0' as u64;
-                    }
-
-                    let nonce = (10 + 16 * prefix_set_index + success_lane_idx as u64)
-                        * 10u64.pow(7)
-                        + nonce_tail;
-
-                    let mut result = 0u128;
-                    let mut tmp: Align64<[u32; 16]> = Align64([0; 16]);
-                    for i in 0..4 {
-                        _mm512_store_si512(tmp.as_mut_ptr().cast(), state[i]);
-                        result <<= 32;
-                        result |=
-                            (tmp[success_lane_idx].wrapping_add(self.prefix_state[i])) as u128;
-                    }
-                    return Some((nonce + self.nonce_addend, result));
                 }
             }
+            None
         }
-        None
+
+        macro_rules! dispatch {
+            ($idx0:ty) => {
+                match lane_id_1_word_idx {
+                    0 => solve_inner::<$idx0, U0>(self, target[0]),
+                    1 => solve_inner::<$idx0, U1>(self, target[0]),
+                    2 => solve_inner::<$idx0, U2>(self, target[0]),
+                    3 => solve_inner::<$idx0, U3>(self, target[0]),
+                    4 => solve_inner::<$idx0, U4>(self, target[0]),
+                    5 => solve_inner::<$idx0, U5>(self, target[0]),
+                    6 => solve_inner::<$idx0, U6>(self, target[0]),
+                    7 => solve_inner::<$idx0, U7>(self, target[0]),
+                    8 => solve_inner::<$idx0, U8>(self, target[0]),
+                    9 => solve_inner::<$idx0, U9>(self, target[0]),
+                    10 => solve_inner::<$idx0, U10>(self, target[0]),
+                    11 => solve_inner::<$idx0, U11>(self, target[0]),
+                    12 => solve_inner::<$idx0, U12>(self, target[0]),
+                    13 => solve_inner::<$idx0, U13>(self, target[0]),
+                    14 => solve_inner::<$idx0, U14>(self, target[0]),
+                    15 => solve_inner::<$idx0, U15>(self, target[0]),
+                    _ => unreachable_unchecked(),
+                }
+            };
+        }
+
+        unsafe {
+            match lane_id_0_word_idx {
+                0 => dispatch!(U0),
+                1 => dispatch!(U1),
+                2 => dispatch!(U2),
+                3 => dispatch!(U3),
+                4 => dispatch!(U4),
+                5 => dispatch!(U5),
+                6 => dispatch!(U6),
+                7 => dispatch!(U7),
+                8 => dispatch!(U8),
+                9 => dispatch!(U9),
+                10 => dispatch!(U10),
+                11 => dispatch!(U11),
+                12 => dispatch!(U12),
+                13 => dispatch!(U13),
+                14 => dispatch!(U14),
+                15 => dispatch!(U15),
+                _ => unreachable_unchecked(),
+            }
+        }
     }
 }
 
@@ -314,7 +390,7 @@ mod tests {
             concatenated_prefix.extend_from_slice(&bincode::serialize(&phrase_str).unwrap());
 
             let config = pow_sha256::Config { salt: SALT.into() };
-            const DIFFICULTY: u32 = 5000;
+            const DIFFICULTY: u32 = 50_000;
 
             let solver = SingleBlockSolver::new((), &concatenated_prefix);
             let Some(mut solver) = solver else {

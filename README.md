@@ -82,12 +82,12 @@ Results on AMD Ryzen 9 7950X, 32 cores, GPU is NVIDIA RTX 4070.
 
 | Difficulty factor | AVX-512 (ms) | Official Autovectorized (ms) | Official Generic X86 (ms) | wgpu (Vulkan) (ms) |
 | ----------------- | ------------ | ---------------------------- | ------------------------- | ------------------ |
-| 50_000            | 0.642        | 2.620                        | 5.065                     | 0.088              |
-| 100_000           | 1.313        | 5.241                        | 10.396                    | 0.088              |
-| 1_000_000         | 13.619       | 50.579                       | 98.235                    | 0.273              |
-| 4_000_000         | 58.464       | 177.98                       | 345.48                    | 0.937              |
-| 10_000_000        | 140.95       | 510.64                       | 775 (*)                   | 2.289              |
-| 50_000_000        | 675.67       | 2657.3                       | 4696 (*)                  | 22.723             |
+| 50_000            | 0.611        | 2.620                        | 5.065                     | 0.088              |
+| 100_000           | 1.241        | 5.241                        | 10.396                    | 0.088              |
+| 1_000_000         | 13.353       | 50.579                       | 98.235                    | 0.273              |
+| 4_000_000         | 49.609       | 177.98                       | 345.48                    | 0.937              |
+| 10_000_000        | 119.69       | 510.64                       | 775 (*)                   | 2.289              |
+| 50_000_000        | 598.55       | 2657.3                       | 4696 (*)                  | 22.723             |
 
 
 Results on a Netcup (R) RS 4000 G11 (26 EUR/month at the time of writing), for scaling comparison on rented compute:
@@ -95,12 +95,12 @@ Results on a Netcup (R) RS 4000 G11 (26 EUR/month at the time of writing), for s
 
 | Difficulty factor | AVX-512 (ms) | Official Autovectorized (ms) |
 | ----------------- | ------------ | ---------------------------- |
-| 50_000            | 0.963        | 3.970                        |
-| 100_000           | 1.902        | 9.006                        |
-| 1_000_000         | 20.661       | 77.325                       |
-| 4_000_000         | 87.834       | 270.60                       |
-| 10_000_000        | 212.62       | 769.24                       |
-| 50_000_000        | 995.95       | 3981.0                       |
+| 50_000            | 1.010        | 3.970                        |
+| 100_000           | 1.957        | 9.006                        |
+| 1_000_000         | 20.854       | 77.325                       |
+| 4_000_000         | 78.299       | 270.60                       |
+| 10_000_000        | 189.04       | 769.24                       |
+| 50_000_000        | 947.48       | 3981.0                       |
 
 (*) = Criterion.rs cannot produce enough samples in 200s for statistical significance, number produced by [mcaptcha_bypass](https://github.com/evilsocket/mcaptcha_bypass), modified for 20 verification per thread, and thus less representative in terms of sustained performance, and are more susceptible to noise from the high variance from low-probability geometric distribution.
 
@@ -159,7 +159,7 @@ Fake Proof Control: 3769 requests in 10.1 seconds, 374.0 rps
 [60.0s] succeeded: 13544, failed: 0, 5s: 240.2rps, 5s_failed: 0.0rps
 ```
 
-All 32 cores of a AMD Ryzen 9 7950X are used for the end-to-end benchmark.
+All 32 cores of a AMD Ryzen 9 7950X are used for the end-to-end benchmark. It seems we are at the bottleneck of the server being able to record successful attempts, as further performance tuning only show improvement in offline benchmarks.
 
 #### wgpu Solution
 

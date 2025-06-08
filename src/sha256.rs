@@ -83,7 +83,7 @@ pub(crate) fn compress_block_reference(state: &mut [u32; 8], mut block: [u32; 16
     state[7] = state[7].wrapping_add(h);
 }
 
-#[inline]
+#[inline(always)]
 pub(crate) fn compress_16block_avx512_without_saved_state(
     state: &mut [__m512i; 8],
     block: &mut [__m512i; 16],
