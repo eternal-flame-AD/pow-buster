@@ -10,6 +10,7 @@
     - [Can't this be used to attack a real website?](#cant-this-be-used-to-attack-a-real-website)
   - [Benchmark](#benchmark)
     - [Formal Benchmark](#formal-benchmark)
+    - [Official Widget Benchmark](#official-widget-benchmark)
     - [End to End Benchmark](#end-to-end-benchmark)
       - [CPU only](#cpu-only)
       - [wgpu Solution](#wgpu-solution)
@@ -77,6 +78,7 @@ Note: To reproduce, you don't need to clone the submodule, it is only used as a 
 
 Speedup against official solution, reported by Criterion.rs, single-threaded:
 
+Results on AMD Ryzen 9 7950X, 32 cores, GPU is NVIDIA RTX 4070.
 
 | Difficulty factor | AVX-512 (ms) | Official Autovectorized (ms) | Official Generic X86 (ms) | wgpu (Vulkan) (ms) |
 | ----------------- | ------------ | ---------------------------- | ------------------------- | ------------------ |
@@ -87,9 +89,22 @@ Speedup against official solution, reported by Criterion.rs, single-threaded:
 | 10_000_000        | 140.95       | 510.64                       | 775 (*)                   | 2.289              |
 | 50_000_000        | 675.67       | 2657.3                       | 4696 (*)                  | 22.723             |
 
+
+Results on a Netcup (R) RS 4000 G11 (26 EUR/month at the time of writing), for scaling comparison on rented compute:
+
+
+| Difficulty factor | AVX-512 (ms) | Official Autovectorized (ms) |
+| ----------------- | ------------ | ---------------------------- |
+| 50_000            | 0.963        | 3.970                        |
+| 100_000           | 1.902        | 9.006                        |
+| 1_000_000         | 20.661       | 77.325                       |
+| 4_000_000         | 87.834       | 270.60                       |
+| 10_000_000        | 212.62       | 769.24                       |
+| 50_000_000        | 995.95       | 3981.0                       |
+
 (*) = Criterion.rs cannot produce enough samples in 200s for statistical significance, number produced by [mcaptcha_bypass](https://github.com/evilsocket/mcaptcha_bypass), modified for 20 verification per thread, and thus less representative in terms of sustained performance, and are more susceptible to noise from the high variance from low-probability geometric distribution.
 
-Tested on AMD Ryzen 9 7950X, 32 cores, GPU is NVIDIA RTX 4070.
+### Official Widget Benchmark
 
 WASM benchmark reported by [official benchmark page](https://mcaptcha.github.io/benches/), this is _only_ to illustrate what difficulty numbers are realistic for a website, they are _not_ directly comparable to the Criterion.rs benchmark as they do not have a proper warm-up and statistical testing like Criterion.rs does:
 
