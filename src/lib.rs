@@ -288,11 +288,8 @@ impl Solver for SingleBlockSolver {
                         // the target is big endian interpretation of the first 16 bytes of the hash (A-D) >= target
                         // however, the largest 32-bit digits is unlikely to be all ones (otherwise a legitimate challenger needs on average >2^32 attempts)
                         // so we can reduce this into simply testing H[0]
-                        // it would miss about 1/2^32 valid solutions but we don't care, speed and register pressure is everything
-
-                        // To be more rigor,
                         // the number of acceptable u32 values (for us) is u32::MAX / difficulty
-                        // so the "inefficiency" this creates is about 1/(u32::MAX / difficulty) / 2,
+                        // so the "inefficiency" this creates is about (u32::MAX / difficulty) * (1 / 2), because for approx. half of the "edge case" do we actually have an acceptable solution,
                         // which for 1e8 is about 1%, but we get to save the one broadcast add,
                         // a vectorized comparison, and a scalar logic evaluation
                         // which I feel is about 1% of the instructions needed per iteration anyways just more registers used so let's not bother
@@ -311,8 +308,8 @@ impl Solver for SingleBlockSolver {
                             for i in 0..7 {
                                 nonce_tail *= 10;
                                 let message_bytes = decompose_blocks_mut(&mut this.message);
-                                nonce_tail += (message_bytes
-                                    [SWAP_DWORD_BYTE_ORDER[this.digit_index + i + 2]]
+                                nonce_tail += (*message_bytes
+                                    .get_unchecked(SWAP_DWORD_BYTE_ORDER[this.digit_index + i + 2])
                                     as u64)
                                     - b'0' as u64;
                             }
