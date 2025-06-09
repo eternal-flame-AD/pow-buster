@@ -23,6 +23,8 @@
 
 A fast, adversarially implemented mCaptcha PoW solver, targeting AVX-512 and SPIR-V compute (shader in WGSL).
 
+Tracking issue for upstream: [mCaptcha/mCaptcha#186](https://github.com/mCaptcha/mCaptcha/issues/186)
+
 The benchmarks demonstrate a significant performance gap between browser-based JavaScript execution and native implementations (both optimized CPU and unoptimized GPU), suggesting fundamental challenges for PoW-based browser CAPTCHA systems.
 
 ## Limitations
@@ -49,7 +51,7 @@ We took some shortcuts and it is not a completely general solution.
 
 ### Why not private disclosure? 
 
-This isn't a vulnerability, I didn't "skip" or somehow "simplify" any number of SHA-2 rounds, it is a materialized analysis of performance characteristics of the system.
+This isn't a vulnerability nor anything previously unknown. I didn't "skip" or somehow "simplify" any number of SHA-2 rounds, it is a materialized analysis of performance characteristics of the system. Everybody knows PoW system loses protection margin using hardware or software optimizations.
  
 Website operators deploying mCaptcha bear the responsibility to understand the performance characteristics and security implications of their chosen PoW parameters, and whether that protects against their identified threat. __The purpose of this research is to provide the statistical analysis and empirical validation data necessary for informed deployment decisions, including optimized CPU only solutions.__ 
 
