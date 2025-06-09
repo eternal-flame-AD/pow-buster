@@ -308,9 +308,9 @@ impl Solver for SingleBlockSolver {
                             for i in 0..7 {
                                 nonce_tail *= 10;
                                 let message_bytes = decompose_blocks_mut(&mut this.message);
-                                nonce_tail += (*message_bytes
-                                    .get_unchecked(SWAP_DWORD_BYTE_ORDER[this.digit_index + i + 2])
-                                    as u64)
+                                nonce_tail += (*message_bytes.get_unchecked(
+                                    *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + i + 2),
+                                ) as u64)
                                     - b'0' as u64;
                             }
 
