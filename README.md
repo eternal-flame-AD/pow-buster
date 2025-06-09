@@ -35,7 +35,7 @@ We took some shortcuts and it is not a completely general solution.
 
 - Requires AVX-512 CPU or a [wgpu](https://wgpu.rs) compatible GPU
 - Only builds on nightly Rust because avx512 intrinsics are not stable yet
-- This is designed for "low", practical-for-a-website difficulty settings, A $1 - P_{geom}(64e7, 1/\text{difficulty})$ chance of failure for any particular hash, which for 1e8 (takes about 10 seconds on a browser) is about 0.1%, the GPU solver has much lower failure rate.
+- This is designed for "low", practical-for-a-website difficulty settings, A $1 - P_{geom}(80e7, 1/\text{difficulty})$ chance of failure for any particular challenge, which for 1e8 (takes about 10 seconds on a browser) is about 0.03%, the GPU solver has much lower failure rate.
 - The WGSL implementation is not optimized for performance, it has some major problems:
   1. Didn't use vectorized arithmetic.
   2. Didn't use workgroup shared memory.
@@ -80,7 +80,7 @@ Speedup against official solution, reported by Criterion.rs, single-threaded:
 
 Results on AMD Ryzen 9 7950X, 32 cores, GPU is NVIDIA RTX 4070.
 
-| Difficulty factor | AVX-512 (ms) | Official Autovectorized (ms) | Official Generic X86 (ms) | wgpu (Vulkan) (ms) |
+| Difficulty factor | AVX-512 (ms) | Official Autovectorized (ms) | Official Generic x64 (ms) | wgpu (Vulkan) (ms) |
 | ----------------- | ------------ | ---------------------------- | ------------------------- | ------------------ |
 | 50_000            | 0.611        | 2.620                        | 5.065                     | 0.088              |
 | 100_000           | 1.241        | 5.241                        | 10.396                    | 0.088              |
@@ -90,17 +90,17 @@ Results on AMD Ryzen 9 7950X, 32 cores, GPU is NVIDIA RTX 4070.
 | 50_000_000        | 598.55       | 2657.3                       | 4696 (*)                  | 22.723             |
 
 
-Results on a Netcup (R) RS 4000 G11 (26 EUR/month at the time of writing), for scaling comparison on rented compute:
+Results on a Netcup (R) RS 4000 G11 (26 EUR/month at the time of writing, backed by AMD EPYC 9634), for scaling comparison on rented compute:
 
 
-| Difficulty factor | AVX-512 (ms) | Official Autovectorized (ms) |
-| ----------------- | ------------ | ---------------------------- |
-| 50_000            | 1.010        | 3.970                        |
-| 100_000           | 1.957        | 9.006                        |
-| 1_000_000         | 20.854       | 77.325                       |
-| 4_000_000         | 78.299       | 270.60                       |
-| 10_000_000        | 189.04       | 769.24                       |
-| 50_000_000        | 947.48       | 3981.0                       |
+| Difficulty factor | AVX-512 (ms) | Official Autovectorized (ms) | Official Generic X64 (ms) |
+| ----------------- | ------------ | ---------------------------- | ------------------------- |
+| 50_000            | 1.010        | 3.970                        | 7.7023                    |
+| 100_000           | 1.957        | 9.006                        | 15.401                    |
+| 1_000_000         | 20.854       | 77.325                       | 146.79                    |
+| 4_000_000         | 78.299       | 270.60                       | 511.90                    |
+| 10_000_000        | 189.04       | 769.24                       | 1457.0                    |
+| 50_000_000        | 947.48       | 3981.0                       | DNS                       |
 
 (*) = Criterion.rs cannot produce enough samples in 200s for statistical significance, number produced by [mcaptcha_bypass](https://github.com/evilsocket/mcaptcha_bypass), modified for 20 verification per thread, and thus less representative in terms of sustained performance, and are more susceptible to noise from the high variance from low-probability geometric distribution.
 
@@ -229,7 +229,7 @@ This finding is corroborated by the original developer's [own performance testin
 - **"Protected" server**: 60-80 RPS sustained with 5+ second response times  
 - **"Unprotected" server**: 150 RPS maximum before collapse, with no significantly higher response time.
 
-The fact that our optimized CPU solver can generate **250 RPS** of valid solutions (i.e. ~1.2 Ghashes/s) while their server can only handle **650 RPS** of any requests (effectively one single hash per request) demonstrates that the protection margin is minimal - less than 3x between "protected" then the "captcha" itself is completely overwhelmed, for a single commodity CPU.
+The fact that our optimized CPU solver can generate **250 RPS** of valid solutions (i.e. ~1.2 Ghashes/s) while our own hosted server can only handle **650 RPS** of any requests (effectively one single hash per request) demonstrates that the protection margin is minimal - less than 3x between "protected" then the "captcha" itself is completely overwhelmed, for a single commodity CPU.
 
 ## Future Work (i.e. Okay, so what would be a good PoW then?)
 

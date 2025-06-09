@@ -204,9 +204,10 @@ impl Solver for SingleBlockSolver {
     }
 
     fn solve(&mut self, target: [u32; 4]) -> Option<(u64, u128)> {
-        // the official default difficulty is 5e6, so we design for 5e7
-        // pgeom(64e7, 1/5e7, lower=F) = 2.76e-06
-        // pgeom(16e7, 1/5e7, lower=F) = 0.0608, which is too much so we need the prefix to change as well
+        // the official default difficulty is 5e6, so we design for 1e8
+        // and there should almost always be a valid solution within our supported solution space
+        // pgeom(5 * 16e7, 1/5e7, lower=F) = 0.03%
+        // pgeom(16e7, 1/5e7, lower=F) = 20%, which is too much so we need the prefix to change as well
 
         // pre-compute an OR to apply to the message to add the lane ID
         let lane_id_0_word_idx = self.digit_index / 4;
@@ -219,19 +220,20 @@ impl Solver for SingleBlockSolver {
         ) -> Option<(u64, u128)> {
             let lane_id_0_byte_idx = this.digit_index % 4;
             let lane_id_1_byte_idx = (this.digit_index + 1) % 4;
+            // pre-compute the lane index OR mask to "stamp" onto each lane for each try
             // this string is longer than we need but good enough for all intents and purposes
-            let lane_id_0_or_value: [u32; 4 * 16] = core::array::from_fn(|i| {
+            let lane_id_0_or_value: [u32; 5 * 16] = core::array::from_fn(|i| {
                 (b"111111111122222222223333333333444444444455555555556666666666777777777788888888889999999999"[i] as u32) << ((3 - lane_id_0_byte_idx) * 8) as u32
             });
 
-            let lane_id_1_or_value: [u32; 4 * 16] = core::array::from_fn(|i| {
+            let lane_id_1_or_value: [u32; 5 * 16] = core::array::from_fn(|i| {
                 (b"012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"[i] as u32) << ((3 - lane_id_1_byte_idx) * 8) as u32
             });
 
             let mut blocks: [__m512i; 16] =
                 core::array::from_fn(|_| unsafe { _mm512_setzero_epi32() });
 
-            for prefix_set_index in 0..4 {
+            for prefix_set_index in 0..5 {
                 let lane_id_0_or_value_v = unsafe {
                     _mm512_loadu_epi32(
                         lane_id_0_or_value
@@ -277,15 +279,23 @@ impl Solver for SingleBlockSolver {
                             *blocks.get_unchecked(DigitWordIdx1::USIZE),
                             lane_id_1_or_value_v,
                         );
+                        // do 16-way SHA-256 without adding back the saved state so as not to force the compiler to save 8 registers
                         sha256::compress_16block_avx512_without_saved_state(
                             &mut state,
                             &mut blocks,
                         );
 
                         // the target is big endian interpretation of the first 16 bytes of the hash (A-D) >= target
-                        // however, the largest 32-bit digits is unlikely to be all ones (otherwise a legitimate challenger needs on average >2^(128-32) attempts)
+                        // however, the largest 32-bit digits is unlikely to be all ones (otherwise a legitimate challenger needs on average >2^32 attempts)
                         // so we can reduce this into simply testing H[0]
                         // it would miss about 1/2^32 valid solutions but we don't care, speed and register pressure is everything
+
+                        // To be more rigor,
+                        // the number of acceptable u32 values (for us) is u32::MAX / difficulty
+                        // so the "inefficiency" this creates is about 1/(u32::MAX / difficulty) / 2,
+                        // which for 1e8 is about 1%, but we get to save the one broadcast add,
+                        // a vectorized comparison, and a scalar logic evaluation
+                        // which I feel is about 1% of the instructions needed per iteration anyways just more registers used so let's not bother
                         let a_is_greater = _mm512_cmpgt_epu32_mask(
                             _mm512_add_epi32(
                                 state[0],
@@ -307,10 +317,12 @@ impl Solver for SingleBlockSolver {
                                     - b'0' as u64;
                             }
 
+                            // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
                             let nonce = (10 + 16 * prefix_set_index + success_lane_idx as u64)
                                 * 10u64.pow(7)
                                 + nonce_tail;
 
+                            // the resulting hash is the A-H in registers, plus the saved state
                             let mut result = 0u128;
                             let mut tmp: Align64<[u32; 16]> = Align64([0; 16]);
                             for i in 0..4 {
@@ -319,6 +331,9 @@ impl Solver for SingleBlockSolver {
                                 result |= (tmp[success_lane_idx].wrapping_add(this.prefix_state[i]))
                                     as u128;
                             }
+
+                            debug_assert!(result > (target as u128) << 96, "result is too small");
+
                             return Some((nonce + this.nonce_addend, result));
                         }
                     }

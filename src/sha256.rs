@@ -84,6 +84,9 @@ pub(crate) fn compress_block_reference(state: &mut [u32; 8], mut block: [u32; 16
 }
 
 #[inline(always)]
+/// DO a 16-way SHA-256 compression function without adding back the saved state
+///
+/// This is useful for making state share registers with a-h when caller has the previous state recalled cheaply from elsewhere after the fact
 pub(crate) fn compress_16block_avx512_without_saved_state(
     state: &mut [__m512i; 8],
     block: &mut [__m512i; 16],
