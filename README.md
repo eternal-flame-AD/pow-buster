@@ -14,6 +14,7 @@
     - [End to End Benchmark](#end-to-end-benchmark)
       - [CPU only](#cpu-only)
       - [wgpu Solution](#wgpu-solution)
+    - [Throughput Sanity Check](#throughput-sanity-check)
   - [Security Implications](#security-implications)
   - [Server-Side Performance Observations](#server-side-performance-observations)
   - [Future Work (i.e. Okay, so what would be a good PoW then?)](#future-work-ie-okay-so-what-would-be-a-good-pow-then)
@@ -197,6 +198,18 @@ Fake Proof Control: 5462 requests in 10.0 seconds, 545.7 rps
 [55.0s] succeeded: 2924, failed: 0, 5s: 49.6rps, 5s_failed: 0.0rps
 [60.0s] succeeded: 3195, failed: 0, 5s: 54.2rps, 5s_failed: 0.0rps
 ```
+
+### Throughput Sanity Check
+
+Just as a sanity check to make sure we are actually performing checks with effective data parallelism and the difference is not just because implementation overhead, here are the numbers from OpenSSL with SHA-NI support:
+
+```sh
+> openssl speed sha256
+type             16 bytes     64 bytes    256 bytes   1024 bytes   8192 bytes  16384 bytes
+sha256          207107.04k   645724.06k  1507281.95k  2220402.22k  2655970.10k  2687872.17k
+```
+
+The single-threaded single-block throughput for OpenSSL is about 100.7 Mhashes/s (645.7M/s), for us it is about 835.3 Mhashes/s (5.35 G/s).
 
 ## Security Implications
 
