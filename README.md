@@ -81,7 +81,7 @@ Note: To reproduce, you don't need to clone the submodule, it is only used as a 
 
 Speedup against official solution, reported by Criterion.rs, single-threaded:
 
-Results on AMD Ryzen 9 7950X, 32 cores, GPU is NVIDIA RTX 4070.
+Results on AMD Ryzen 9 7950X, 32 cores.
 
 | Difficulty factor | AVX-512 (ms) | Official Autovectorized (ms) | Official Generic x64 (ms) | wgpu (Vulkan) (ms) |
 | ----------------- | ------------ | ---------------------------- | ------------------------- | ------------------ |
@@ -209,7 +209,7 @@ type             16 bytes     64 bytes    256 bytes   1024 bytes   8192 bytes  1
 sha256          207107.04k   645724.06k  1507281.95k  2220402.22k  2655970.10k  2687872.17k
 ```
 
-The single-threaded single-block throughput for OpenSSL is about 100.7 Mhashes/s (645.7M/s), for us it is about 835.3 Mhashes/s (5.35 G/s).
+The single-threaded single-block throughput for OpenSSL is about 12.94 Mhashes/s (828.2MB/s), for us it is about 83.53 Mhashes/s (5.35 GB/s).
 
 ## Security Implications
 
