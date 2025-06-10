@@ -92,7 +92,7 @@ pub(crate) fn compress_16block_avx512_without_saved_state(
     block: &mut [__m512i; 16],
 ) {
     unsafe {
-        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *state;
+        let [a, b, c, d, e, f, g, h] = &mut *state;
 
         repeat64!(i, {
             let w = if i < 16 {
@@ -115,45 +115,36 @@ pub(crate) fn compress_16block_avx512_without_saved_state(
             };
 
             let s1 = _mm512_xor_si512(
-                _mm512_xor_si512(_mm512_ror_epi32(e, 6), _mm512_ror_epi32(e, 11)),
-                _mm512_ror_epi32(e, 25),
+                _mm512_xor_si512(_mm512_ror_epi32(*e, 6), _mm512_ror_epi32(*e, 11)),
+                _mm512_ror_epi32(*e, 25),
             );
-            let ch = _mm512_xor_si512(_mm512_and_si512(e, f), _mm512_andnot_si512(e, g));
+            let ch = _mm512_xor_si512(_mm512_and_si512(*e, *f), _mm512_andnot_si512(*e, *g));
             let mut t1 = s1;
             t1 = _mm512_add_epi32(t1, ch);
             t1 = _mm512_add_epi32(t1, _mm512_set1_epi32(K32[i] as _));
             t1 = _mm512_add_epi32(t1, w);
-            t1 = _mm512_add_epi32(t1, h);
+            t1 = _mm512_add_epi32(t1, *h);
 
             let s0 = _mm512_xor_si512(
-                _mm512_xor_si512(_mm512_ror_epi32(a, 2), _mm512_ror_epi32(a, 13)),
-                _mm512_ror_epi32(a, 22),
+                _mm512_xor_si512(_mm512_ror_epi32(*a, 2), _mm512_ror_epi32(*a, 13)),
+                _mm512_ror_epi32(*a, 22),
             );
             let maj = _mm512_xor_si512(
-                _mm512_xor_si512(_mm512_and_si512(a, b), _mm512_and_si512(a, c)),
-                _mm512_and_si512(b, c),
+                _mm512_xor_si512(_mm512_and_si512(*a, *b), _mm512_and_si512(*a, *c)),
+                _mm512_and_si512(*b, *c),
             );
             let mut t2 = s0;
             t2 = _mm512_add_epi32(t2, maj);
 
-            h = g;
-            g = f;
-            f = e;
-            e = _mm512_add_epi32(d, t1);
-            d = c;
-            c = b;
-            b = a;
-            a = _mm512_add_epi32(t1, t2);
+            *h = *g;
+            *g = *f;
+            *f = *e;
+            *e = _mm512_add_epi32(*d, t1);
+            *d = *c;
+            *c = *b;
+            *b = *a;
+            *a = _mm512_add_epi32(t1, t2);
         });
-
-        state[0] = a;
-        state[1] = b;
-        state[2] = c;
-        state[3] = d;
-        state[4] = e;
-        state[5] = f;
-        state[6] = g;
-        state[7] = h;
     }
 }
 

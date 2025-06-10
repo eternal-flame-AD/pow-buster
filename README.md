@@ -34,6 +34,8 @@ We took some shortcuts and it is not a completely general solution.
 
 - Currently only supports about 90.62% of the sites, applicability is a periodic function of the salt length. 
 
+  This also means optimizations that depend on a specific salt length are not done.
+
   If you want an "always works" solution implement yourself, it's not that complicated, just that it is much harder to provide a single generic solution to cover every subcase of the remaining 9.38%. 
 
 - Requires AVX-512 CPU or a [wgpu](https://wgpu.rs) compatible GPU
@@ -85,12 +87,12 @@ Results on AMD Ryzen 9 7950X, 32 cores.
 
 | Difficulty factor | AVX-512 (ms) | Official Autovectorized (ms) | Official Generic x64 (ms) | wgpu (Vulkan) (ms) |
 | ----------------- | ------------ | ---------------------------- | ------------------------- | ------------------ |
-| 50_000            | 0.611        | 2.620                        | 5.065                     | 0.088              |
-| 100_000           | 1.241        | 5.241                        | 10.396                    | 0.088              |
-| 1_000_000         | 13.353       | 50.579                       | 98.235                    | 0.273              |
-| 4_000_000         | 49.609       | 177.98                       | 345.48                    | 0.937              |
-| 10_000_000        | 119.69       | 510.64                       | 775 (*)                   | 2.289              |
-| 50_000_000        | 598.55       | 2657.3                       | 4696 (*)                  | 22.723             |
+| 50_000            | 0.322        | 2.620                        | 5.065                     | 0.088              |
+| 100_000           | 0.712        | 5.241                        | 10.396                    | 0.088              |
+| 1_000_000         | 8.852        | 50.579                       | 98.235                    | 0.273              |
+| 4_000_000         | 42.249       | 177.98                       | 345.48                    | 0.937              |
+| 10_000_000        | 105.01       | 510.64                       | 775 (*)                   | 2.289              |
+| 50_000_000        | 601.69       | 2657.3                       | 4696 (*)                  | 22.723             |
 
 
 Results on a Netcup (R) RS 4000 G11 (26 EUR/month at the time of writing, backed by AMD EPYC 9634), for scaling comparison on rented compute:

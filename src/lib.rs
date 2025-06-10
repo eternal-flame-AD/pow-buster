@@ -71,7 +71,7 @@ fn dbg_dump_u32x16(inp: __m512i) {
     eprint!("{:04x?}", tmp.0);
 }
 
-pub fn compute_target(difficulty_factor: u32) -> u128 {
+pub const fn compute_target(difficulty_factor: u32) -> u128 {
     u128::max_value() - u128::max_value() / difficulty_factor as u128
 }
 
@@ -300,8 +300,10 @@ impl Solver for SingleBlockSolver {
                             ),
                             _mm512_set1_epi32(target as _),
                         );
+
                         if a_is_greater != 0 {
                             let success_lane_idx = _tzcnt_u32(a_is_greater as _) as usize;
+                            let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx as u64;
 
                             // reconstruct the actual nonce for this lane
                             let mut nonce_tail = 0u64;
@@ -314,24 +316,31 @@ impl Solver for SingleBlockSolver {
                                     - b'0' as u64;
                             }
 
-                            // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
-                            let nonce = (10 + 16 * prefix_set_index + success_lane_idx as u64)
-                                * 10u64.pow(7)
-                                + nonce_tail;
-
-                            // the resulting hash is the A-H in registers, plus the saved state
-                            let mut result = 0u128;
-                            let mut tmp: Align64<[u32; 16]> = Align64([0; 16]);
-                            for i in 0..4 {
-                                _mm512_store_si512(tmp.as_mut_ptr().cast(), state[i]);
-                                result <<= 32;
-                                result |= (tmp[success_lane_idx].wrapping_add(this.prefix_state[i]))
-                                    as u128;
+                            {
+                                let message_bytes = decompose_blocks_mut(&mut this.message);
+                                *message_bytes.get_unchecked_mut(
+                                    *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index),
+                                ) = (nonce_prefix / 10) as u8 + b'0';
+                                *message_bytes.get_unchecked_mut(
+                                    *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + 1),
+                                ) = (nonce_prefix % 10) as u8 + b'0';
                             }
 
-                            debug_assert!(result > (target as u128) << 96, "result is too small");
+                            // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
+                            let nonce = nonce_prefix * 10u64.pow(7) + nonce_tail;
 
-                            return Some((nonce + this.nonce_addend, result));
+                            // recompute the hash from the beginning
+                            // this prevents the compiler from having to compute the final B-H registers alive in tight loops
+                            let mut final_sha_state = this.prefix_state.clone();
+                            sha256::compress_block_reference(&mut final_sha_state, this.message);
+
+                            return Some((
+                                nonce + this.nonce_addend,
+                                (final_sha_state[0] as u128) << 96
+                                    | (final_sha_state[1] as u128) << 64
+                                    | (final_sha_state[2] as u128) << 32
+                                    | (final_sha_state[3] as u128),
+                            ));
                         }
                     }
                 }
