@@ -83,7 +83,7 @@ Note: To reproduce, you don't need to clone the submodule, it is only used as a 
 
 Speedup against official solution, reported by Criterion.rs, single-threaded:
 
-Results on AMD Ryzen 9 7950X, 32 cores.
+Results on AMD Ryzen 9 7950X, 32 cores (wgpu uses NVIDIA RTX 4070).
 
 | Difficulty factor | AVX-512 (ms) | Official Autovectorized (ms) | Official Generic x64 (ms) | wgpu (Vulkan) (ms) |
 | ----------------- | ------------ | ---------------------------- | ------------------------- | ------------------ |
@@ -100,12 +100,12 @@ Results on a Netcup (R) RS 4000 G11 (26 EUR/month at the time of writing, backed
 
 | Difficulty factor | AVX-512 (ms) | Official Autovectorized (ms) | Official Generic X64 (ms) |
 | ----------------- | ------------ | ---------------------------- | ------------------------- |
-| 50_000            | 1.010        | 3.970                        | 7.7023                    |
-| 100_000           | 1.957        | 9.006                        | 15.401                    |
-| 1_000_000         | 20.854       | 77.325                       | 146.79                    |
-| 4_000_000         | 78.299       | 270.60                       | 511.90                    |
-| 10_000_000        | 189.04       | 769.24                       | 1457.0                    |
-| 50_000_000        | 947.48       | 3981.0                       | DNS                       |
+| 50_000            | 0.575        | 3.970                        | 7.7023                    |
+| 100_000           | 1.098        | 9.006                        | 15.401                    |
+| 1_000_000         | 14.258       | 77.325                       | 146.79                    |
+| 4_000_000         | 63.914       | 270.60                       | 511.90                    |
+| 10_000_000        | 177.78       | 769.24                       | 1457.0                    |
+| 50_000_000        | 889.42       | 3981.0                       | DNS                       |
 
 (*) = Criterion.rs cannot produce enough samples in 200s for statistical significance, number produced by [mcaptcha_bypass](https://github.com/evilsocket/mcaptcha_bypass), modified for 20 verification per thread, and thus less representative in terms of sustained performance, and are more susceptible to noise from the high variance from low-probability geometric distribution.
 
@@ -144,24 +144,25 @@ The following were configured for difficulty 5_000_000 (default max tier).
 > RUSTFLAGS="-Ctarget-cpu=native" \
     cargo run --features cli --release -- live \
     --site-key emPgsyJP5SWeNEot2IBbg0ezOE1GNhof \
+    --n-workers 38 \
     --do-control >/dev/null
 
 You are hitting host http://localhost:7000
 running 10 seconds of control sending random proofs
 [0.0s] succeeded: 0, failed: 0, 5s: 0.0rps, 5s_failed: 0.0rps
-[5.0s] succeeded: 643, failed: 0, 5s: 128.6rps, 5s_failed: 0.0rps
-[10.0s] succeeded: 1377, failed: 0, 5s: 146.8rps, 5s_failed: 0.0rps
-Fake Proof Control: 3769 requests in 10.1 seconds, 374.0 rps
-[15.0s] succeeded: 2591, failed: 0, 5s: 242.8rps, 5s_failed: 0.0rps
-[20.0s] succeeded: 3781, failed: 0, 5s: 238.0rps, 5s_failed: 0.0rps
-[25.0s] succeeded: 5003, failed: 0, 5s: 244.4rps, 5s_failed: 0.0rps
-[30.0s] succeeded: 6216, failed: 0, 5s: 242.6rps, 5s_failed: 0.0rps
-[35.0s] succeeded: 7465, failed: 0, 5s: 249.8rps, 5s_failed: 0.0rps
-[40.0s] succeeded: 8685, failed: 0, 5s: 244.0rps, 5s_failed: 0.0rps
-[45.0s] succeeded: 9932, failed: 0, 5s: 249.4rps, 5s_failed: 0.0rps
-[50.0s] succeeded: 11125, failed: 0, 5s: 238.6rps, 5s_failed: 0.0rps
-[55.0s] succeeded: 12343, failed: 0, 5s: 243.6rps, 5s_failed: 0.0rps
-[60.0s] succeeded: 13544, failed: 0, 5s: 240.2rps, 5s_failed: 0.0rps
+[5.0s] succeeded: 725, failed: 0, 5s: 145.0rps, 5s_failed: 0.0rps
+[10.0s] succeeded: 1453, failed: 0, 5s: 145.6rps, 5s_failed: 0.0rps
+Fake Proof Control: 3732 requests in 10.1 seconds, 369.2 rps
+[15.0s] succeeded: 2690, failed: 0, 5s: 247.4rps, 5s_failed: 0.0rps
+[20.0s] succeeded: 3902, failed: 0, 5s: 242.4rps, 5s_failed: 0.0rps
+[25.0s] succeeded: 5110, failed: 0, 5s: 241.6rps, 5s_failed: 0.0rps
+[30.0s] succeeded: 6368, failed: 0, 5s: 251.6rps, 5s_failed: 0.0rps
+[35.0s] succeeded: 7587, failed: 0, 5s: 243.8rps, 5s_failed: 0.0rps
+[40.0s] succeeded: 8840, failed: 0, 5s: 250.6rps, 5s_failed: 0.0rps
+[45.0s] succeeded: 10081, failed: 0, 5s: 248.2rps, 5s_failed: 0.0rps
+[50.0s] succeeded: 11302, failed: 0, 5s: 244.2rps, 5s_failed: 0.0rps
+[55.0s] succeeded: 12505, failed: 0, 5s: 240.6rps, 5s_failed: 0.0rps
+[60.0s] succeeded: 13761, failed: 0, 5s: 251.2rps, 5s_failed: 0.0rps
 ```
 
 All 32 cores of a AMD Ryzen 9 7950X are used for the end-to-end benchmark. It seems we are at the bottleneck of the server being able to record successful attempts, as further performance tuning only show improvement in offline benchmarks.
@@ -211,7 +212,7 @@ type             16 bytes     64 bytes    256 bytes   1024 bytes   8192 bytes  1
 sha256          207107.04k   645724.06k  1507281.95k  2220402.22k  2655970.10k  2687872.17k
 ```
 
-The single-threaded single-block throughput for OpenSSL is about 12.94 Mhashes/s (828.2MB/s), for us it is about 83.53 Mhashes/s (5.35 GB/s).
+The single-threaded single-block throughput for OpenSSL with SHA-NI support is about 12.94 Mhashes/s (828.2MB/s), for us it is about 64.68 Mhashes/s (6.06 GB/s) at difficulty closest to default highest (4e6).
 
 ## Security Implications
 
