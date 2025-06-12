@@ -87,7 +87,7 @@ pub(crate) fn compress_block_reference(state: &mut [u32; 8], mut block: [u32; 16
 /// DO a 16-way SHA-256 compression function without adding back the saved state
 ///
 /// This is useful for making state share registers with a-h when caller has the previous state recalled cheaply from elsewhere after the fact
-pub(crate) fn compress_16block_avx512_without_saved_state(
+pub(crate) fn compress_16block_avx512_without_feedback(
     state: &mut [__m512i; 8],
     block: &mut [__m512i; 16],
 ) {
@@ -206,7 +206,7 @@ mod tests {
         for i in 0..16 {
             compress_block_reference(&mut states[i], blocks[i]);
         }
-        compress_16block_avx512_without_saved_state(&mut state_avx512, &mut block_avx512);
+        compress_16block_avx512_without_feedback(&mut state_avx512, &mut block_avx512);
         for i in 0..8 {
             state_avx512[i] = unsafe { _mm512_add_epi32(state_avx512[i], states_avx512_save[i]) };
         }
@@ -289,7 +289,7 @@ mod tests {
 
         // Process the blocks
         let mut state = state_avx512;
-        compress_16block_avx512_without_saved_state(&mut state, &mut block_avx512);
+        compress_16block_avx512_without_feedback(&mut state, &mut block_avx512);
         for i in 0..8 {
             state[i] = unsafe { _mm512_add_epi32(state[i], state_avx512[i]) };
         }

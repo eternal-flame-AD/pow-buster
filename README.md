@@ -212,9 +212,9 @@ type             16 bytes     64 bytes    256 bytes   1024 bytes   8192 bytes  1
 sha256          207107.04k   645724.06k  1507281.95k  2220402.22k  2655970.10k  2687872.17k
 ```
 
-The single-threaded throughput for OpenSSL with SHA-NI support is about 12.94 Mhashes/s (828.2MB/s) single block, 42.00 Mhashes/s (2.86 GB/s) continuous, for us it is about 94.79 Mhashes/s (6.06 GB/s) at difficulty closest to default highest (4e6).
+The single-threaded throughput for OpenSSL with SHA-NI support is about 12.94 MH/s (828.2MB/s) single block, 42.00 MH/s (2.86 GB/s) continuous, for us it is about 94.79 MH/s (6.06 GB/s) at difficulty closest to default highest (4e6).
 
-The peak throughput reported by `openssl speed -multi 32 sha256` is 239.76 Mhashes/s (15.34 GB/s) single block, 1.14 Ghashes/s (73.24 GB/s) continuous. The multi-threaded rash rate derived from our E2E testing is 1.15 Ghases/s (73.39 GB/s) at default highest difficulty (5e6).
+The peak throughput reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous. The multi-threaded rash rate derived from our E2E testing is 1.18 GH/s (75.77 GB/s) (95% conf: 1.1811 GH/s, 1.1866 GH/s) at default highest difficulty (5e6).
 
 ## Security Implications
 

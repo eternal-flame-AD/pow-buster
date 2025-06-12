@@ -10,7 +10,7 @@ use std::{
 use clap::{Parser, Subcommand};
 use tokio::task::JoinSet;
 
-use simd_mcaptcha_solver::{SingleBlockSolver, Solver, client::solve_mcaptcha, compute_target};
+use simd_mcaptcha::{SingleBlockSolver, Solver, client::solve_mcaptcha, compute_target};
 
 #[derive(Parser)]
 struct Cli {
@@ -28,7 +28,7 @@ enum SubCommand {
         site_key: String,
 
         #[clap(short, long, default_value = "32")]
-        n_workers: u32,
+        n_workers: Option<u32>,
 
         #[clap(long)]
         do_control: bool,
@@ -40,6 +40,16 @@ enum SubCommand {
     Profile {
         #[clap(short, long, default_value = "10000000")]
         difficulty: u32,
+    },
+    ProfileMt {
+        #[clap(short, long, default_value = "10000000")]
+        difficulty: u32,
+
+        #[clap(long)]
+        speed: bool,
+
+        #[clap(short, long, default_value = "1")]
+        n_threads: Option<u32>,
     },
     Time {
         #[clap(short, long, default_value = "10000000")]
@@ -56,7 +66,10 @@ async fn main() {
     let cli = Cli::parse();
     match cli.subcommand {
         SubCommand::Profile { difficulty } => {
-            println!("entering busy loop, attach debugger to this process");
+            println!(
+                "entering busy loop, attach profiler to this process now (difficulty: {})",
+                difficulty
+            );
             for prefix in 0..u64::MAX {
                 let prefix = prefix.to_ne_bytes();
                 let mut solver = SingleBlockSolver::new((), &prefix).expect("solver is None");
@@ -73,6 +86,53 @@ async fn main() {
                 let result = solver.solve(target_u32s).expect("solver failed");
                 core::hint::black_box(result);
             }
+        }
+        SubCommand::ProfileMt {
+            difficulty,
+            speed,
+            n_threads,
+        } => {
+            let n_threads = n_threads.unwrap_or_else(|| num_cpus::get() as u32);
+            println!(
+                "entering busy loop, attach profiler to this process now (difficulty: {}, n_threads: {})",
+                difficulty, n_threads
+            );
+            let counter = Arc::new(AtomicU64::new(0));
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(n_threads as usize)
+                .build()
+                .unwrap();
+            if speed {
+                let counter = counter.clone();
+                tokio::spawn(async move {
+                    let mut ticker = tokio::time::interval(Duration::from_secs(1));
+                    let start = Instant::now();
+                    loop {
+                        ticker.tick().await;
+                        let counter = counter.load(Ordering::Relaxed);
+                        eprintln!("{} rps", counter as f32 / start.elapsed().as_secs_f32());
+                    }
+                });
+            }
+            pool.broadcast(move |_| {
+                for prefix in 0..u64::MAX {
+                    let prefix = prefix.to_ne_bytes();
+                    let mut solver = SingleBlockSolver::new((), &prefix).expect("solver is None");
+                    let target = compute_target(difficulty);
+                    let target_bytes = target.to_be_bytes();
+                    let target_u32s = core::array::from_fn(|i| {
+                        u32::from_be_bytes([
+                            target_bytes[i * 4],
+                            target_bytes[i * 4 + 1],
+                            target_bytes[i * 4 + 2],
+                            target_bytes[i * 4 + 3],
+                        ])
+                    });
+                    let result = solver.solve(target_u32s).expect("solver failed");
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    core::hint::black_box(result);
+                }
+            });
         }
         SubCommand::Time {
             difficulty,
@@ -139,7 +199,8 @@ async fn main() {
             #[cfg(feature = "wgpu")]
             use_gpu,
         } => {
-            eprintln!("You are hitting host {}", host);
+            let n_workers = n_workers.unwrap_or_else(|| num_cpus::get() as u32);
+            eprintln!("You are hitting host {}, n_workers: {}", host, n_workers);
             let pool = rayon::ThreadPoolBuilder::new()
                 .num_threads(n_workers as usize)
                 .build()
@@ -220,13 +281,12 @@ async fn main() {
                         })
                         .await
                         .unwrap();
-                    let mut ctx =
-                        simd_mcaptcha_solver::wgpu::VulkanDeviceContext::new(device, queue);
+                    let mut ctx = simd_mcaptcha::wgpu::VulkanDeviceContext::new(device, queue);
 
                     tokio::spawn(async move {
                         let client = reqwest::ClientBuilder::new().build().unwrap();
                         loop {
-                            match simd_mcaptcha_solver::client::solve_mcaptcha_wgpu(
+                            match simd_mcaptcha::client::solve_mcaptcha_wgpu(
                                 &mut ctx,
                                 &client,
                                 &host_clone,

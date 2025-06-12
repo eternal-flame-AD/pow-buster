@@ -122,7 +122,7 @@ pub async fn solve_mcaptcha_wgpu(
     site_key: &str,
     really_solve: bool,
 ) -> Result<String, SolveError> {
-    use generic_array::typenum::U256;
+    use typenum::U256;
 
     let url_get_work = format!("{}/api/v1/pow/config", base_url);
     let res = client

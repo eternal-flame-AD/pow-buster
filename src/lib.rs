@@ -4,9 +4,7 @@ use core::arch::x86_64::*;
 use core::hint::unreachable_unchecked;
 use std::ops::{Deref, DerefMut};
 
-use generic_array::typenum::{
-    U0, U1, U2, U3, U4, U5, U6, U7, U8, U9, U10, U11, U12, U13, U14, U15, Unsigned,
-};
+use typenum::{U0, U1, U2, U3, U4, U5, U6, U7, U8, U9, U10, U11, U12, U13, U14, U15, Unsigned};
 
 #[cfg(feature = "client")]
 pub mod client;
@@ -217,7 +215,7 @@ impl Solver for SingleBlockSolver {
         fn solve_inner<DigitWordIdx0: Unsigned, DigitWordIdx1: Unsigned>(
             this: &mut SingleBlockSolver,
             target: u32,
-        ) -> Option<(u64, u128)> {
+        ) -> Option<u64> {
             let lane_id_0_byte_idx = this.digit_index % 4;
             let lane_id_1_byte_idx = (this.digit_index + 1) % 4;
             // pre-compute the lane index OR mask to "stamp" onto each lane for each try
@@ -229,9 +227,6 @@ impl Solver for SingleBlockSolver {
             let lane_id_1_or_value: [u32; 5 * 16] = core::array::from_fn(|i| {
                 (b"012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"[i] as u32) << ((3 - lane_id_1_byte_idx) * 8) as u32
             });
-
-            let mut blocks: [__m512i; 16] =
-                core::array::from_fn(|_| unsafe { _mm512_setzero_epi32() });
 
             for prefix_set_index in 0..5 {
                 let lane_id_0_or_value_v = unsafe {
@@ -256,7 +251,7 @@ impl Solver for SingleBlockSolver {
                         {
                             let message_bytes = decompose_blocks_mut(&mut this.message);
 
-                            for i in 0..7 {
+                            for i in (0..7).rev() {
                                 let output = key_copy % 10;
                                 key_copy /= 10;
                                 *message_bytes.get_unchecked_mut(
@@ -266,24 +261,59 @@ impl Solver for SingleBlockSolver {
                         }
                         debug_assert_eq!(key_copy, 0);
 
+                        macro_rules! fetch_msg {
+                            ($idx:expr) => {
+                                if $idx == DigitWordIdx0::USIZE {
+                                    if $idx == DigitWordIdx1::USIZE {
+                                        _mm512_or_epi32(
+                                            _mm512_set1_epi32(this.message[$idx] as _),
+                                            _mm512_or_epi32(
+                                                lane_id_0_or_value_v,
+                                                lane_id_1_or_value_v,
+                                            ),
+                                        )
+                                    } else {
+                                        _mm512_or_epi32(
+                                            _mm512_set1_epi32(this.message[$idx] as _),
+                                            lane_id_0_or_value_v,
+                                        )
+                                    }
+                                } else if $idx == DigitWordIdx1::USIZE {
+                                    _mm512_or_epi32(
+                                        _mm512_set1_epi32(this.message[$idx] as _),
+                                        lane_id_1_or_value_v,
+                                    )
+                                } else {
+                                    _mm512_set1_epi32(this.message[$idx] as _)
+                                }
+                            };
+                        }
+
+                        let mut blocks = [
+                            fetch_msg!(0),
+                            fetch_msg!(1),
+                            fetch_msg!(2),
+                            fetch_msg!(3),
+                            fetch_msg!(4),
+                            fetch_msg!(5),
+                            fetch_msg!(6),
+                            fetch_msg!(7),
+                            fetch_msg!(8),
+                            fetch_msg!(9),
+                            fetch_msg!(10),
+                            fetch_msg!(11),
+                            fetch_msg!(12),
+                            fetch_msg!(13),
+                            fetch_msg!(14),
+                            fetch_msg!(15),
+                        ];
+
                         let mut state =
                             core::array::from_fn(|i| _mm512_set1_epi32(this.prefix_state[i] as _));
-                        for i in 0..16 {
-                            blocks[i] = _mm512_set1_epi32(this.message[i] as _);
-                        }
-                        blocks[DigitWordIdx0::USIZE] = _mm512_or_epi32(
-                            *blocks.get_unchecked(DigitWordIdx0::USIZE),
-                            lane_id_0_or_value_v,
-                        );
-                        blocks[DigitWordIdx1::USIZE] = _mm512_or_epi32(
-                            *blocks.get_unchecked(DigitWordIdx1::USIZE),
-                            lane_id_1_or_value_v,
-                        );
-                        // do 16-way SHA-256 without adding back the saved state so as not to force the compiler to save 8 registers
-                        sha256::compress_16block_avx512_without_saved_state(
-                            &mut state,
-                            &mut blocks,
-                        );
+
+                        // do 16-way SHA-256 without feedback so as not to force the compiler to save 8 registers
+                        // we already have them in scalar form, this allows more registers to be reused in the next iteration
+                        sha256::compress_16block_avx512_without_feedback(&mut state, &mut blocks);
 
                         // the target is big endian interpretation of the first 16 bytes of the hash (A-D) >= target
                         // however, the largest 32-bit digits is unlikely to be all ones (otherwise a legitimate challenger needs on average >2^32 attempts)
@@ -305,17 +335,7 @@ impl Solver for SingleBlockSolver {
                             let success_lane_idx = _tzcnt_u32(a_is_greater as _) as usize;
                             let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx as u64;
 
-                            // reconstruct the actual nonce for this lane
-                            let mut nonce_tail = 0u64;
-                            for i in 0..7 {
-                                nonce_tail *= 10;
-                                let message_bytes = decompose_blocks_mut(&mut this.message);
-                                nonce_tail += (*message_bytes.get_unchecked(
-                                    *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + i + 2),
-                                ) as u64)
-                                    - b'0' as u64;
-                            }
-
+                            // stamp the lane ID back onto the message
                             {
                                 let message_bytes = decompose_blocks_mut(&mut this.message);
                                 *message_bytes.get_unchecked_mut(
@@ -327,20 +347,7 @@ impl Solver for SingleBlockSolver {
                             }
 
                             // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
-                            let nonce = nonce_prefix * 10u64.pow(7) + nonce_tail;
-
-                            // recompute the hash from the beginning
-                            // this prevents the compiler from having to compute the final B-H registers alive in tight loops
-                            let mut final_sha_state = this.prefix_state.clone();
-                            sha256::compress_block_reference(&mut final_sha_state, this.message);
-
-                            return Some((
-                                nonce + this.nonce_addend,
-                                (final_sha_state[0] as u128) << 96
-                                    | (final_sha_state[1] as u128) << 64
-                                    | (final_sha_state[2] as u128) << 32
-                                    | (final_sha_state[3] as u128),
-                            ));
+                            return Some(nonce_prefix * 10u64.pow(7) + inner_key);
                         }
                     }
                 }
@@ -372,7 +379,7 @@ impl Solver for SingleBlockSolver {
             };
         }
 
-        unsafe {
+        let nonce = unsafe {
             match lane_id_0_word_idx {
                 0 => dispatch!(U0),
                 1 => dispatch!(U1),
@@ -392,7 +399,139 @@ impl Solver for SingleBlockSolver {
                 15 => dispatch!(U15),
                 _ => unreachable_unchecked(),
             }
+        }?;
+
+        // recompute the hash from the beginning
+        // this prevents the compiler from having to compute the final B-H registers alive in tight loops
+        let mut final_sha_state = self.prefix_state.clone();
+        sha256::compress_block_reference(&mut final_sha_state, self.message);
+
+        Some((
+            nonce + self.nonce_addend,
+            (final_sha_state[0] as u128) << 96
+                | (final_sha_state[1] as u128) << 64
+                | (final_sha_state[2] as u128) << 32
+                | (final_sha_state[3] as u128),
+        ))
+    }
+}
+
+pub struct Sha2CrateSolver {
+    // the SHA-256 state A-H for all prefix bytes
+    pub(crate) prefix_state: [u32; 8],
+
+    // the message template for the final block
+    pub(crate) message:
+        sha2::digest::generic_array::GenericArray<u8, sha2::digest::generic_array::typenum::U64>,
+
+    pub(crate) digit_index: usize,
+
+    pub(crate) nonce_addend: u64,
+}
+
+impl Solver for Sha2CrateSolver {
+    type Ctx = ();
+
+    fn new(_ctx: Self::Ctx, mut prefix: &[u8]) -> Option<Self> {
+        // construct the message buffer
+        let mut prefix_state = [
+            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+            0x5be0cd19,
+        ];
+        let mut nonce_addend = 0u64;
+        let mut complete_blocks_before = 0;
+
+        // first consume all full blocks, this is shared so use scalar reference implementation
+        while prefix.len() >= 64 {
+            sha256::compress_block_reference(
+                &mut prefix_state,
+                core::array::from_fn(|i| {
+                    u32::from_be_bytes([
+                        prefix[i * 4],
+                        prefix[i * 4 + 1],
+                        prefix[i * 4 + 2],
+                        prefix[i * 4 + 3],
+                    ])
+                }),
+            );
+            prefix = &prefix[64..];
+            complete_blocks_before += 1;
         }
+        // if there is not enough room for 9 bytes of padding, '1's and then start a new block whenever possible
+        // this avoids having to hash 2 blocks per iteration a naive solution would do
+        if prefix.len() + 9 + 9 > 64 {
+            let mut tmp_block = [0; 64];
+            tmp_block[..prefix.len()].copy_from_slice(prefix);
+            tmp_block[prefix.len()..].iter_mut().for_each(|b| {
+                nonce_addend *= 10;
+                nonce_addend += 1;
+                *b = b'1';
+            });
+            nonce_addend = nonce_addend.checked_mul(1_000_000_000)?;
+            complete_blocks_before += 1;
+            prefix = &[];
+            sha256::compress_block_reference(
+                &mut prefix_state,
+                core::array::from_fn(|i| {
+                    u32::from_be_bytes([
+                        tmp_block[i * 4],
+                        tmp_block[i * 4 + 1],
+                        tmp_block[i * 4 + 2],
+                        tmp_block[i * 4 + 3],
+                    ])
+                }),
+            );
+        }
+
+        let mut message = sha2::digest::generic_array::GenericArray::default();
+        let mut ptr = 0;
+        message[..prefix.len()].copy_from_slice(prefix);
+        ptr += prefix.len();
+        let digit_index = ptr;
+
+        // skip 9 zeroes, this is the part we will interpolate N into
+        // the first 2 digits are used as the lane index (10 + (0..16)*(0..4), offset to avoid leading zeroes), this also keeps our proof plausible
+        // the rest are randomly generated then broadcasted to all lanes
+        // this gives us about 16e7 * 4 possible attempts, likely enough for any realistic deployment even on the highest difficulty
+        // the fail rate would be pgeom(keySpace, 1/difficulty, lower=F) in R
+        ptr += 9;
+
+        // set up padding
+        message[ptr] = 0x80;
+        message[(64 - 8)..]
+            .copy_from_slice(&((complete_blocks_before * 64 + ptr) as u64 * 8).to_be_bytes());
+
+        Some(Self {
+            prefix_state,
+            message,
+            digit_index,
+            nonce_addend,
+        })
+    }
+
+    fn solve(&mut self, target: [u32; 4]) -> Option<(u64, u128)> {
+        for key in 900_000_000..1_000_000_000 {
+            let mut key_copy = key;
+            for i in (0..9).rev() {
+                self.message[self.digit_index + i] = (key_copy % 10) as u8 + b'0';
+                key_copy /= 10;
+            }
+
+            let mut state = self.prefix_state.clone();
+            sha2::compress256(&mut state, &[self.message]);
+
+            if state[0] > target[0] {
+                return Some((
+                    key + self.nonce_addend,
+                    (state[0] as u128) << 96
+                        | (state[1] as u128) << 64
+                        | (state[2] as u128) << 32
+                        | (state[3] as u128),
+                ));
+            }
+        }
+
+        None
     }
 }
 
@@ -400,8 +539,10 @@ impl Solver for SingleBlockSolver {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_solve() {
+    fn test_solve<S: Solver>()
+    where
+        <S as Solver>::Ctx: Default,
+    {
         const SALT: &str = "z";
 
         let mut cannot_solve = 0;
@@ -411,9 +552,9 @@ mod tests {
             concatenated_prefix.extend_from_slice(&bincode::serialize(&phrase_str).unwrap());
 
             let config = pow_sha256::Config { salt: SALT.into() };
-            const DIFFICULTY: u32 = 50_000;
+            const DIFFICULTY: u32 = 10_000;
 
-            let solver = SingleBlockSolver::new((), &concatenated_prefix);
+            let solver = S::new(Default::default(), &concatenated_prefix);
             let Some(mut solver) = solver else {
                 eprintln!("solver is None for phrase_len: {}", phrase_len);
                 cannot_solve += 1;
@@ -457,5 +598,15 @@ mod tests {
             cannot_solve,
             (64 - cannot_solve) as f64 / 64.0 * 100.0
         );
+    }
+
+    #[test]
+    fn test_solve_single_block() {
+        test_solve::<SingleBlockSolver>();
+    }
+
+    #[test]
+    fn test_solve_sha2_crate() {
+        test_solve::<Sha2CrateSolver>();
     }
 }

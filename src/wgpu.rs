@@ -1,7 +1,4 @@
-use generic_array::{
-    ArrayLength,
-    typenum::{B1, IsGreater, U0, U256},
-};
+use typenum::{B1, IsGreater, U0, U256, Unsigned};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::{SWAP_DWORD_BYTE_ORDER, SingleBlockSolver, decompose_blocks_mut};
@@ -180,10 +177,8 @@ impl VulkanDeviceContext {
     }
 }
 
-pub struct VulkanSingleBlockSolver<
-    'a,
-    WorkGroupSize: ArrayLength + IsGreater<U0, Output = B1> = U256,
-> {
+pub struct VulkanSingleBlockSolver<'a, WorkGroupSize: Unsigned + IsGreater<U0, Output = B1> = U256>
+{
     ctx: &'a mut VulkanDeviceContext,
     message: [u32; 16],
     saved_state: [u32; 12],
@@ -194,8 +189,8 @@ pub struct VulkanSingleBlockSolver<
     _marker: std::marker::PhantomData<WorkGroupSize>,
 }
 
-impl<WorkGroupSize: ArrayLength + IsGreater<U0, Output = B1>>
-    VulkanSingleBlockSolver<'_, WorkGroupSize>
+impl<'a, WorkGroupSize: Unsigned + IsGreater<U0, Output = B1>>
+    VulkanSingleBlockSolver<'a, WorkGroupSize>
 {
     const SAVED_STATE_NONCE_OFFSET_IDX: usize = 8;
     const SAVED_STATE_TARGET_MSB_IDX: usize = 9;
@@ -203,7 +198,7 @@ impl<WorkGroupSize: ArrayLength + IsGreater<U0, Output = B1>>
     const SAVED_STATE_TESTS_PER_THREAD_IDX: usize = 11;
 }
 
-impl<'a, WorkGroupSize: ArrayLength + IsGreater<U0, Output = B1>> crate::Solver
+impl<'a, WorkGroupSize: Unsigned + IsGreater<U0, Output = B1>> crate::Solver
     for VulkanSingleBlockSolver<'a, WorkGroupSize>
 {
     type Ctx = &'a mut VulkanDeviceContext;
@@ -371,7 +366,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn test_solve_wgpu() {
-        use generic_array::typenum::U1024;
+        use typenum::U1024;
         const SALT: &str = "x";
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
