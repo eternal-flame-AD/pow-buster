@@ -1,7 +1,5 @@
 use core::arch::x86_64::*;
 
-use typenum::Unsigned;
-
 /// Round constants for SHA-256 family of digests
 static K32: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -126,6 +124,8 @@ pub(crate) fn compress_block_reference(state: &mut [u32; 8], mut block: [u32; 16
     state[7] = state[7].wrapping_add(h);
 }
 
+// disable inline because without hardware AVX-512 this will explode in complexity and cause comptime to skyrocket
+// disable inline for debug_assertions because no one wants to wait for 5 minutes to run a unit test
 #[cfg_attr(all(not(debug_assertions), target_feature = "avx512f"), inline(always))]
 /// Do a 16-way SHA-256 compression function without adding back the saved state, without feedback
 ///
@@ -195,7 +195,7 @@ pub(crate) fn compress_16block_avx512_without_feedback(
 ///
 /// You can skip loading the first couple words by passing a non-zero value for `LeadingZeroes`
 #[cfg_attr(all(not(debug_assertions), target_feature = "avx512f"), inline(always))]
-pub(crate) fn compress_16block_avx512_bcst_without_feedback<LeadingZeroes: Unsigned>(
+pub(crate) fn compress_16block_avx512_bcst_without_feedback<const LEAD_ZEROES: usize>(
     state: &mut [__m512i; 8],
     block: &[u32; 64],
 ) {
@@ -203,7 +203,7 @@ pub(crate) fn compress_16block_avx512_bcst_without_feedback<LeadingZeroes: Unsig
         let [a, b, c, d, e, f, g, h] = &mut *state;
 
         repeat64!(i, {
-            let w = if i < LeadingZeroes::USIZE {
+            let w = if i < LEAD_ZEROES {
                 debug_assert_eq!(block[i], 0, "block[{}] is not zero", i);
                 _mm512_setzero_si512()
             } else {
@@ -247,7 +247,6 @@ pub(crate) fn compress_16block_avx512_bcst_without_feedback<LeadingZeroes: Unsig
 #[cfg(test)]
 mod tests {
     use rand::{Rng, SeedableRng};
-    use typenum::U0;
 
     use super::*;
 
@@ -448,7 +447,7 @@ mod tests {
             ]
         };
 
-        compress_16block_avx512_bcst_without_feedback::<U0>(&mut state_avx512, &block);
+        compress_16block_avx512_bcst_without_feedback::<0>(&mut state_avx512, &block);
         for i in 0..8 {
             state_avx512[i] =
                 unsafe { _mm512_add_epi32(state_avx512[i], _mm512_set1_epi32(ivs[i] as _)) };
