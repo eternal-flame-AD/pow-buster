@@ -94,13 +94,7 @@ pub trait Solver {
 
 // Solves an mCaptcha SHA256 PoW where the SHA-256 message is a single block (512 bytes minus padding).
 //
-// There are currently 6 out of 64 possible message length remainders that cross block boundaries,
-// this is a limitation of the current implementation, but the other >90% of the cases are covered.
-//
-// The main limitations are:
-// 1. No AVX2 fallback for more common hardware
-// 2. Doesn't handle ~10% of cases where message crosses block boundaries,
-// this is a periodic problem, using longer salt do not automatically mean immunity.
+// There is currently no AVX2 fallback for more common hardware
 #[derive(Debug, Clone)]
 pub struct SingleBlockSolver16Way {
     // the SHA-256 state A-H for all prefix bytes
