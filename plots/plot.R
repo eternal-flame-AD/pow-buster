@@ -5,7 +5,7 @@ library(patchwork)
 library(cowplot)
 library(scales)
 
-simd.hps <- 5e7 / 0.59855
+simd.hps <- 4e6 / 0.044254
 browser.hps <- 5e6 / mean(c(
         0.105, 1.69, 1.06, 1.89, 1.91, 1.09, 1.80, 0.97, 0.71, 1.15, 3.59, 1.09, 0.14, 3.98, 1.26, 1.05, 1.26
     ))
@@ -14,13 +14,12 @@ browser.cacm.hps <- 14760000 / 13.7065
 
 hps <- tribble(
     ~environment, ~hps,
-    "\"openssl speed\" baseline (1 thread)", 201949.08 / 16 * 1000,
-    "simd-mcaptcha (1 thread)", simd.hps,
-    "autovectorized official build (1 thread)", 5e7 / 2.6573,
-    "generic official build (1 thread)", 5e7 / 4.696,
-    "official wasm build", browser.hps,
-    "official CACM paper survey", browser.cacm.hps,
-    "simd-mcaptch wgpu (unoptimized)", 5e7 / 0.22723,
+    "AVX-512 Adversarially Optimized (32 threads E2E)", 5e6 * 13761 / 60,
+    "AVX-512 Adversarially Optimized (1 thread)", simd.hps,
+    "SHA-NI Safely Optimized", 4e6 / 0.092932,
+    "autovectorized official build (1 thread)", 4e6 / 0.22714,
+    "generic official build (1 thread)", 4e6 / 0.48967,
+    "official WASM build", browser.hps,
 ) |>
     mutate(
         environment = fct_reorder(environment, hps, .desc = TRUE),
@@ -52,9 +51,10 @@ p <- map2(c(1000000, 5000000, 10000000, 50000000), c("bottom", "none", "bottom",
             caption = sprintf("SIMD: (%.2fs 50%%, %.2fs 99%%), browser: (%.2fs 50%%, %.2fs 99%%), CACM User Survey: (%.2fs 50%%, %.2fs 99%%)", simd.t50, simd.t99, browser.t50, browser.t99, official.cacm.t50, official.cacm.t99)
         ) +
         scale_x_continuous(
-          limits = c(0, max(browser.t99, official.cacm.t95)),
+          limits = c(0, browser.t99),
           labels = label_timespan(unit = "secs"),
-          breaks = c(seq(0, browser.t99, by = if (browser.t99 > 5) 10 else 1), browser.t99, browser.t50, official.cacm.t95)) +
+          breaks = seq(0, 1, by = 0.1) * max(browser.t99, official.cacm.t95)
+        ) +
         geom_hline(yintercept = 0.95, linetype = "dashed", color = "navy") +
         annotate(
             "text",
