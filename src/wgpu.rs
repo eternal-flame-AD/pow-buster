@@ -1,7 +1,7 @@
 use typenum::{B1, IsGreater, U0, U256, Unsigned};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
-use crate::{SWAP_DWORD_BYTE_ORDER, SingleBlockSolver, decompose_blocks_mut};
+use crate::{SWAP_DWORD_BYTE_ORDER, SingleBlockSolver16Way, decompose_blocks_mut};
 
 const GEOM_QUANTILE_50: f32 = 0.6931471805599453;
 
@@ -204,7 +204,7 @@ impl<'a, WorkGroupSize: Unsigned + IsGreater<U0, Output = B1>> crate::Solver
     type Ctx = &'a mut VulkanDeviceContext;
 
     fn new(ctx: Self::Ctx, prefix: &[u8]) -> Option<Self> {
-        let tmp_solver = SingleBlockSolver::new((), prefix)?;
+        let tmp_solver = SingleBlockSolver16Way::new((), prefix)?;
 
         let mut saved_state = [0; 12];
         saved_state[Self::SAVED_STATE_TARGET_NUMBER_BYTE_IDX] = tmp_solver.digit_index as u32;

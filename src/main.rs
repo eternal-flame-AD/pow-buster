@@ -10,7 +10,7 @@ use std::{
 use clap::{Parser, Subcommand};
 use tokio::task::JoinSet;
 
-use simd_mcaptcha::{SingleBlockSolver, Solver, client::solve_mcaptcha, compute_target};
+use simd_mcaptcha::{SingleBlockSolver16Way, Solver, client::solve_mcaptcha, compute_target};
 
 #[derive(Parser)]
 struct Cli {
@@ -72,7 +72,7 @@ async fn main() {
             );
             for prefix in 0..u64::MAX {
                 let prefix = prefix.to_ne_bytes();
-                let mut solver = SingleBlockSolver::new((), &prefix).expect("solver is None");
+                let mut solver = SingleBlockSolver16Way::new((), &prefix).expect("solver is None");
                 let target = compute_target(difficulty);
                 let target_bytes = target.to_be_bytes();
                 let target_u32s = core::array::from_fn(|i| {
@@ -117,7 +117,8 @@ async fn main() {
             pool.broadcast(move |_| {
                 for prefix in 0..u64::MAX {
                     let prefix = prefix.to_ne_bytes();
-                    let mut solver = SingleBlockSolver::new((), &prefix).expect("solver is None");
+                    let mut solver =
+                        SingleBlockSolver16Way::new((), &prefix).expect("solver is None");
                     let target = compute_target(difficulty);
                     let target_bytes = target.to_be_bytes();
                     let target_u32s = core::array::from_fn(|i| {
@@ -152,7 +153,7 @@ async fn main() {
             let begin = Instant::now();
             for i in 0..10u64 {
                 let mut solver =
-                    SingleBlockSolver::new((), &i.to_ne_bytes()).expect("solver is None");
+                    SingleBlockSolver16Way::new((), &i.to_ne_bytes()).expect("solver is None");
                 let inner_begin = Instant::now();
                 let (nonce, result) = solver.solve(target_u32s).expect("solver failed");
                 eprintln!(

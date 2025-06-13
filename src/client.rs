@@ -60,8 +60,6 @@ pub async fn solve_mcaptcha(
 
     let mut prefix = Vec::new();
     crate::build_prefix(&mut prefix, &config.string, &config.salt).unwrap();
-    let mut solver =
-        crate::SingleBlockSolver::new((), &prefix).ok_or(SolveError::NotImplemented)?;
     let target_bytes = compute_target(config.difficulty_factor).to_be_bytes();
     let target_u32s = core::array::from_fn(|i| {
         u32::from_be_bytes([
@@ -75,10 +73,20 @@ pub async fn solve_mcaptcha(
     let (nonce, result) = if really_solve {
         let (tx, rx) = tokio::sync::oneshot::channel();
 
-        pool.spawn(move || {
-            let result = solver.solve(target_u32s);
-            tx.send(result).ok();
-        });
+        // these length needs to be double-hashed
+        if (47..=52).contains(&prefix.len()) {
+            pool.spawn(move || {
+                let mut solver = crate::DoubleBlockSolver16Way::new((), &prefix).unwrap();
+                let result = solver.solve(target_u32s);
+                tx.send(result).ok();
+            });
+        } else {
+            pool.spawn(move || {
+                let mut solver = crate::SingleBlockSolver16Way::new((), &prefix).unwrap();
+                let result = solver.solve(target_u32s);
+                tx.send(result).ok();
+            });
+        }
 
         rx.await.unwrap().ok_or(SolveError::SolverFailed)?
     } else {

@@ -7,7 +7,9 @@ use criterion::{Criterion, criterion_group, criterion_main};
 
 use sha2::Digest;
 use sha2::digest::generic_array::sequence::GenericSequence;
-use simd_mcaptcha::{Sha2CrateSolver, SingleBlockSolver, Solver, compute_target};
+use simd_mcaptcha::{
+    DoubleBlockSolver16Way, SingleBlockSolver16Way, SingleBlockSolverNative, Solver, compute_target,
+};
 
 struct ProofKey {
     difficulty: u32,
@@ -125,13 +127,11 @@ pub fn bench_sha2_crate_bulk(c: &mut Criterion) {
 
 pub fn bench_proof(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_proof");
-    group.sample_size(250);
+    group.sample_size(100);
     group.warm_up_time(Duration::from_secs(8));
-    group.measurement_time(Duration::from_secs(15));
+    group.measurement_time(Duration::from_secs(30));
     group.throughput(Throughput::Elements(1));
-    for difficulty in [
-        50_000, 100_000, 1_000_000, 4_000_000, 10_000_000, 50_000_000,
-    ] {
+    for difficulty in [50_000, 100_000, 1_000_000, 4_000_000, 10_000_000] {
         let target = compute_target(difficulty);
         let target_bytes = target.to_be_bytes();
         let target_u32s = core::array::from_fn(|i| {
@@ -142,7 +142,6 @@ pub fn bench_proof(c: &mut Criterion) {
                 target_bytes[i * 4 + 3],
             ])
         });
-        let mut counter = 0u64;
         group.bench_with_input(
             BenchmarkId::new(
                 "proof",
@@ -153,14 +152,49 @@ pub fn bench_proof(c: &mut Criterion) {
             ),
             &difficulty,
             |b, &_difficulty| {
-                counter += 1;
-                let mut solver =
-                    SingleBlockSolver::new((), &counter.to_ne_bytes()).expect("solver is None");
-
-                b.iter(|| solver.solve(target_u32s).expect("solver failed"))
+                b.iter_custom(|iters| {
+                    let start = std::time::Instant::now();
+                    for i in 0..iters {
+                        for j in 0..10 {
+                            let mut solver =
+                                SingleBlockSolver16Way::new((), &(i * 10 + j).to_ne_bytes())
+                                    .expect("solver is None");
+                            core::hint::black_box(
+                                solver.solve(target_u32s).expect("solver failed"),
+                            );
+                        }
+                    }
+                    start.elapsed() / 10
+                })
             },
         );
-        counter = 0;
+        group.bench_with_input(
+            BenchmarkId::new(
+                "proof (double block)",
+                ProofKey {
+                    difficulty,
+                    solver_type: "native",
+                },
+            ),
+            &difficulty,
+            |b, &_difficulty| {
+                b.iter_custom(|iters| {
+                    let start = std::time::Instant::now();
+                    let mut prefix: [u8; 48] = [0; 48];
+                    for i in 0..iters {
+                        for j in 0..10 {
+                            prefix[..8].copy_from_slice(&(i * 10 + j).to_ne_bytes());
+                            let mut solver =
+                                DoubleBlockSolver16Way::new((), &prefix).expect("solver is None");
+                            core::hint::black_box(
+                                solver.solve(target_u32s).expect("solver failed"),
+                            );
+                        }
+                    }
+                    start.elapsed() / 10
+                })
+            },
+        );
         group.bench_with_input(
             BenchmarkId::new(
                 "proof",
@@ -171,14 +205,22 @@ pub fn bench_proof(c: &mut Criterion) {
             ),
             &difficulty,
             |b, &_difficulty| {
-                counter += 1;
-                let mut solver =
-                    Sha2CrateSolver::new((), &counter.to_ne_bytes()).expect("solver is None");
-
-                b.iter(|| solver.solve(target_u32s).expect("solver failed"))
+                b.iter_custom(|iters| {
+                    let start = std::time::Instant::now();
+                    for i in 0..iters {
+                        for j in 0..10 {
+                            let mut solver =
+                                SingleBlockSolverNative::new((), &(i * 10 + j).to_ne_bytes())
+                                    .expect("solver is None");
+                            core::hint::black_box(
+                                solver.solve(target_u32s).expect("solver failed"),
+                            );
+                        }
+                    }
+                    start.elapsed() / 10
+                })
             },
         );
-        counter = 0;
         group.bench_with_input(
             BenchmarkId::new(
                 "proof",
@@ -189,23 +231,60 @@ pub fn bench_proof(c: &mut Criterion) {
             ),
             &difficulty,
             |b, &_difficulty| {
-                counter += 1;
                 let solver = pow_sha256::ConfigBuilder::default()
-                    .salt(counter.to_string())
+                    .salt(String::from("x"))
                     .build()
                     .unwrap();
 
-                b.iter(|| {
-                    let pow = solver.prove_work(&"x", difficulty).unwrap();
-                    (pow.nonce, pow.result)
+                b.iter_custom(|iters| {
+                    let start = std::time::Instant::now();
+                    for i in 0..iters {
+                        for j in 0..10 {
+                            let pow = solver.prove_work_serialized::<()>(
+                                &((i * 10 + j).to_ne_bytes()),
+                                difficulty,
+                            );
+                            core::hint::black_box((pow.nonce, pow.result));
+                        }
+                    }
+                    start.elapsed() / 10
+                })
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new(
+                "proof (double block)",
+                ProofKey {
+                    difficulty,
+                    solver_type: "official",
+                },
+            ),
+            &difficulty,
+            |b, &_difficulty| {
+                let solver = pow_sha256::ConfigBuilder::default()
+                    .salt(String::from("x"))
+                    .build()
+                    .unwrap();
+
+                b.iter_custom(|iters| {
+                    let start = std::time::Instant::now();
+                    // Give it a very awkward prefix length so a naive search would do 2 blocks
+                    let mut prefix: [u8; 64 - 2] = [0; 64 - 2];
+
+                    for i in 0..iters {
+                        for j in 0..10 {
+                            prefix[..8].copy_from_slice(&(i * 10 + j).to_ne_bytes());
+                            let pow = solver.prove_work_serialized::<()>(&prefix, difficulty);
+                            core::hint::black_box((pow.nonce, pow.result));
+                        }
+                    }
+                    start.elapsed() / 10
                 })
             },
         );
         #[cfg(feature = "wgpu")]
         {
             use simd_mcaptcha::wgpu::VulkanDeviceContext;
-            counter = 0;
-
             let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
                 backends: wgpu::Backends::VULKAN,
                 ..Default::default()
@@ -245,18 +324,19 @@ pub fn bench_proof(c: &mut Criterion) {
                         let mut ctx = VulkanDeviceContext::new(device.clone(), queue.clone());
 
                         let start = std::time::Instant::now();
-                        for _ in 0..iters {
-                            counter += 1;
-                            let mut solver = VulkanSingleBlockSolver::<U256>::new(
-                                &mut ctx,
-                                &counter.to_ne_bytes(),
-                            )
-                            .unwrap();
-                            core::hint::black_box(
-                                solver.solve(target_u32s).expect("solver failed"),
-                            );
+                        for i in 0..iters {
+                            for j in 0..10 {
+                                let mut solver = VulkanSingleBlockSolver::<U256>::new(
+                                    &mut ctx,
+                                    &(i * 10 + j).to_ne_bytes(),
+                                )
+                                .unwrap();
+                                core::hint::black_box(
+                                    solver.solve(target_u32s).expect("solver failed"),
+                                );
+                            }
                         }
-                        start.elapsed()
+                        start.elapsed() / 10
                     })
                 },
             );
@@ -297,8 +377,36 @@ pub fn bench_proof_rayon(c: &mut Criterion) {
                     .into_par_iter()
                     .map(|addend| {
                         let mut solver =
-                            SingleBlockSolver::new((), &(addend + start).to_ne_bytes())
+                            SingleBlockSolver16Way::new((), &(addend + start).to_ne_bytes())
                                 .expect("solver is None");
+
+                        let start = std::time::Instant::now();
+                        solver.solve(target_u32s).expect("solver failed");
+                        start.elapsed()
+                    })
+                    .sum::<Duration>()
+            },
+            criterion::BatchSize::SmallInput,
+        )
+    });
+
+    group.bench_function("proof_rayon (double block)", |b| {
+        let mut counter = 0u64;
+        b.iter_batched(
+            || {
+                counter += 1;
+                counter * 1024
+            },
+            |start| {
+                use rayon::iter::{IntoParallelIterator, ParallelIterator};
+
+                (0..1024)
+                    .into_par_iter()
+                    .map(|addend| {
+                        let mut prefix: [u8; 48] = [0; 48];
+                        prefix[..8].copy_from_slice(&(addend + start).to_ne_bytes());
+                        let mut solver =
+                            DoubleBlockSolver16Way::new((), &prefix).expect("solver is None");
 
                         let start = std::time::Instant::now();
                         solver.solve(target_u32s).expect("solver failed");

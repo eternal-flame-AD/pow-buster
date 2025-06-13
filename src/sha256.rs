@@ -1,5 +1,7 @@
 use core::arch::x86_64::*;
 
+use typenum::Unsigned;
+
 /// Round constants for SHA-256 family of digests
 static K32: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -34,6 +36,47 @@ macro_rules! repeat64 {
     };
 }
 
+/// pre-compute the message schedule for a single block
+///
+/// The first 16 words are the input block, the rest are computed from them
+#[inline(always)]
+pub(crate) const fn do_message_schedule(w: &mut [u32; 64]) {
+    let w_tmp = [
+        w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9], w[10], w[11], w[12], w[13],
+        w[14], w[15],
+    ];
+    repeat64!(i, {
+        if i >= 16 {
+            let w15 = w[(i - 15) % 16];
+            let s0 = (w15.rotate_right(7)) ^ (w15.rotate_right(18)) ^ (w15 >> 3);
+            let w2 = w[(i - 2) % 16];
+            let s1 = (w2.rotate_right(17)) ^ (w2.rotate_right(19)) ^ (w2 >> 10);
+            w[i % 16] = w[i % 16].wrapping_add(s0);
+            w[i % 16] = w[i % 16].wrapping_add(w[(i - 7) % 16]);
+            w[i % 16] = w[i % 16].wrapping_add(s1);
+            w[i] = w[i % 16];
+        }
+    });
+    w[0] = w_tmp[0];
+    w[1] = w_tmp[1];
+    w[2] = w_tmp[2];
+    w[3] = w_tmp[3];
+    w[4] = w_tmp[4];
+    w[5] = w_tmp[5];
+    w[6] = w_tmp[6];
+    w[7] = w_tmp[7];
+    w[8] = w_tmp[8];
+    w[9] = w_tmp[9];
+    w[10] = w_tmp[10];
+    w[11] = w_tmp[11];
+    w[12] = w_tmp[12];
+    w[13] = w_tmp[13];
+    w[14] = w_tmp[14];
+    w[15] = w_tmp[15];
+}
+
+/// A reference software implementation of SHA-256 compression function from sha2 crate
+#[cfg_attr(not(debug_assertions), inline(always))]
 pub(crate) fn compress_block_reference(state: &mut [u32; 8], mut block: [u32; 16]) {
     let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *state;
 
@@ -83,8 +126,8 @@ pub(crate) fn compress_block_reference(state: &mut [u32; 8], mut block: [u32; 16
     state[7] = state[7].wrapping_add(h);
 }
 
-#[inline(always)]
-/// DO a 16-way SHA-256 compression function without adding back the saved state
+#[cfg_attr(all(not(debug_assertions), target_feature = "avx512f"), inline(always))]
+/// Do a 16-way SHA-256 compression function without adding back the saved state, without feedback
 ///
 /// This is useful for making state share registers with a-h when caller has the previous state recalled cheaply from elsewhere after the fact
 pub(crate) fn compress_16block_avx512_without_feedback(
@@ -148,9 +191,63 @@ pub(crate) fn compress_16block_avx512_without_feedback(
     }
 }
 
+/// Do a 16-way SHA-256 compression function using broadcasted message schedule, without feedback
+///
+/// You can skip loading the first couple words by passing a non-zero value for `LeadingZeroes`
+#[cfg_attr(all(not(debug_assertions), target_feature = "avx512f"), inline(always))]
+pub(crate) fn compress_16block_avx512_bcst_without_feedback<LeadingZeroes: Unsigned>(
+    state: &mut [__m512i; 8],
+    block: &[u32; 64],
+) {
+    unsafe {
+        let [a, b, c, d, e, f, g, h] = &mut *state;
+
+        repeat64!(i, {
+            let w = if i < LeadingZeroes::USIZE {
+                debug_assert_eq!(block[i], 0, "block[{}] is not zero", i);
+                _mm512_setzero_si512()
+            } else {
+                _mm512_set1_epi32(block[i] as _)
+            };
+
+            let s1 = _mm512_xor_si512(
+                _mm512_xor_si512(_mm512_ror_epi32(*e, 6), _mm512_ror_epi32(*e, 11)),
+                _mm512_ror_epi32(*e, 25),
+            );
+            let ch = _mm512_xor_si512(_mm512_and_si512(*e, *f), _mm512_andnot_si512(*e, *g));
+            let mut t1 = s1;
+            t1 = _mm512_add_epi32(t1, ch);
+            t1 = _mm512_add_epi32(t1, _mm512_set1_epi32(K32[i] as _));
+            t1 = _mm512_add_epi32(t1, w);
+            t1 = _mm512_add_epi32(t1, *h);
+
+            let s0 = _mm512_xor_si512(
+                _mm512_xor_si512(_mm512_ror_epi32(*a, 2), _mm512_ror_epi32(*a, 13)),
+                _mm512_ror_epi32(*a, 22),
+            );
+            let maj = _mm512_xor_si512(
+                _mm512_xor_si512(_mm512_and_si512(*a, *b), _mm512_and_si512(*a, *c)),
+                _mm512_and_si512(*b, *c),
+            );
+            let mut t2 = s0;
+            t2 = _mm512_add_epi32(t2, maj);
+
+            *h = *g;
+            *g = *f;
+            *f = *e;
+            *e = _mm512_add_epi32(*d, t1);
+            *d = *c;
+            *c = *b;
+            *b = *a;
+            *a = _mm512_add_epi32(t1, t2);
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use rand::{Rng, SeedableRng};
+    use typenum::U0;
 
     use super::*;
 
@@ -325,6 +422,54 @@ mod tests {
                 "SHA-256 AVX-512 hash mismatch at index {}",
                 i
             );
+        }
+    }
+
+    #[test]
+    fn test_sha256_avx512_bcst_without_feedback() {
+        let mut block = [0; 64];
+        block[0] = u32::from_be_bytes([0x61, 0x62, 0x63, 0x80]);
+        block[15] = u32::from_be_bytes([0x00, 0x00, 0x00, 3 * 8]);
+        do_message_schedule(&mut block);
+        let ivs: [u32; 8] = [
+            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+            0x5be0cd19,
+        ];
+        let mut state_avx512: [__m512i; 8] = unsafe {
+            [
+                _mm512_set1_epi32(0x6a09e667u32 as _),
+                _mm512_set1_epi32(0xbb67ae85u32 as _),
+                _mm512_set1_epi32(0x3c6ef372u32 as _),
+                _mm512_set1_epi32(0xa54ff53au32 as _),
+                _mm512_set1_epi32(0x510e527fu32 as _),
+                _mm512_set1_epi32(0x9b05688cu32 as _),
+                _mm512_set1_epi32(0x1f83d9abu32 as _),
+                _mm512_set1_epi32(0x5be0cd19u32 as _),
+            ]
+        };
+
+        compress_16block_avx512_bcst_without_feedback::<U0>(&mut state_avx512, &block);
+        for i in 0..8 {
+            state_avx512[i] =
+                unsafe { _mm512_add_epi32(state_avx512[i], _mm512_set1_epi32(ivs[i] as _)) };
+        }
+
+        let expected = [
+            0xba7816bf, 0x8f01cfea, 0x414140de, 0x5dae2223, 0xb00361a3, 0x96177a9c, 0xb410ff61,
+            0xf20015ad,
+        ];
+
+        let mut results: [[u32; 16]; 8] = unsafe { core::mem::zeroed() };
+        for i in 0..8 {
+            unsafe {
+                _mm512_storeu_si512(results[i].as_mut_ptr() as *mut _, state_avx512[i]);
+            }
+        }
+
+        for i in 0..8 {
+            for j in 0..16 {
+                assert_eq!(results[i][j], expected[i]);
+            }
         }
     }
 }

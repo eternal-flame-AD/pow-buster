@@ -30,16 +30,10 @@ The benchmarks demonstrate a significant performance gap between browser-based J
 
 ## Limitations
 
-We took some shortcuts and it is not a completely general solution.
-
-- Currently only supports about 90.62% of the sites, applicability is a periodic function of the salt length. 
-
-  This also means optimizations that depend on a specific salt length are not done.
-
-  If you want an "always works" solution implement yourself, it's not that complicated, just that it is much harder to provide a single generic solution to cover every subcase of the remaining 9.38%. 
+We assume you have a relatively modern and powerful platform, specifically:
 
 - Requires AVX-512 CPU or a [wgpu](https://wgpu.rs) compatible GPU
-- Only builds on nightly Rust because avx512 intrinsics are not stable yet
+- Only builds on nightly Rust because avx512 intrinsics are not stable yet, it also currently doesn't build on non-x86_64 targets.
 - This is designed for "low", practical-for-a-website difficulty settings, A $1 - P_{geom}(80e7, 1/\text{difficulty})$ chance of failure for any particular challenge, which for 1e8 (takes about 10 seconds on a browser) is about 0.03%, the GPU solver has much lower failure rate.
 - The WGSL implementation is not optimized for performance, it has some major problems:
   1. Didn't use vectorized arithmetic.
@@ -83,31 +77,22 @@ Note: To reproduce, you don't need to clone the submodule, it is only used as a 
 
 Speedup against official solution, reported by Criterion.rs, single-threaded:
 
-Results on AMD Ryzen 9 7950X, 32 cores (wgpu uses NVIDIA RTX 4070).
-
-| Difficulty factor | AVX-512 (ms) | Official Autovectorized (ms) | Official Generic x64 (ms) | wgpu (Vulkan) (ms) |
-| ----------------- | ------------ | ---------------------------- | ------------------------- | ------------------ |
-| 50_000            | 0.322        | 2.620                        | 5.065                     | 0.088              |
-| 100_000           | 0.712        | 5.241                        | 10.396                    | 0.088              |
-| 1_000_000         | 8.852        | 50.579                       | 98.235                    | 0.273              |
-| 4_000_000         | 42.249       | 177.98                       | 345.48                    | 0.937              |
-| 10_000_000        | 105.01       | 510.64                       | 775 (*)                   | 2.289              |
-| 50_000_000        | 601.69       | 2657.3                       | 4696 (*)                  | 22.723             |
+Results on AMD Ryzen 9 7950X, 32 cores (wgpu uses NVIDIA RTX 4070), when supported, single-hash number comes first (there is 90% chance your deployment is single-hash, this vagueness is IMO design oversight by the mCaptcha team), double-hash number comes second, all numbers are in milliseconds, compiled with `-Ctarget-cpu=native` unless otherwise specified.
 
 
-Results on a Netcup (R) RS 4000 G11 (26 EUR/month at the time of writing, backed by AMD EPYC 9634), for scaling comparison on rented compute:
+| DFactor    | AVX-512  [^1] | Safe Optimized [^2] | Official (*)  | Official Generic x64 (*) | wgpu (Vulkan) |
+| ---------- | ------------- | ------------------- | ------------- | ------------------------ | ------------- |
+| 50_000     | 0.623/1.066   | 1.606/?             | 2.940/4.654   | 5.3261/9.683             | 0.097         |
+| 100_000    | 1.268/2.232   | 3.314/?             | 5.089/10.471  | 9.8579/24.664            | 0.126         |
+| 1_000_000  | 11.574/20.610 | 42.727/?            | 65.015/42.353 | 137.78/97.271            | 0.489         |
+| 4_000_000  | 44.254/52.155 | 92.932/?            | 227.14/162.24 | 489.67/382.04            | 1.844         |
+| 10_000_000 | 113.47/145.46 | 410.26/?            | 505.85/707.39 | DNS                      | 4.201         |
 
+(*) = Since official solution allocated a variable length string per iteration, it is pretty difficult to get it to perform it stably both in terms of how many blocks to hash and how long the allocation takes, serious non-linear performance degradation seems to be observed and it is likely attributed to re-allocation overhead.
+(?) = not implemented, but I expect close to a clean double
 
-| Difficulty factor | AVX-512 (ms) | Official Autovectorized (ms) | Official Generic X64 (ms) |
-| ----------------- | ------------ | ---------------------------- | ------------------------- |
-| 50_000            | 0.575        | 3.970                        | 7.7023                    |
-| 100_000           | 1.098        | 9.006                        | 15.401                    |
-| 1_000_000         | 14.258       | 77.325                       | 146.79                    |
-| 4_000_000         | 63.914       | 270.60                       | 511.90                    |
-| 10_000_000        | 177.78       | 769.24                       | 1457.0                    |
-| 50_000_000        | 889.42       | 3981.0                       | DNS                       |
-
-(*) = Criterion.rs cannot produce enough samples in 200s for statistical significance, number produced by [mcaptcha_bypass](https://github.com/evilsocket/mcaptcha_bypass), modified for 20 verification per thread, and thus less representative in terms of sustained performance, and are more susceptible to noise from the high variance from low-probability geometric distribution.
+[^1]: Results on a Netcup (R) RS 4000 G11 (26 EUR/month at the time of writing, backed by AMD EPYC 9634), shows comparable performance with a ~15-20% slowdown across the board, with relatively similar speedup ratio.
+[^2]: Represents a custom implementation using safe, externally-validated cryptographic abstractions only and no platform-specific optimizations.
 
 ### Official Widget Benchmark
 
@@ -212,9 +197,9 @@ type             16 bytes     64 bytes    256 bytes   1024 bytes   8192 bytes  1
 sha256          207107.04k   645724.06k  1507281.95k  2220402.22k  2655970.10k  2687872.17k
 ```
 
-The single-threaded throughput for OpenSSL with SHA-NI support is about 12.94 MH/s (828.2MB/s) single block, 42.00 MH/s (2.86 GB/s) continuous, for us it is about 94.79 MH/s (6.06 GB/s) at difficulty closest to default highest (4e6).
+The single-threaded throughput for OpenSSL with SHA-NI support is about 12.94 MH/s (828.2MB/s) single block, 42.00 MH/s (2.86 GB/s) continuous, for us it is about 61.82 MH/s (3.96 GB/s) single-hash, 52.907 MH/s (6.77 GB/s) double-hash at difficulty closest to default highest (4e6).
 
-The peak throughput reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous. The multi-threaded rash rate derived from our E2E testing is 1.18 GH/s (75.77 GB/s) (95% conf: 1.1811 GH/s, 1.1866 GH/s) at default highest difficulty (5e6).
+The peak throughput reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous. The multi-threaded rash rate derived from formal benchmark is 1.186 GH/s (95% conf: 1.1830, 1.1881, 75.88GB/s derived) at default highest difficulty (5e6) for single-hash, 725.68 MH/s (95% conf: 722.05, 729.19, 92.89 GB/s derived) for double-hash case.
 
 ## Security Implications
 
