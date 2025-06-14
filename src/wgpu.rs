@@ -341,7 +341,7 @@ impl<'a, WorkGroupSize: Unsigned + IsGreater<U0, Output = B1>> crate::Solver
                 // get the result in CPU
                 crate::sha256::compress_block_reference(
                     (&mut self.saved_state[0..8]).try_into().unwrap(),
-                    self.message,
+                    &self.message,
                 );
 
                 let mut result = 0u128;

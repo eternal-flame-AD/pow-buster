@@ -97,7 +97,7 @@ impl Solver for SingleBlockSolver16Way {
         while prefix.len() >= 64 {
             sha256::compress_block_reference(
                 &mut prefix_state,
-                core::array::from_fn(|i| {
+                &core::array::from_fn(|i| {
                     u32::from_be_bytes([
                         prefix[i * 4],
                         prefix[i * 4 + 1],
@@ -124,7 +124,7 @@ impl Solver for SingleBlockSolver16Way {
             prefix = &[];
             sha256::compress_block_reference(
                 &mut prefix_state,
-                core::array::from_fn(|i| {
+                &core::array::from_fn(|i| {
                     u32::from_be_bytes([
                         tmp_block[i * 4],
                         tmp_block[i * 4 + 1],
@@ -197,12 +197,29 @@ impl Solver for SingleBlockSolver16Way {
 
             for prefix_set_index in 0..5 {
                 let lane_id_0_or_value_v = unsafe {
-                    _mm512_loadu_epi32(
-                        lane_id_0_or_value
-                            .as_ptr()
-                            .add(prefix_set_index as usize * 16)
-                            .cast(),
-                    )
+                    if DIGIT_WORD_IDX0 == DIGIT_WORD_IDX1 {
+                        _mm512_or_epi32(
+                            _mm512_loadu_epi32(
+                                lane_id_0_or_value
+                                    .as_ptr()
+                                    .add(prefix_set_index as usize * 16)
+                                    .cast(),
+                            ),
+                            _mm512_loadu_epi32(
+                                lane_id_1_or_value
+                                    .as_ptr()
+                                    .add(prefix_set_index as usize * 16)
+                                    .cast(),
+                            ),
+                        )
+                    } else {
+                        _mm512_loadu_epi32(
+                            lane_id_0_or_value
+                                .as_ptr()
+                                .add(prefix_set_index as usize * 16)
+                                .cast(),
+                        )
+                    }
                 };
                 let lane_id_1_or_value_v = unsafe {
                     _mm512_loadu_epi32(
@@ -215,17 +232,10 @@ impl Solver for SingleBlockSolver16Way {
                 macro_rules! fetch_msg {
                     ($idx:expr) => {
                         if $idx == DIGIT_WORD_IDX0 {
-                            if $idx == DIGIT_WORD_IDX1 {
-                                _mm512_or_epi32(
-                                    _mm512_set1_epi32(this.message[$idx] as _),
-                                    _mm512_or_epi32(lane_id_0_or_value_v, lane_id_1_or_value_v),
-                                )
-                            } else {
-                                _mm512_or_epi32(
-                                    _mm512_set1_epi32(this.message[$idx] as _),
-                                    lane_id_0_or_value_v,
-                                )
-                            }
+                            _mm512_or_epi32(
+                                _mm512_set1_epi32(this.message[$idx] as _),
+                                lane_id_0_or_value_v,
+                            )
                         } else if $idx == DIGIT_WORD_IDX1 {
                             _mm512_or_epi32(
                                 _mm512_set1_epi32(this.message[$idx] as _),
@@ -379,7 +389,7 @@ impl Solver for SingleBlockSolver16Way {
         // recompute the hash from the beginning
         // this prevents the compiler from having to compute the final B-H registers alive in tight loops
         let mut final_sha_state = self.prefix_state.clone();
-        sha256::compress_block_reference(&mut final_sha_state, self.message);
+        sha256::compress_block_reference(&mut final_sha_state, &self.message);
 
         Some((
             nonce + self.nonce_addend,
@@ -431,7 +441,7 @@ impl Solver for DoubleBlockSolver16Way {
         while prefix.len() >= 64 {
             sha256::compress_block_reference(
                 &mut prefix_state,
-                core::array::from_fn(|i| {
+                &core::array::from_fn(|i| {
                     u32::from_be_bytes([
                         prefix[i * 4],
                         prefix[i * 4 + 1],
@@ -506,7 +516,7 @@ impl Solver for DoubleBlockSolver16Way {
         // pre-compute the lane index OR mask to "stamp" onto each lane for each try
         // this string is longer than we need but good enough for all intents and purposes
         let lane_id_or_value: [u32; 5 * 16] = core::array::from_fn(|i| {
-            let lane_0 =  (b"111111111122222222223333333333444444444455555555556666666666777777777788888888889999999999"[i] as u32) << ((3 - lane_id_0_byte_idx) * 8) as u32;
+            let lane_0 = (b"111111111122222222223333333333444444444455555555556666666666777777777788888888889999999999"[i] as u32) << ((3 - lane_id_0_byte_idx) * 8) as u32;
             let lane_1 = (b"012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"[i] as u32) << ((3 - lane_id_1_byte_idx) * 8) as u32;
             lane_0 | lane_1
         });
@@ -621,7 +631,7 @@ impl Solver for DoubleBlockSolver16Way {
                         // this prevents the compiler from having to compute the final B-H registers alive in tight loops
                         // reverse the byte order
                         let mut final_sha_state = self.prefix_state.clone();
-                        sha256::compress_block_reference(&mut final_sha_state, self.message);
+                        sha256::compress_block_reference(&mut final_sha_state, &self.message);
                         sha256::compress_block_reference(
                             &mut final_sha_state,
                             self.terminal_message_schedule[0..16].try_into().unwrap(),
@@ -683,7 +693,7 @@ impl Solver for SingleBlockSolverNative {
         while prefix.len() >= 64 {
             sha256::compress_block_reference(
                 &mut prefix_state,
-                core::array::from_fn(|i| {
+                &core::array::from_fn(|i| {
                     u32::from_be_bytes([
                         prefix[i * 4],
                         prefix[i * 4 + 1],
@@ -710,7 +720,7 @@ impl Solver for SingleBlockSolverNative {
             prefix = &[];
             sha256::compress_block_reference(
                 &mut prefix_state,
-                core::array::from_fn(|i| {
+                &core::array::from_fn(|i| {
                     u32::from_be_bytes([
                         tmp_block[i * 4],
                         tmp_block[i * 4 + 1],
