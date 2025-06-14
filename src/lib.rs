@@ -419,7 +419,6 @@ pub struct DoubleBlockSolver16Way {
 
 impl DoubleBlockSolver16Way {
     const DIGIT_IDX: u64 = 54;
-    const LANE_ID_WORD_IDX: u64 = Self::DIGIT_IDX / 4;
 }
 
 impl Solver for DoubleBlockSolver16Way {
@@ -521,48 +520,35 @@ impl Solver for DoubleBlockSolver16Way {
             lane_0 | lane_1
         });
 
+        let mut blocks = unsafe {
+            [
+                _mm512_set1_epi32(self.message[0] as _),
+                _mm512_set1_epi32(self.message[1] as _),
+                _mm512_set1_epi32(self.message[2] as _),
+                _mm512_set1_epi32(self.message[3] as _),
+                _mm512_set1_epi32(self.message[4] as _),
+                _mm512_set1_epi32(self.message[5] as _),
+                _mm512_set1_epi32(self.message[6] as _),
+                _mm512_set1_epi32(self.message[7] as _),
+                _mm512_set1_epi32(self.message[8] as _),
+                _mm512_set1_epi32(self.message[9] as _),
+                _mm512_set1_epi32(self.message[10] as _),
+                _mm512_set1_epi32(self.message[11] as _),
+                _mm512_set1_epi32(self.message[12] as _),
+                _mm512_setzero_epi32(), // 13 is always zero for a valid construction
+                _mm512_setzero_epi32(), // 14 is filled in later
+                _mm512_setzero_epi32(), // 15 is filled in later
+            ]
+        };
+
         for prefix_set_index in 0..5 {
-            let lane_id_or_value_v = unsafe {
-                _mm512_loadu_epi32(
+            unsafe {
+                blocks[13] = _mm512_loadu_epi32(
                     lane_id_or_value
                         .as_ptr()
                         .add(prefix_set_index as usize * 16)
                         .cast(),
                 )
-            };
-
-            macro_rules! fetch_msg {
-                ($idx:expr) => {
-                    if $idx == Self::LANE_ID_WORD_IDX {
-                        _mm512_or_epi32(
-                            _mm512_set1_epi32(self.message[$idx] as _),
-                            lane_id_or_value_v,
-                        )
-                    } else {
-                        _mm512_set1_epi32(self.message[$idx] as _)
-                    }
-                };
-            }
-
-            let mut blocks = unsafe {
-                [
-                    fetch_msg!(0),
-                    fetch_msg!(1),
-                    fetch_msg!(2),
-                    fetch_msg!(3),
-                    fetch_msg!(4),
-                    fetch_msg!(5),
-                    fetch_msg!(6),
-                    fetch_msg!(7),
-                    fetch_msg!(8),
-                    fetch_msg!(9),
-                    fetch_msg!(10),
-                    fetch_msg!(11),
-                    fetch_msg!(12),
-                    fetch_msg!(13),
-                    fetch_msg!(14),
-                    fetch_msg!(15),
-                ]
             };
 
             for inner_key in 0..10_000_000 {
