@@ -261,7 +261,12 @@ impl Solver for SingleBlockSolver16Way {
                                 ) = output as u8 + b'0';
                             }
                         }
-                        debug_assert_eq!(key_copy, 0);
+
+                        // hint at LLVM that the modulo ends in 0
+                        if key_copy != 0 {
+                            debug_assert_eq!(key_copy, 0);
+                            unreachable_unchecked();
+                        }
 
                         let mut blocks = [
                             fetch_msg!(0),
@@ -349,8 +354,7 @@ impl Solver for SingleBlockSolver16Way {
                     11 => solve_inner::<$idx0, 11>(self, target[0]),
                     12 => solve_inner::<$idx0, 12>(self, target[0]),
                     13 => solve_inner::<$idx0, 13>(self, target[0]),
-                    14 => solve_inner::<$idx0, 14>(self, target[0]),
-                    15 => solve_inner::<$idx0, 15>(self, target[0]),
+                    // there is no possible way lane ID lands on position 14 or 15, because the padding is 9 bytes and nonce tail is 7 bytes
                     _ => unreachable_unchecked(),
                 }
             };
@@ -372,8 +376,6 @@ impl Solver for SingleBlockSolver16Way {
                 11 => dispatch!(11),
                 12 => dispatch!(12),
                 13 => dispatch!(13),
-                14 => dispatch!(14),
-                15 => dispatch!(15),
                 _ => unreachable_unchecked(),
             }
         }?;
@@ -546,6 +548,11 @@ impl Solver for DoubleBlockSolver16Way {
                         key_copy /= 10;
                     }
                     cum1 |= u32::from_be_bytes(*b"000\x80");
+
+                    if key_copy != 0 {
+                        debug_assert_eq!(key_copy, 0);
+                        unreachable_unchecked();
+                    }
 
                     let mut blocks = [
                         _mm512_set1_epi32(self.message[0] as _),
