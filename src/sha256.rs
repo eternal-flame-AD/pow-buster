@@ -83,13 +83,41 @@ pub(crate) fn compress_block_reference(state: &mut [u32; 8], block: &[u32; 16]) 
     sha2::compress256(state, &[tmp.into()]);
 }
 
+// taken verbatim from sha2 crate
+#[inline(always)]
+pub(crate) fn ingest_message_prefix<const LENGTH: usize>(state: &mut [u32; 8], w: [u32; LENGTH]) {
+    let [a, b, c, d, e, f, g, h] = &mut *state;
+
+    for i in 0..LENGTH {
+        let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+        let ch = (*e & *f) ^ ((!*e) & *g);
+        let t1 = s1
+            .wrapping_add(ch)
+            .wrapping_add(K32[i])
+            .wrapping_add(w[i])
+            .wrapping_add(*h);
+        let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+        let maj = (*a & *b) ^ (*a & *c) ^ (*b & *c);
+        let t2 = s0.wrapping_add(maj);
+
+        *h = *g;
+        *g = *f;
+        *f = *e;
+        *e = d.wrapping_add(t1);
+        *d = *c;
+        *c = *b;
+        *b = *a;
+        *a = t1.wrapping_add(t2);
+    }
+}
+
 // disable inline because without hardware AVX-512 this will explode in complexity and cause comptime to skyrocket
 // disable inline for debug_assertions because no one wants to wait for 5 minutes to run a unit test
 #[cfg_attr(all(not(debug_assertions), target_feature = "avx512f"), inline(always))]
 /// Do a 16-way SHA-256 compression function without adding back the saved state, without feedback
 ///
 /// This is useful for making state share registers with a-h when caller has the previous state recalled cheaply from elsewhere after the fact
-pub(crate) fn compress_16block_avx512_without_feedback(
+pub(crate) fn compress_16block_avx512_without_feedback<const BEGIN_ROUND: usize>(
     state: &mut [__m512i; 8],
     block: &mut [__m512i; 16],
 ) {
@@ -97,55 +125,57 @@ pub(crate) fn compress_16block_avx512_without_feedback(
         let [a, b, c, d, e, f, g, h] = &mut *state;
 
         repeat64!(i, {
-            let w = if i < 16 {
-                block[i]
-            } else {
-                let w15 = block[(i - 15) % 16];
-                let s0 = _mm512_xor_si512(
-                    _mm512_xor_si512(_mm512_ror_epi32(w15, 7), _mm512_ror_epi32(w15, 18)),
-                    _mm512_srli_epi32(w15, 3),
-                );
-                let w2 = block[(i - 2) % 16];
+            if i >= BEGIN_ROUND {
+                let w = if i < 16 {
+                    block[i]
+                } else {
+                    let w15 = block[(i - 15) % 16];
+                    let s0 = _mm512_xor_si512(
+                        _mm512_xor_si512(_mm512_ror_epi32(w15, 7), _mm512_ror_epi32(w15, 18)),
+                        _mm512_srli_epi32(w15, 3),
+                    );
+                    let w2 = block[(i - 2) % 16];
+                    let s1 = _mm512_xor_si512(
+                        _mm512_xor_si512(_mm512_ror_epi32(w2, 17), _mm512_ror_epi32(w2, 19)),
+                        _mm512_srli_epi32(w2, 10),
+                    );
+                    block[i % 16] = _mm512_add_epi32(block[i % 16], s0);
+                    block[i % 16] = _mm512_add_epi32(block[i % 16], block[(i - 7) % 16]);
+                    block[i % 16] = _mm512_add_epi32(block[i % 16], s1);
+                    block[i % 16]
+                };
+
                 let s1 = _mm512_xor_si512(
-                    _mm512_xor_si512(_mm512_ror_epi32(w2, 17), _mm512_ror_epi32(w2, 19)),
-                    _mm512_srli_epi32(w2, 10),
+                    _mm512_xor_si512(_mm512_ror_epi32(*e, 6), _mm512_ror_epi32(*e, 11)),
+                    _mm512_ror_epi32(*e, 25),
                 );
-                block[i % 16] = _mm512_add_epi32(block[i % 16], s0);
-                block[i % 16] = _mm512_add_epi32(block[i % 16], block[(i - 7) % 16]);
-                block[i % 16] = _mm512_add_epi32(block[i % 16], s1);
-                block[i % 16]
-            };
+                let ch = _mm512_xor_si512(_mm512_and_si512(*e, *f), _mm512_andnot_si512(*e, *g));
+                let mut t1 = s1;
+                t1 = _mm512_add_epi32(t1, ch);
+                t1 = _mm512_add_epi32(t1, _mm512_set1_epi32(K32[i] as _));
+                t1 = _mm512_add_epi32(t1, w);
+                t1 = _mm512_add_epi32(t1, *h);
 
-            let s1 = _mm512_xor_si512(
-                _mm512_xor_si512(_mm512_ror_epi32(*e, 6), _mm512_ror_epi32(*e, 11)),
-                _mm512_ror_epi32(*e, 25),
-            );
-            let ch = _mm512_xor_si512(_mm512_and_si512(*e, *f), _mm512_andnot_si512(*e, *g));
-            let mut t1 = s1;
-            t1 = _mm512_add_epi32(t1, ch);
-            t1 = _mm512_add_epi32(t1, _mm512_set1_epi32(K32[i] as _));
-            t1 = _mm512_add_epi32(t1, w);
-            t1 = _mm512_add_epi32(t1, *h);
+                let s0 = _mm512_xor_si512(
+                    _mm512_xor_si512(_mm512_ror_epi32(*a, 2), _mm512_ror_epi32(*a, 13)),
+                    _mm512_ror_epi32(*a, 22),
+                );
+                let maj = _mm512_xor_si512(
+                    _mm512_xor_si512(_mm512_and_si512(*a, *b), _mm512_and_si512(*a, *c)),
+                    _mm512_and_si512(*b, *c),
+                );
+                let mut t2 = s0;
+                t2 = _mm512_add_epi32(t2, maj);
 
-            let s0 = _mm512_xor_si512(
-                _mm512_xor_si512(_mm512_ror_epi32(*a, 2), _mm512_ror_epi32(*a, 13)),
-                _mm512_ror_epi32(*a, 22),
-            );
-            let maj = _mm512_xor_si512(
-                _mm512_xor_si512(_mm512_and_si512(*a, *b), _mm512_and_si512(*a, *c)),
-                _mm512_and_si512(*b, *c),
-            );
-            let mut t2 = s0;
-            t2 = _mm512_add_epi32(t2, maj);
-
-            *h = *g;
-            *g = *f;
-            *f = *e;
-            *e = _mm512_add_epi32(*d, t1);
-            *d = *c;
-            *c = *b;
-            *b = *a;
-            *a = _mm512_add_epi32(t1, t2);
+                *h = *g;
+                *g = *f;
+                *f = *e;
+                *e = _mm512_add_epi32(*d, t1);
+                *d = *c;
+                *c = *b;
+                *b = *a;
+                *a = _mm512_add_epi32(t1, t2);
+            }
         });
     }
 }
@@ -261,7 +291,7 @@ mod tests {
         for i in 0..16 {
             compress_block_reference(&mut states[i], &blocks[i]);
         }
-        compress_16block_avx512_without_feedback(&mut state_avx512, &mut block_avx512);
+        compress_16block_avx512_without_feedback::<0>(&mut state_avx512, &mut block_avx512);
         for i in 0..8 {
             state_avx512[i] = unsafe { _mm512_add_epi32(state_avx512[i], states_avx512_save[i]) };
         }
@@ -344,7 +374,7 @@ mod tests {
 
         // Process the blocks
         let mut state = state_avx512;
-        compress_16block_avx512_without_feedback(&mut state, &mut block_avx512);
+        compress_16block_avx512_without_feedback::<0>(&mut state, &mut block_avx512);
         for i in 0..8 {
             state[i] = unsafe { _mm512_add_epi32(state[i], state_avx512[i]) };
         }

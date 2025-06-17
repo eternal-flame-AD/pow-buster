@@ -76,23 +76,24 @@ Note: To reproduce, you don't need to clone the submodule, it is only used as a 
 
 Speedup against official solution, reported by Criterion.rs, single-threaded:
 
-Results on AMD Ryzen 9 7950X, 32 cores (wgpu uses NVIDIA RTX 4070), when supported, single-hash number comes first (there is 90% chance your deployment is single-hash, this vagueness is IMO design oversight by the mCaptcha team), double-hash number comes second, all numbers are in milliseconds, compiled with `-Ctarget-cpu=native` unless otherwise specified.
+Results on AMD Ryzen 9 7950X, 32 cores, when supported, single-hash number comes first (there is 90% chance your deployment is single-hash, this vagueness is IMO design oversight by the mCaptcha team), double-hash number comes second, all numbers are in milliseconds, compiled with `-Ctarget-cpu=native` unless otherwise specified.
 
 
-| DFactor    | AVX-512 [^1]  | Safe Optimized (+) [^2] | Official (+*) | Official Generic x64 (+*) | wgpu (Vulkan) |
-| ---------- | ------------- | ----------------------- | ------------- | ------------------------- | ------------- |
-| 50_000     | 0.623/1.066   | 1.606/?                 | 2.940/4.654   | 5.3261/9.683              | 0.097         |
-| 100_000    | 1.268/2.232   | 3.314/?                 | 5.089/10.471  | 9.8579/24.664             | 0.126         |
-| 1_000_000  | 11.574/20.610 | 42.727/?                | 65.015/42.353 | 137.78/97.271             | 0.489         |
-| 4_000_000  | 44.254/52.155 | 92.932/?                | 227.14/162.24 | 489.67/382.04             | 1.844         |
-| 10_000_000 | 113.47/145.46 | 410.26/?                | 505.85/707.39 | DNS                       | 4.201         |
+| DFactor    | AVX-512 (32T) | AVX-512       | Safe Optimized (+) [^1] | Official (+*) | Official Generic x64 (+*) | wgpu (Vulkan) [^2] | User Survey extrapolated  [^3] |
+| ---------- | ------------- | ------------- | ----------------------- | ------------- | ------------------------- | ------------------ | ------------------------------ |
+| 50_000     | 0.043/DNS     | 0.623/1.066   | 1.606/?                 | 2.940/4.654   | 5.3261/9.683              | 0.097              | 14.556                         |
+| 100_000    | 0.087/DNS     | 1.268/2.232   | 3.314/?                 | 5.089/10.471  | 9.8579/24.664             | 0.126              | 29.11176                       |
+| 1_000_000  | 0.872/DNS     | 11.574/20.610 | 42.727/?                | 65.015/42.353 | 137.78/97.271             | 0.489              | 291.118                        |
+| 4_000_000  | 3.388/DNS     | 44.254/52.155 | 92.932/?                | 227.14/162.24 | 489.67/382.04             | 1.844              | 1164.471                       |
+| 10_000_000 | 8.720/DNS     | 113.47/145.46 | 410.26/?                | 505.85/707.39 | DNS                       | 4.201              | 2911.18                        |
 
 (*) = Since official solution allocated a variable length string per iteration, it is pretty difficult to get it to perform it stably both in terms of how many blocks to hash and how long the allocation takes, serious non-linear performance degradation seems to be observed and it is likely attributed to re-allocation overhead.
 (?) = not implemented, but I expect close to a clean double
-(+) = SNA-NI is used.
+(+) = SNA-NI and a standard SHA-256 implementation is used.
 
-[^1]: Results on a Netcup (R) RS 4000 G11 (26 EUR/month at the time of writing, backed by AMD EPYC 9634), shows comparable performance with a ~15-20% slowdown across the board, with relatively similar speedup ratio.
-[^2]: Represents a custom implementation using safe, externally-validated cryptographic abstractions only and no platform-specific optimizations.
+[^1]: Represents a custom implementation using safe, externally-validated cryptographic abstractions only and no platform-specific optimizations.
+[^2]: NVIDIA RTX 4070 is used
+[^3]: Manivannan, A.; Sethuraman, S. C.; Vimala Sudhakaran, D. P. MCaptcha: Replacing Captchas with Rate Limiters to Improve Security and Accessibility. Communications of the ACM 2024, 67 (10), 70–80. https://doi.org/10.1145/3660628.
 
 ### Official Widget Benchmark
 

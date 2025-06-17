@@ -247,27 +247,6 @@ impl Solver for SingleBlockSolver16Way {
                     };
                 }
 
-                let mut blocks = unsafe {
-                    [
-                        fetch_msg!(0),
-                        fetch_msg!(1),
-                        fetch_msg!(2),
-                        fetch_msg!(3),
-                        fetch_msg!(4),
-                        fetch_msg!(5),
-                        fetch_msg!(6),
-                        fetch_msg!(7),
-                        fetch_msg!(8),
-                        fetch_msg!(9),
-                        fetch_msg!(10),
-                        fetch_msg!(11),
-                        fetch_msg!(12),
-                        fetch_msg!(13),
-                        fetch_msg!(14),
-                        fetch_msg!(15),
-                    ]
-                };
-
                 for inner_key in 0..10_000_000 {
                     unsafe {
                         let mut key_copy = inner_key;
@@ -284,21 +263,34 @@ impl Solver for SingleBlockSolver16Way {
                         }
                         debug_assert_eq!(key_copy, 0);
 
-                        // we need to re-load at least 2 blocks and at most 3 blocks
-                        blocks[DIGIT_WORD_IDX1] = fetch_msg!(DIGIT_WORD_IDX1);
-                        if DIGIT_WORD_IDX1 < 15 {
-                            blocks[DIGIT_WORD_IDX1 + 1] = fetch_msg!(DIGIT_WORD_IDX1 + 1);
-                        }
-                        if DIGIT_WORD_IDX1 < 14 {
-                            blocks[DIGIT_WORD_IDX1 + 2] = fetch_msg!(DIGIT_WORD_IDX1 + 2);
-                        }
+                        let mut blocks = [
+                            fetch_msg!(0),
+                            fetch_msg!(1),
+                            fetch_msg!(2),
+                            fetch_msg!(3),
+                            fetch_msg!(4),
+                            fetch_msg!(5),
+                            fetch_msg!(6),
+                            fetch_msg!(7),
+                            fetch_msg!(8),
+                            fetch_msg!(9),
+                            fetch_msg!(10),
+                            fetch_msg!(11),
+                            fetch_msg!(12),
+                            fetch_msg!(13),
+                            fetch_msg!(14),
+                            fetch_msg!(15),
+                        ];
 
                         let mut state =
                             core::array::from_fn(|i| _mm512_set1_epi32(this.prefix_state[i] as _));
 
                         // do 16-way SHA-256 without feedback so as not to force the compiler to save 8 registers
                         // we already have them in scalar form, this allows more registers to be reused in the next iteration
-                        sha256::compress_16block_avx512_without_feedback(&mut state, &mut blocks);
+                        sha256::compress_16block_avx512_without_feedback::<0>(
+                            &mut state,
+                            &mut blocks,
+                        );
 
                         // the target is big endian interpretation of the first 16 bytes of the hash (A-D) >= target
                         // however, the largest 32-bit digits is unlikely to be all ones (otherwise a legitimate challenger needs on average >2^32 attempts)
@@ -520,34 +512,20 @@ impl Solver for DoubleBlockSolver16Way {
             lane_0 | lane_1
         });
 
-        let mut blocks = unsafe {
-            [
-                _mm512_set1_epi32(self.message[0] as _),
-                _mm512_set1_epi32(self.message[1] as _),
-                _mm512_set1_epi32(self.message[2] as _),
-                _mm512_set1_epi32(self.message[3] as _),
-                _mm512_set1_epi32(self.message[4] as _),
-                _mm512_set1_epi32(self.message[5] as _),
-                _mm512_set1_epi32(self.message[6] as _),
-                _mm512_set1_epi32(self.message[7] as _),
-                _mm512_set1_epi32(self.message[8] as _),
-                _mm512_set1_epi32(self.message[9] as _),
-                _mm512_set1_epi32(self.message[10] as _),
-                _mm512_set1_epi32(self.message[11] as _),
-                _mm512_set1_epi32(self.message[12] as _),
-                _mm512_setzero_epi32(), // 13 is always zero for a valid construction
-                _mm512_setzero_epi32(), // 14 is filled in later
-                _mm512_setzero_epi32(), // 15 is filled in later
-            ]
-        };
-
         for prefix_set_index in 0..5 {
-            unsafe {
-                blocks[13] = _mm512_loadu_epi32(
-                    lane_id_or_value
-                        .as_ptr()
-                        .add(prefix_set_index as usize * 16)
-                        .cast(),
+            let mut partial_state = self.prefix_state.clone();
+            let mut partial_message = [0; 13];
+            partial_message.copy_from_slice(&self.message[..13]);
+            sha256::ingest_message_prefix(&mut partial_state, partial_message);
+            let lane_index_value_v = unsafe {
+                _mm512_or_epi32(
+                    _mm512_set1_epi32(self.message[13] as _),
+                    _mm512_loadu_epi32(
+                        lane_id_or_value
+                            .as_ptr()
+                            .add(prefix_set_index as usize * 16)
+                            .cast(),
+                    ),
                 )
             };
 
@@ -561,7 +539,6 @@ impl Solver for DoubleBlockSolver16Way {
                         key_copy /= 10;
                     }
                     cum0 |= u32::from_be_bytes(*b"0000");
-                    blocks[14] = _mm512_set1_epi32(cum0 as _);
                     let mut cum1 = 0;
                     for _ in 0..3 {
                         cum1 += key_copy % 10;
@@ -569,12 +546,30 @@ impl Solver for DoubleBlockSolver16Way {
                         key_copy /= 10;
                     }
                     cum1 |= u32::from_be_bytes(*b"000\x80");
-                    blocks[15] = _mm512_set1_epi32(cum1 as _);
+
+                    let mut blocks = [
+                        _mm512_set1_epi32(self.message[0] as _),
+                        _mm512_set1_epi32(self.message[1] as _),
+                        _mm512_set1_epi32(self.message[2] as _),
+                        _mm512_set1_epi32(self.message[3] as _),
+                        _mm512_set1_epi32(self.message[4] as _),
+                        _mm512_set1_epi32(self.message[5] as _),
+                        _mm512_set1_epi32(self.message[6] as _),
+                        _mm512_set1_epi32(self.message[7] as _),
+                        _mm512_set1_epi32(self.message[8] as _),
+                        _mm512_set1_epi32(self.message[9] as _),
+                        _mm512_set1_epi32(self.message[10] as _),
+                        _mm512_set1_epi32(self.message[11] as _),
+                        _mm512_set1_epi32(self.message[12] as _),
+                        lane_index_value_v,
+                        _mm512_set1_epi32(cum0 as _),
+                        _mm512_set1_epi32(cum1 as _),
+                    ];
 
                     let mut state =
-                        core::array::from_fn(|i| _mm512_set1_epi32(self.prefix_state[i] as _));
+                        core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
 
-                    sha256::compress_16block_avx512_without_feedback(&mut state, &mut blocks);
+                    sha256::compress_16block_avx512_without_feedback::<13>(&mut state, &mut blocks);
 
                     // we have to do feedback now
                     for i in 0..8 {
@@ -615,7 +610,6 @@ impl Solver for DoubleBlockSolver16Way {
 
                         // recompute the hash from the beginning
                         // this prevents the compiler from having to compute the final B-H registers alive in tight loops
-                        // reverse the byte order
                         let mut final_sha_state = self.prefix_state.clone();
                         sha256::compress_block_reference(&mut final_sha_state, &self.message);
                         sha256::compress_block_reference(
@@ -623,6 +617,7 @@ impl Solver for DoubleBlockSolver16Way {
                             self.terminal_message_schedule[0..16].try_into().unwrap(),
                         );
 
+                        // reverse the byte order
                         let mut nonce_suffix = 0;
                         let mut key_copy = inner_key;
                         for _ in 0..7 {
@@ -631,9 +626,12 @@ impl Solver for DoubleBlockSolver16Way {
                             key_copy /= 10;
                         }
 
+                        let computed_nonce =
+                            nonce_prefix * 10u64.pow(7) + nonce_suffix as u64 + self.nonce_addend;
+
                         // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
                         return Some((
-                            nonce_prefix * 10u64.pow(7) + nonce_suffix as u64 + self.nonce_addend,
+                            computed_nonce,
                             (final_sha_state[0] as u128) << 96
                                 | (final_sha_state[1] as u128) << 64
                                 | (final_sha_state[2] as u128) << 32
@@ -792,7 +790,7 @@ mod tests {
             concatenated_prefix.extend_from_slice(&bincode::serialize(&phrase_str).unwrap());
 
             let config = pow_sha256::Config { salt: SALT.into() };
-            const DIFFICULTY: u32 = 50_000;
+            const DIFFICULTY: u32 = 100_000;
 
             let solver = S::new(Default::default(), &concatenated_prefix);
             let Some(mut solver) = solver else {
@@ -835,7 +833,20 @@ mod tests {
                 result
             );
 
-            assert!(config.is_valid_proof(&test_response, &phrase_str));
+            assert!(
+                config.is_valid_proof(&test_response, &phrase_str),
+                "{} is not valid proof (solver: {})",
+                result,
+                core::any::type_name::<S>()
+            );
+
+            assert!(
+                config.is_sufficient_difficulty(&test_response, DIFFICULTY),
+                "{:016x} is not sufficient difficulty, expected {:016x} (solver: {})",
+                result,
+                compute_target(DIFFICULTY),
+                core::any::type_name::<S>()
+            );
         }
 
         println!(
