@@ -79,13 +79,13 @@ Speedup against official solution, reported by Criterion.rs, single-threaded:
 Results on AMD Ryzen 9 7950X, 32 cores, when supported, single-hash number comes first (there is 90% chance your deployment is single-hash, this vagueness is IMO design oversight by the mCaptcha team), double-hash number comes second, all numbers are in milliseconds, compiled with `-Ctarget-cpu=native` unless otherwise specified.
 
 
-| DFactor    | AVX-512 (32T) | AVX-512       | Safe Optimized (+) [^1] | Official (+*) | Official Generic x64 (+*) | wgpu (Vulkan) [^2] | User Survey extrapolated  [^3] |
-| ---------- | ------------- | ------------- | ----------------------- | ------------- | ------------------------- | ------------------ | ------------------------------ |
-| 50_000     | 0.043/DNS     | 0.623/1.066   | 1.606/?                 | 2.940/4.654   | 5.3261/9.683              | 0.097              | 14.556                         |
-| 100_000    | 0.087/DNS     | 1.268/2.232   | 3.314/?                 | 5.089/10.471  | 9.8579/24.664             | 0.126              | 29.11176                       |
-| 1_000_000  | 0.872/DNS     | 11.574/20.610 | 42.727/?                | 65.015/42.353 | 137.78/97.271             | 0.489              | 291.118                        |
-| 4_000_000  | 3.388/DNS     | 44.254/52.155 | 92.932/?                | 227.14/162.24 | 489.67/382.04             | 1.844              | 1164.471                       |
-| 10_000_000 | 8.720/DNS     | 113.47/145.46 | 410.26/?                | 505.85/707.39 | DNS                       | 4.201              | 2911.18                        |
+| DFactor    | AVX-512       | Safe Optimized (+) [^1] | Official (+*) | Official Generic x64 (+*) | wgpu (Vulkan) [^2] | User Survey extrapolated  [^3] |
+| ---------- | ------------- | ----------------------- | ------------- | ------------------------- | ------------------ | ------------------------------ |
+| 50_000     | 0.612/0.953   | 1.565                   | 2.851/4.009   | 5.3261/9.683              | 0.097              | 14.556                         |
+| 100_000    | 1.200/1.903   | 3.172                   | 5.698/7.817   | 9.8579/24.664             | 0.126              | 29.11176                       |
+| 1_000_000  | 11.708/18.515 | 31.622                  | 54.931/80.029 | 137.78/97.271             | 0.489              | 291.118                        |
+| 4_000_000  | 45.330/75.630 | 125.06                  | 222.93/323.70 | 489.67/382.04             | 1.844              | 1164.471                       |
+| 10_000_000 | 123.78/186.01 | 323.06                  | 564.41/805.02 | DNS                       | 4.201              | 2911.18                        |
 
 (*) = Since official solution allocated a variable length string per iteration, it is pretty difficult to get it to perform it stably both in terms of how many blocks to hash and how long the allocation takes, serious non-linear performance degradation seems to be observed and it is likely attributed to re-allocation overhead.
 (?) = not implemented, but I expect close to a clean double
@@ -200,7 +200,7 @@ sha256          207107.04k   645724.06k  1507281.95k  2220402.22k  2655970.10k  
 
 The single-threaded throughput for OpenSSL with SHA-NI support is about 12.94 MH/s (828.2MB/s) single block, 42.00 MH/s (2.86 GB/s) continuous, for us it is about 61.82 MH/s (3.96 GB/s) single-hash, 52.907 MH/s (6.77 GB/s) double-hash at difficulty closest to default highest (4e6).
 
-The peak throughput reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous. The multi-threaded rash rate derived from formal benchmark is 1.186 GH/s (95% conf: 1.1830, 1.1881, 75.88GB/s derived) at default highest difficulty (5e6) for single-hash, 725.68 MH/s (95% conf: 722.05, 729.19, 92.89 GB/s derived) for double-hash case.
+The peak throughput reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous. The multi-threaded rash rate derived from formal benchmark is 1.186 GH/s (95% conf: 1.1830, 1.1881, 75.88GB/s derived) at default highest difficulty (5e6) for single-hash, 841.94 MH/s (95% conf: 839.89, 843.91, 107.77 GB/s derived) for double-hash case.
 
 ## Security Implications
 

@@ -152,13 +152,19 @@ pub fn bench_proof(c: &mut Criterion) {
             ),
             &difficulty,
             |b, &_difficulty| {
+                static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
                 b.iter_custom(|iters| {
                     let start = std::time::Instant::now();
-                    for i in 0..iters {
-                        for j in 0..10 {
-                            let mut solver =
-                                SingleBlockSolver16Way::new((), &(i * 10 + j).to_ne_bytes())
-                                    .expect("solver is None");
+                    for _ in 0..iters {
+                        for _ in 0..10 {
+                            let mut solver: SingleBlockSolver16Way = SingleBlockSolver16Way::new(
+                                (),
+                                &(COUNTER
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                                    .to_ne_bytes()),
+                            )
+                            .expect("solver is None");
                             core::hint::black_box(
                                 solver.solve(target_u32s).expect("solver failed"),
                             );
@@ -181,9 +187,15 @@ pub fn bench_proof(c: &mut Criterion) {
                 b.iter_custom(|iters| {
                     let start = std::time::Instant::now();
                     let mut prefix: [u8; 48] = [0; 48];
-                    for i in 0..iters {
-                        for j in 0..10 {
-                            prefix[..8].copy_from_slice(&(i * 10 + j).to_ne_bytes());
+                    static COUNTER: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    for _ in 0..iters {
+                        for _ in 0..10 {
+                            prefix[..8].copy_from_slice(
+                                &COUNTER
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                                    .to_ne_bytes(),
+                            );
                             let mut solver =
                                 DoubleBlockSolver16Way::new((), &prefix).expect("solver is None");
                             core::hint::black_box(
@@ -205,13 +217,19 @@ pub fn bench_proof(c: &mut Criterion) {
             ),
             &difficulty,
             |b, &_difficulty| {
+                static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
                 b.iter_custom(|iters| {
                     let start = std::time::Instant::now();
-                    for i in 0..iters {
-                        for j in 0..10 {
-                            let mut solver =
-                                SingleBlockSolverNative::new((), &(i * 10 + j).to_ne_bytes())
-                                    .expect("solver is None");
+                    for _ in 0..iters {
+                        for _ in 0..10 {
+                            let mut solver = SingleBlockSolverNative::new(
+                                (),
+                                &(COUNTER
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                                    .to_ne_bytes()),
+                            )
+                            .expect("solver is None");
                             core::hint::black_box(
                                 solver.solve(target_u32s).expect("solver failed"),
                             );
@@ -236,12 +254,16 @@ pub fn bench_proof(c: &mut Criterion) {
                     .build()
                     .unwrap();
 
+                static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
                 b.iter_custom(|iters| {
                     let start = std::time::Instant::now();
-                    for i in 0..iters {
-                        for j in 0..10 {
+                    for _ in 0..iters {
+                        for _ in 0..10 {
                             let pow = solver.prove_work_serialized::<()>(
-                                &((i * 10 + j).to_ne_bytes()),
+                                &COUNTER
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                                    .to_ne_bytes(),
                                 difficulty,
                             );
                             core::hint::black_box((pow.nonce, pow.result));
@@ -271,9 +293,16 @@ pub fn bench_proof(c: &mut Criterion) {
                     // Give it a very awkward prefix length so a naive search would do 2 blocks
                     let mut prefix: [u8; 64 - 2] = [0; 64 - 2];
 
-                    for i in 0..iters {
-                        for j in 0..10 {
-                            prefix[..8].copy_from_slice(&(i * 10 + j).to_ne_bytes());
+                    static COUNTER: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+
+                    for _ in 0..iters {
+                        for _ in 0..10 {
+                            prefix[..8].copy_from_slice(
+                                &COUNTER
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                                    .to_ne_bytes(),
+                            );
                             let pow = solver.prove_work_serialized::<()>(&prefix, difficulty);
                             core::hint::black_box((pow.nonce, pow.result));
                         }
