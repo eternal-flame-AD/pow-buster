@@ -21,7 +21,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum SubCommand {
     Live {
-        #[clap(short, long, default_value = "http://localhost:7000")]
+        #[clap(long, default_value = "http://localhost:7000")]
         host: String,
 
         #[clap(long)]
