@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+sha2 = { version = "0.10", default-features = false, features = ["compress"] }
+
 bincode = { version = "1.3", optional = true }
 typenum = { version = "1.18", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
@@ -16,7 +18,6 @@ rayon = { version = "1.10", optional = true }
 wgpu = { version = "25", optional = true }
 num_cpus = { version = "1.17", optional = true }
 thiserror = { version = "2", optional = true }
-sha2 = { version = "0.10", default-features = false, features = ["compress"] }
 
 [profile.release]
 opt-level = 3
