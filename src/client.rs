@@ -201,23 +201,3 @@ pub async fn solve_mcaptcha_wgpu(
 
     Ok(token.token)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_solve_mcaptcha() {
-        let client = Client::new();
-        let base_url = "https://captcha.whimsies.org";
-        let site_key = "mZbWXbEBfEJKeKaTZ8JE9xUgwIneDGP2";
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(1)
-            .build()
-            .unwrap();
-        let token = solve_mcaptcha(&pool, &client, base_url, site_key, true)
-            .await
-            .unwrap();
-        println!("token: {}", token);
-    }
-}
