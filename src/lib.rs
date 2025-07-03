@@ -86,10 +86,7 @@ impl Solver for SingleBlockSolver16Way {
 
     fn new(_ctx: Self::Ctx, mut prefix: &[u8]) -> Option<Self> {
         // construct the message buffer
-        let mut prefix_state = [
-            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
-            0x5be0cd19,
-        ];
+        let mut prefix_state = sha256::IV;
         let mut nonce_addend = 0u64;
         let mut complete_blocks_before = 0;
 

@@ -326,10 +326,7 @@ mod tests {
         ];
 
         // Initial hash values (H0)
-        let mut state = [
-            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
-            0x5be0cd19,
-        ];
+        let mut state = IV;
 
         // Process the block
         compress_block_reference(&mut state, &input);
@@ -363,18 +360,8 @@ mod tests {
         };
 
         // Initial hash values (H0) for 16 parallel hashes
-        let state_avx512: [__m512i; 8] = unsafe {
-            [
-                _mm512_set1_epi32(0x6a09e667u32 as _),
-                _mm512_set1_epi32(0xbb67ae85u32 as _),
-                _mm512_set1_epi32(0x3c6ef372u32 as _),
-                _mm512_set1_epi32(0xa54ff53au32 as _),
-                _mm512_set1_epi32(0x510e527fu32 as _),
-                _mm512_set1_epi32(0x9b05688cu32 as _),
-                _mm512_set1_epi32(0x1f83d9abu32 as _),
-                _mm512_set1_epi32(0x5be0cd19u32 as _),
-            ]
-        };
+        let state_avx512: [__m512i; 8] =
+            core::array::from_fn(|i| unsafe { _mm512_set1_epi32(IV[i] as _) });
 
         // Process the blocks
         let mut state = state_avx512;
@@ -423,27 +410,13 @@ mod tests {
         block[0] = u32::from_be_bytes([0x61, 0x62, 0x63, 0x80]);
         block[15] = u32::from_be_bytes([0x00, 0x00, 0x00, 3 * 8]);
         do_message_schedule(&mut block);
-        let ivs: [u32; 8] = [
-            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
-            0x5be0cd19,
-        ];
-        let mut state_avx512: [__m512i; 8] = unsafe {
-            [
-                _mm512_set1_epi32(0x6a09e667u32 as _),
-                _mm512_set1_epi32(0xbb67ae85u32 as _),
-                _mm512_set1_epi32(0x3c6ef372u32 as _),
-                _mm512_set1_epi32(0xa54ff53au32 as _),
-                _mm512_set1_epi32(0x510e527fu32 as _),
-                _mm512_set1_epi32(0x9b05688cu32 as _),
-                _mm512_set1_epi32(0x1f83d9abu32 as _),
-                _mm512_set1_epi32(0x5be0cd19u32 as _),
-            ]
-        };
+        let mut state_avx512: [__m512i; 8] =
+            core::array::from_fn(|i| unsafe { _mm512_set1_epi32(IV[i] as _) });
 
         compress_16block_avx512_bcst_without_feedback::<0>(&mut state_avx512, &block);
         for i in 0..8 {
             state_avx512[i] =
-                unsafe { _mm512_add_epi32(state_avx512[i], _mm512_set1_epi32(ivs[i] as _)) };
+                unsafe { _mm512_add_epi32(state_avx512[i], _mm512_set1_epi32(IV[i] as _)) };
         }
 
         let expected = [
