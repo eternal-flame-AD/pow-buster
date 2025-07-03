@@ -423,10 +423,7 @@ impl Solver for DoubleBlockSolver16Way {
         Self: Sized,
     {
         // construct the message buffer
-        let mut prefix_state = [
-            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
-            0x5be0cd19,
-        ];
+        let mut prefix_state = sha256::IV;
 
         let mut complete_blocks_before = 0;
 
@@ -454,6 +451,8 @@ impl Solver for DoubleBlockSolver16Way {
 
         // pad with ones until we are on a 64-bit boundary minus 2 byte
         // we have much more leeway here as we are committed to a double block solver, using more bytes is fine, there is nothing useful to be traded off
+        // so we will construct and solve exactly this format, for lane 12 and nonce 3456789:
+        // [prefix + '1' * k + '12' + '3456' + '789\x80'] | ['\0' * 12 + length]
         let mut nonce_addend = 0;
         while (ptr + 2) % 8 != 0 {
             nonce_addend *= 10;
@@ -673,10 +672,7 @@ impl Solver for SingleBlockSolverNative {
 
     fn new(_ctx: Self::Ctx, mut prefix: &[u8]) -> Option<Self> {
         // construct the message buffer
-        let mut prefix_state = [
-            0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
-            0x5be0cd19,
-        ];
+        let mut prefix_state = sha256::IV;
         let mut nonce_addend = 0u64;
         let mut complete_blocks_before = 0;
 
