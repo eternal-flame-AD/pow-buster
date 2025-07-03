@@ -7,9 +7,7 @@ use criterion::{Criterion, criterion_group, criterion_main};
 
 use sha2::Digest;
 use sha2::digest::generic_array::sequence::GenericSequence;
-use simd_mcaptcha::{
-    DoubleBlockSolver16Way, SingleBlockSolver16Way, SingleBlockSolverNative, Solver, compute_target,
-};
+use simd_mcaptcha::{DoubleBlockSolver16Way, SingleBlockSolver16Way, Solver, compute_target};
 
 struct ProofKey {
     difficulty: u32,
@@ -212,7 +210,7 @@ pub fn bench_proof(c: &mut Criterion) {
                 "proof",
                 ProofKey {
                     difficulty,
-                    solver_type: "native (sha2)",
+                    solver_type: "safe (sha2)",
                 },
             ),
             &difficulty,
@@ -223,7 +221,7 @@ pub fn bench_proof(c: &mut Criterion) {
                     let start = std::time::Instant::now();
                     for _ in 0..iters {
                         for _ in 0..10 {
-                            let mut solver = SingleBlockSolverNative::new(
+                            let mut solver = simd_mcaptcha::safe::SingleBlockSolver::new(
                                 (),
                                 &(COUNTER
                                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
