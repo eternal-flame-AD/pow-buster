@@ -1,5 +1,4 @@
 use std::{
-    io::Write,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -8,9 +7,8 @@ use std::{
 };
 
 use clap::{Parser, Subcommand};
-use tokio::task::JoinSet;
 
-use simd_mcaptcha::{SingleBlockSolver16Way, Solver, client::solve_mcaptcha, compute_target};
+use simd_mcaptcha::{SingleBlockSolver16Way, Solver, compute_target};
 
 #[derive(Parser)]
 struct Cli {
@@ -20,6 +18,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum SubCommand {
+    #[cfg(feature = "client")]
     Live {
         #[clap(long, default_value = "http://localhost:7000")]
         host: String,
@@ -61,8 +60,7 @@ enum SubCommand {
     },
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let cli = Cli::parse();
     match cli.subcommand {
         SubCommand::Profile { difficulty } => {
@@ -104,15 +102,12 @@ async fn main() {
                 .unwrap();
             if speed {
                 let counter = counter.clone();
-                tokio::spawn(async move {
-                    let mut ticker = tokio::time::interval(Duration::from_secs(1));
-                    let start = Instant::now();
-                    loop {
-                        ticker.tick().await;
-                        let counter = counter.load(Ordering::Relaxed);
-                        eprintln!("{} rps", counter as f32 / start.elapsed().as_secs_f32());
-                    }
-                });
+                let start = Instant::now();
+                loop {
+                    let counter = counter.load(Ordering::Relaxed);
+                    eprintln!("{} rps", counter as f32 / start.elapsed().as_secs_f32());
+                    std::thread::sleep(Duration::from_secs(1));
+                }
             }
             pool.broadcast(move |_| {
                 for prefix in 0..u64::MAX {
@@ -192,6 +187,7 @@ async fn main() {
                 );
             }
         }
+        #[cfg(feature = "client")]
         SubCommand::Live {
             host,
             site_key,
@@ -200,6 +196,8 @@ async fn main() {
             #[cfg(feature = "wgpu")]
             use_gpu,
         } => {
+            use std::io::Write;
+
             let n_workers = n_workers.unwrap_or_else(|| num_cpus::get() as u32);
             eprintln!("You are hitting host {}, n_workers: {}", host, n_workers);
             let pool = rayon::ThreadPoolBuilder::new()
@@ -208,87 +206,122 @@ async fn main() {
                 .unwrap();
             let pool = Arc::new(pool);
 
-            if do_control {
-                let host = host.clone();
-                let site_key = site_key.clone();
-                let pool = pool.clone();
-                tokio::spawn(async move {
-                    eprintln!("running 10 seconds of control sending random proofs");
-                    let client = reqwest::ClientBuilder::new().build().unwrap();
-                    let begin = Instant::now();
-                    let count = Arc::new(AtomicU64::new(0));
-                    let mut js = JoinSet::new();
-                    for _ in 0..n_workers {
-                        let count_clone = count.clone();
-                        let client = client.clone();
-                        let host = host.clone();
-                        let site_key = site_key.clone();
-                        let pool = pool.clone();
-                        js.spawn(async move {
-                            while begin.elapsed() < Duration::from_secs(10) {
-                                solve_mcaptcha(&pool, &client, &host, &site_key, false)
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+
+            runtime.block_on(async move {
+                if do_control {
+                    let host = host.clone();
+                    let site_key = site_key.clone();
+                    let pool = pool.clone();
+                    tokio::spawn(async move {
+                        eprintln!("running 10 seconds of control sending random proofs");
+                        let client = reqwest::ClientBuilder::new().build().unwrap();
+                        let begin = Instant::now();
+                        let count = Arc::new(AtomicU64::new(0));
+                        let mut js = tokio::task::JoinSet::new();
+                        for _ in 0..n_workers {
+                            let count_clone = count.clone();
+                            let client = client.clone();
+                            let host = host.clone();
+                            let site_key = site_key.clone();
+                            let pool = pool.clone();
+                            js.spawn(async move {
+                                while begin.elapsed() < Duration::from_secs(10) {
+                                    simd_mcaptcha::client::solve_mcaptcha(
+                                        &pool, &client, &host, &site_key, false,
+                                    )
                                     .await
                                     .expect_err("random proof should fail but somehow succeeded");
-                                count_clone.fetch_add(1, Ordering::SeqCst);
+                                    count_clone.fetch_add(1, Ordering::SeqCst);
+                                }
+                            });
+                        }
+                        while let Some(Ok(_)) = js.join_next().await {}
+                        eprintln!(
+                            "Fake Proof Control: {} requests in {:.1} seconds, {:.1} rps",
+                            count.load(Ordering::SeqCst),
+                            begin.elapsed().as_secs_f32(),
+                            count.load(Ordering::SeqCst) as f32 / begin.elapsed().as_secs_f32()
+                        );
+                    });
+                }
+
+                let mut last_succeeded = 0;
+                let mut last_failed = 0;
+                let succeeded = Arc::new(AtomicU64::new(0));
+                let failed = Arc::new(AtomicU64::new(0));
+
+                for _ in 0..n_workers {
+                    let host_clone = host.clone();
+
+                    let succeeded_clone = succeeded.clone();
+                    let failed_clone = failed.clone();
+                    let site_key_clone = site_key.clone();
+                    let pool = pool.clone();
+
+                    #[cfg(feature = "wgpu")]
+                    if use_gpu {
+                        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+                            backends: wgpu::Backends::VULKAN,
+                            ..Default::default()
+                        });
+                        let adapter = instance
+                            .request_adapter(&wgpu::RequestAdapterOptions {
+                                power_preference: wgpu::PowerPreference::HighPerformance,
+                                compatible_surface: None,
+                                force_fallback_adapter: false,
+                            })
+                            .await
+                            .unwrap();
+                        let mut features = wgpu::Features::empty();
+                        features.insert(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS);
+                        let (device, queue) = adapter
+                            .request_device(&wgpu::DeviceDescriptor {
+                                label: None,
+                                required_features: features,
+                                required_limits: wgpu::Limits::default(),
+                                memory_hints: wgpu::MemoryHints::Performance,
+                                trace: wgpu::Trace::Off,
+                            })
+                            .await
+                            .unwrap();
+                        let mut ctx = simd_mcaptcha::wgpu::VulkanDeviceContext::new(device, queue);
+
+                        tokio::spawn(async move {
+                            let client = reqwest::ClientBuilder::new().build().unwrap();
+                            loop {
+                                match simd_mcaptcha::client::solve_mcaptcha_wgpu(
+                                    &mut ctx,
+                                    &client,
+                                    &host_clone,
+                                    &site_key_clone,
+                                    true,
+                                )
+                                .await
+                                {
+                                    Ok(_) => {
+                                        succeeded_clone.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("wgpu error: {:?}", e);
+                                        failed_clone.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                }
                             }
                         });
+
+                        continue;
                     }
-                    while let Some(Ok(_)) = js.join_next().await {}
-                    eprintln!(
-                        "Fake Proof Control: {} requests in {:.1} seconds, {:.1} rps",
-                        count.load(Ordering::SeqCst),
-                        begin.elapsed().as_secs_f32(),
-                        count.load(Ordering::SeqCst) as f32 / begin.elapsed().as_secs_f32()
-                    );
-                });
-            }
-
-            let mut last_succeeded = 0;
-            let mut last_failed = 0;
-            let succeeded = Arc::new(AtomicU64::new(0));
-            let failed = Arc::new(AtomicU64::new(0));
-
-            for _ in 0..n_workers {
-                let host_clone = host.clone();
-
-                let succeeded_clone = succeeded.clone();
-                let failed_clone = failed.clone();
-                let site_key_clone = site_key.clone();
-                let pool = pool.clone();
-
-                #[cfg(feature = "wgpu")]
-                if use_gpu {
-                    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-                        backends: wgpu::Backends::VULKAN,
-                        ..Default::default()
-                    });
-                    let adapter = instance
-                        .request_adapter(&wgpu::RequestAdapterOptions {
-                            power_preference: wgpu::PowerPreference::HighPerformance,
-                            compatible_surface: None,
-                            force_fallback_adapter: false,
-                        })
-                        .await
-                        .unwrap();
-                    let mut features = wgpu::Features::empty();
-                    features.insert(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS);
-                    let (device, queue) = adapter
-                        .request_device(&wgpu::DeviceDescriptor {
-                            label: None,
-                            required_features: features,
-                            required_limits: wgpu::Limits::default(),
-                            memory_hints: wgpu::MemoryHints::Performance,
-                            trace: wgpu::Trace::Off,
-                        })
-                        .await
-                        .unwrap();
-                    let mut ctx = simd_mcaptcha::wgpu::VulkanDeviceContext::new(device, queue);
 
                     tokio::spawn(async move {
                         let client = reqwest::ClientBuilder::new().build().unwrap();
+
                         loop {
-                            match simd_mcaptcha::client::solve_mcaptcha_wgpu(
-                                &mut ctx,
+                            match simd_mcaptcha::client::solve_mcaptcha(
+                                &pool,
                                 &client,
                                 &host_clone,
                                 &site_key_clone,
@@ -296,66 +329,46 @@ async fn main() {
                             )
                             .await
                             {
-                                Ok(_) => {
-                                    succeeded_clone.fetch_add(1, Ordering::Relaxed);
+                                Ok(token) => {
+                                    let mut stdout = std::io::stdout().lock();
+                                    stdout
+                                        .write_all(token.as_bytes())
+                                        .expect("stdout write failed");
+                                    stdout.write_all(b"\n").expect("stdout write failed");
+                                    stdout.flush().expect("stdout flush failed");
+
+                                    succeeded_clone.fetch_add(1, Ordering::Relaxed)
                                 }
-                                Err(e) => {
-                                    eprintln!("wgpu error: {:?}", e);
-                                    failed_clone.fetch_add(1, Ordering::Relaxed);
-                                }
-                            }
+                                Err(_) => failed_clone.fetch_add(1, Ordering::Relaxed),
+                            };
                         }
                     });
-
-                    continue;
                 }
 
-                tokio::spawn(async move {
-                    let client = reqwest::ClientBuilder::new().build().unwrap();
+                let begin = Instant::now();
+                let mut ticker = tokio::time::interval(Duration::from_secs(5));
+                loop {
+                    ticker.tick().await;
+                    let elapsed = begin.elapsed();
+                    let succeeded = succeeded.load(Ordering::Relaxed);
+                    let failed = failed.load(Ordering::Relaxed);
+                    let diff_succeeded = succeeded - last_succeeded;
+                    let diff_failed = failed - last_failed;
+                    let rate_5sec_succeeded: f32 = diff_succeeded as f32 / 5.0;
+                    let rate_5sec_failed = diff_failed as f32 / 5.0;
 
-                    loop {
-                        match solve_mcaptcha(&pool, &client, &host_clone, &site_key_clone, true)
-                            .await
-                        {
-                            Ok(token) => {
-                                let mut stdout = std::io::stdout().lock();
-                                stdout
-                                    .write_all(token.as_bytes())
-                                    .expect("stdout write failed");
-                                stdout.write_all(b"\n").expect("stdout write failed");
-                                stdout.flush().expect("stdout flush failed");
-
-                                succeeded_clone.fetch_add(1, Ordering::Relaxed)
-                            }
-                            Err(_) => failed_clone.fetch_add(1, Ordering::Relaxed),
-                        };
-                    }
-                });
-            }
-
-            let begin = Instant::now();
-            let mut ticker = tokio::time::interval(Duration::from_secs(5));
-            loop {
-                ticker.tick().await;
-                let elapsed = begin.elapsed();
-                let succeeded = succeeded.load(Ordering::Relaxed);
-                let failed = failed.load(Ordering::Relaxed);
-                let diff_succeeded = succeeded - last_succeeded;
-                let diff_failed = failed - last_failed;
-                let rate_5sec_succeeded: f32 = diff_succeeded as f32 / 5.0;
-                let rate_5sec_failed = diff_failed as f32 / 5.0;
-
-                eprintln!(
-                    "[{:.1}s] succeeded: {}, failed: {}, 5s: {:.1}rps, 5s_failed: {:.1}rps",
-                    elapsed.as_secs_f32(),
-                    succeeded,
-                    failed,
-                    rate_5sec_succeeded,
-                    rate_5sec_failed,
-                );
-                last_succeeded = succeeded;
-                last_failed = failed;
-            }
+                    eprintln!(
+                        "[{:.1}s] succeeded: {}, failed: {}, 5s: {:.1}rps, 5s_failed: {:.1}rps",
+                        elapsed.as_secs_f32(),
+                        succeeded,
+                        failed,
+                        rate_5sec_succeeded,
+                        rate_5sec_failed,
+                    );
+                    last_succeeded = succeeded;
+                    last_failed = failed;
+                }
+            });
         }
     }
 }

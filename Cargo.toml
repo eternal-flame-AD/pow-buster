@@ -10,7 +10,7 @@ clap = { version = "4", features = ["derive"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "http2", "rustls-tls"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
-tokio = { version = "1", features = ["rt", "macros", "net"], optional = true }
+tokio = { version = "1", features = ["rt", "net"], optional = true }
 pow_sha256 = { git = "https://github.com/mcaptcha/pow_sha256", tag = "0.3.1", optional = true }
 rayon = { version = "1.10", optional = true }
 wgpu = { version = "25", optional = true }
@@ -36,8 +36,8 @@ name = "bench_proof"
 harness = false
 
 [features]
-client = ["bincode", "rayon", "tokio","dep:serde_json", "dep:reqwest", "dep:thiserror", "dep:num_cpus"]
-cli = ["dep:clap", "client", "tokio/rt-multi-thread"]
+client = ["bincode", "rayon", "tokio", "tokio/rt-multi-thread", "dep:serde_json", "dep:reqwest", "dep:thiserror", "dep:num_cpus"]
+cli = ["dep:clap", "rayon", "dep:num_cpus"]
 serde = ["dep:serde"]
 bincode = ["serde", "dep:bincode"]
 tokio = ["dep:tokio"]
