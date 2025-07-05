@@ -16,11 +16,36 @@ pub mod safe;
 /// wgpu implementations
 pub mod wgpu;
 
+#[repr(align(16))]
+struct Align16<T>(T);
+
+impl<T> core::ops::Deref for Align16<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 const SWAP_DWORD_BYTE_ORDER: [usize; 64] = [
     3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12, 19, 18, 17, 16, 23, 22, 21, 20, 27, 26,
     25, 24, 31, 30, 29, 28, 35, 34, 33, 32, 39, 38, 37, 36, 43, 42, 41, 40, 47, 46, 45, 44, 51, 50,
     49, 48, 55, 54, 53, 52, 59, 58, 57, 56, 63, 62, 61, 60,
 ];
+
+static LANE_ID_MSB_STR: Align16<[u8; 5 * 16]> =
+    Align16(*b"11111111112222222222333333333344444444445555555555666666666677777777778888888888");
+
+static LANE_ID_LSB_STR: Align16<[u8; 5 * 16]> =
+    Align16(*b"01234567890123456789012345678901234567890123456789012345678901234567890123456789");
+
+#[inline(always)]
+fn load_lane_id_epi32(src: &Align16<[u8; 5 * 16]>, set_idx: usize) -> __m512i {
+    unsafe {
+        _mm512_cvtepi8_epi32(_mm_load_si128(
+            src.as_ptr().add(set_idx as usize * 16).cast(),
+        ))
+    }
+}
 
 #[cfg(feature = "bincode")]
 pub fn build_prefix<W: std::io::Write>(
@@ -188,70 +213,41 @@ impl Solver for SingleBlockSolver16Way {
         ) -> Option<u64> {
             let lane_id_0_byte_idx = this.digit_index % 4;
             let lane_id_1_byte_idx = (this.digit_index + 1) % 4;
-            // pre-compute the lane index OR mask to "stamp" onto each lane for each try
-            // this string is longer than we need but good enough for all intents and purposes
-            let lane_id_0_or_value: [u32; 5 * 16] = core::array::from_fn(|i| {
-                (b"111111111122222222223333333333444444444455555555556666666666777777777788888888889999999999"[i] as u32) << ((3 - lane_id_0_byte_idx) * 8) as u32
-            });
-
-            let lane_id_1_or_value: [u32; 5 * 16] = core::array::from_fn(|i| {
-                (b"012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"[i] as u32) << ((3 - lane_id_1_byte_idx) * 8) as u32
-            });
-
             for prefix_set_index in 0..5 {
-                let lane_id_0_or_value_v = unsafe {
-                    if DIGIT_WORD_IDX0 == DIGIT_WORD_IDX1 {
-                        _mm512_or_epi32(
-                            _mm512_loadu_epi32(
-                                lane_id_0_or_value
-                                    .as_ptr()
-                                    .add(prefix_set_index as usize * 16)
-                                    .cast(),
-                            ),
-                            _mm512_loadu_epi32(
-                                lane_id_1_or_value
-                                    .as_ptr()
-                                    .add(prefix_set_index as usize * 16)
-                                    .cast(),
-                            ),
-                        )
-                    } else {
-                        _mm512_loadu_epi32(
-                            lane_id_0_or_value
-                                .as_ptr()
-                                .add(prefix_set_index as usize * 16)
-                                .cast(),
-                        )
-                    }
-                };
-                let lane_id_1_or_value_v = unsafe {
-                    _mm512_loadu_epi32(
-                        lane_id_1_or_value
-                            .as_ptr()
-                            .add(prefix_set_index as usize * 16)
-                            .cast(),
-                    )
-                };
-                macro_rules! fetch_msg {
-                    ($idx:expr) => {
-                        if $idx == DIGIT_WORD_IDX0 {
-                            _mm512_or_epi32(
-                                _mm512_set1_epi32(this.message[$idx] as _),
-                                lane_id_0_or_value_v,
-                            )
-                        } else if $idx == DIGIT_WORD_IDX1 {
-                            _mm512_or_epi32(
-                                _mm512_set1_epi32(this.message[$idx] as _),
-                                lane_id_1_or_value_v,
-                            )
-                        } else {
-                            _mm512_set1_epi32(this.message[$idx] as _)
-                        }
-                    };
-                }
+                unsafe {
+                    let lane_id_0_or_value = _mm512_sll_epi32(
+                        load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index),
+                        _mm_set1_epi64x(((3 - lane_id_0_byte_idx) * 8) as _),
+                    );
+                    let lane_id_1_or_value = _mm512_sll_epi32(
+                        load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index),
+                        _mm_set1_epi64x(((3 - lane_id_1_byte_idx) * 8) as _),
+                    );
 
-                for inner_key in 0..10_000_000 {
-                    unsafe {
+                    let lane_id_0_or_value_v = if DIGIT_WORD_IDX0 == DIGIT_WORD_IDX1 {
+                        _mm512_or_epi32(lane_id_0_or_value, lane_id_1_or_value)
+                    } else {
+                        lane_id_0_or_value
+                    };
+                    macro_rules! fetch_msg {
+                        ($idx:expr) => {
+                            if $idx == DIGIT_WORD_IDX0 {
+                                _mm512_or_epi32(
+                                    _mm512_set1_epi32(this.message[$idx] as _),
+                                    lane_id_0_or_value_v,
+                                )
+                            } else if $idx == DIGIT_WORD_IDX1 {
+                                _mm512_or_epi32(
+                                    _mm512_set1_epi32(this.message[$idx] as _),
+                                    lane_id_1_or_value,
+                                )
+                            } else {
+                                _mm512_set1_epi32(this.message[$idx] as _)
+                            }
+                        };
+                    }
+
+                    for inner_key in 0..10_000_000 {
                         let mut key_copy = inner_key;
                         {
                             let message_bytes = decompose_blocks_mut(&mut this.message);
@@ -318,7 +314,7 @@ impl Solver for SingleBlockSolver16Way {
 
                         if a_is_greater != 0 {
                             let success_lane_idx = _tzcnt_u32(a_is_greater as _) as usize;
-                            let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx as u64;
+                            let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
 
                             // stamp the lane ID back onto the message
                             {
@@ -332,7 +328,7 @@ impl Solver for SingleBlockSolver16Way {
                             }
 
                             // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
-                            return Some(nonce_prefix * 10u64.pow(7) + inner_key);
+                            return Some(nonce_prefix as u64 * 10u64.pow(7) + inner_key);
                         }
                     }
                 }
@@ -506,35 +502,23 @@ impl Solver for DoubleBlockSolver16Way {
     }
 
     fn solve(&mut self, target: [u32; 4]) -> Option<(u64, u128)> {
-        let lane_id_0_byte_idx = Self::DIGIT_IDX % 4;
-        let lane_id_1_byte_idx = (Self::DIGIT_IDX + 1) % 4;
-        // pre-compute the lane index OR mask to "stamp" onto each lane for each try
-        // this string is longer than we need but good enough for all intents and purposes
-        let lane_id_or_value: [u32; 5 * 16] = core::array::from_fn(|i| {
-            let lane_0 = (b"111111111122222222223333333333444444444455555555556666666666777777777788888888889999999999"[i] as u32) << ((3 - lane_id_0_byte_idx) * 8) as u32;
-            let lane_1 = (b"012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"[i] as u32) << ((3 - lane_id_1_byte_idx) * 8) as u32;
-            lane_0 | lane_1
-        });
+        let mut partial_state = self.prefix_state.clone();
+        let mut partial_message = [0; 13];
+        partial_message.copy_from_slice(&self.message[..13]);
+        sha256::ingest_message_prefix(&mut partial_state, partial_message);
 
         for prefix_set_index in 0..5 {
-            let mut partial_state = self.prefix_state.clone();
-            let mut partial_message = [0; 13];
-            partial_message.copy_from_slice(&self.message[..13]);
-            sha256::ingest_message_prefix(&mut partial_state, partial_message);
-            let lane_index_value_v = unsafe {
-                _mm512_or_epi32(
-                    _mm512_set1_epi32(self.message[13] as _),
-                    _mm512_loadu_epi32(
-                        lane_id_or_value
-                            .as_ptr()
-                            .add(prefix_set_index as usize * 16)
-                            .cast(),
-                    ),
-                )
-            };
+            unsafe {
+                let lane_id_0_or_value =
+                    _mm512_slli_epi32(load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index), 8);
+                let lane_id_1_or_value = load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index);
 
-            for inner_key in 0..10_000_000 {
-                unsafe {
+                let lane_index_value_v = _mm512_or_epi32(
+                    _mm512_set1_epi32(self.message[13] as _),
+                    _mm512_or_epi32(lane_id_0_or_value, lane_id_1_or_value),
+                );
+
+                for inner_key in 0..10_000_000 {
                     let mut key_copy = inner_key;
                     let mut cum0 = 0;
                     for _ in 0..4 {
@@ -603,7 +587,7 @@ impl Solver for DoubleBlockSolver16Way {
 
                     if a_is_greater != 0 {
                         let success_lane_idx = _tzcnt_u32(a_is_greater as _) as usize;
-                        let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx as u64;
+                        let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
 
                         self.message[14] = cum0;
                         self.message[15] = cum1;
@@ -635,8 +619,9 @@ impl Solver for DoubleBlockSolver16Way {
                             key_copy /= 10;
                         }
 
-                        let computed_nonce =
-                            nonce_prefix * 10u64.pow(7) + nonce_suffix as u64 + self.nonce_addend;
+                        let computed_nonce = nonce_prefix as u64 * 10u64.pow(7)
+                            + nonce_suffix as u64
+                            + self.nonce_addend;
 
                         // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
                         return Some((
