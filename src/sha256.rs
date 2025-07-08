@@ -84,7 +84,7 @@ pub(crate) fn compress_block_reference(state: &mut [u32; 8], block: &[u32; 16]) 
     for i in 0..16 {
         tmp[i * 4..][..4].copy_from_slice(&block[i].to_be_bytes());
     }
-    sha2::compress256(state, &[tmp.into()]);
+    sha2::compress256(state, &[tmp]);
 }
 
 // taken verbatim from sha2 crate
@@ -197,7 +197,7 @@ pub(crate) fn compress_16block_avx512_bcst_without_feedback<const LEAD_ZEROES: u
 
         repeat64!(i, {
             let w = if i < LEAD_ZEROES {
-                debug_assert_eq!(block[i], 0, "block[{}] is not zero", i);
+                debug_assert_eq!(block[i], 0, "block[{i}] is not zero");
                 _mm512_setzero_si512()
             } else {
                 _mm512_set1_epi32(block[i] as _)

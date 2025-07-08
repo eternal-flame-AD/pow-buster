@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 sha2 = { version = "0.10", default-features = false, features = ["compress"] }
 
-bincode = { version = "1.3", optional = true }
 typenum = { version = "1.18", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "http2", "rustls-tls"], optional = true }
@@ -37,14 +36,13 @@ name = "bench_proof"
 harness = false
 
 [features]
-client = ["bincode", "rayon", "tokio", "tokio/rt-multi-thread", "dep:serde_json", "dep:reqwest", "dep:thiserror", "dep:num_cpus"]
-cli = ["dep:clap", "rayon", "dep:num_cpus"]
-serde = ["dep:serde"]
-bincode = ["serde", "dep:bincode"]
-tokio = ["dep:tokio"]
+std = []
+client = ["std", "rayon", "tokio", "tokio/rt-multi-thread", "dep:serde", "dep:serde_json", "dep:reqwest", "dep:thiserror", "dep:num_cpus"]
+cli = ["std", "dep:clap", "rayon", "dep:num_cpus"]
+tokio = ["std", "dep:tokio"]
 official = ["dep:pow_sha256"]
-wgpu = ["dep:wgpu", "dep:typenum"]
-rayon = ["dep:rayon"]
+wgpu = ["std", "dep:wgpu", "dep:typenum"]
+rayon = ["std", "dep:rayon"]
 
 [[bin]]
 name = "simd-mcaptcha"

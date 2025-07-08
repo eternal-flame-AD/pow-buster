@@ -8,7 +8,7 @@ use std::{
 
 use clap::{Parser, Subcommand};
 
-use simd_mcaptcha::{SingleBlockSolver16Way, Solver, compute_target};
+use simd_mcaptcha::{DoubleBlockSolver16Way, SingleBlockSolver16Way, Solver, compute_target};
 
 #[derive(Parser)]
 struct Cli {
@@ -146,7 +146,7 @@ fn main() {
                 ])
             });
             let begin = Instant::now();
-            for i in 0..10u64 {
+            for i in 0..20u64 {
                 let mut solver =
                     SingleBlockSolver16Way::new((), &i.to_ne_bytes()).expect("solver is None");
                 let inner_begin = Instant::now();
@@ -159,8 +159,27 @@ fn main() {
             }
             let elapsed = begin.elapsed();
             println!(
-                "{} seconds at difficulty {}",
-                elapsed.as_secs_f32() / 10.0,
+                "Single block solver: {} seconds at difficulty {}",
+                elapsed.as_secs_f32() / 20.0,
+                difficulty
+            );
+            let begin = Instant::now();
+            let mut prefix = [0u8; 48];
+            for i in 0..20u64 {
+                prefix[0] = i.to_ne_bytes()[0];
+                let mut solver = DoubleBlockSolver16Way::new((), &prefix).expect("solver is None");
+                let inner_begin = Instant::now();
+                let (nonce, result) = solver.solve(target_u32s).expect("solver failed");
+                eprintln!(
+                    "double block solver: in {:.3} seconds {:?}",
+                    inner_begin.elapsed().as_secs_f32(),
+                    (nonce, result)
+                );
+            }
+            let elapsed = begin.elapsed();
+            println!(
+                "Double block solver: {} seconds at difficulty {}",
+                elapsed.as_secs_f32() / 20.0,
                 difficulty
             );
             #[cfg(feature = "official")]

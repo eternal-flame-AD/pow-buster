@@ -100,7 +100,7 @@ impl crate::Solver for SingleBlockSolver {
                     key_copy /= 10;
                 }
 
-                let mut state = self.prefix_state.clone();
+                let mut state = self.prefix_state;
                 sha2::compress256(&mut state, &[self.message]);
 
                 if state[0] > target[0] {

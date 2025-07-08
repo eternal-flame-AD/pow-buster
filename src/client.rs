@@ -58,8 +58,7 @@ pub async fn solve_mcaptcha(
     }
     let config: PoWConfig = res.json().await?;
 
-    let mut prefix = Vec::new();
-    crate::build_prefix(&mut prefix, &config.string, &config.salt).unwrap();
+    let prefix = crate::build_prefix(&config.string, &config.salt).collect::<Vec<_>>();
     let target_bytes = compute_target(config.difficulty_factor).to_be_bytes();
     let target_u32s = core::array::from_fn(|i| {
         u32::from_be_bytes([
@@ -148,8 +147,7 @@ pub async fn solve_mcaptcha_wgpu(
     }
     let config: PoWConfig = res.json().await?;
 
-    let mut prefix = Vec::new();
-    crate::build_prefix(&mut prefix, &config.string, &config.salt).unwrap();
+    let prefix = crate::build_prefix(&config.string, &config.salt).collect::<Vec<_>>();
     let mut solver = crate::wgpu::VulkanSingleBlockSolver::<U256>::new(ctx, &prefix)
         .ok_or(SolveError::NotImplemented)?;
     let target_bytes = compute_target(config.difficulty_factor).to_be_bytes();

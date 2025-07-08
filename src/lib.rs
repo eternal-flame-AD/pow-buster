@@ -1,3 +1,4 @@
+#![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![doc = include_str!("../README.md")]
 #![feature(stdarch_x86_avx512)]
 use core::arch::x86_64::*;
@@ -40,28 +41,16 @@ static LANE_ID_LSB_STR: Align16<[u8; 5 * 16]> =
 
 #[inline(always)]
 fn load_lane_id_epi32(src: &Align16<[u8; 5 * 16]>, set_idx: usize) -> __m512i {
-    unsafe {
-        _mm512_cvtepi8_epi32(_mm_load_si128(
-            src.as_ptr().add(set_idx as usize * 16).cast(),
-        ))
-    }
+    debug_assert!(set_idx < 5);
+    unsafe { _mm512_cvtepi8_epi32(_mm_load_si128(src.as_ptr().add(set_idx * 16).cast())) }
 }
 
-#[cfg(feature = "bincode")]
-pub fn build_prefix<W: std::io::Write>(
-    out: &mut W,
-    string: &str,
-    salt: &str,
-) -> std::io::Result<()> {
-    out.write_all(salt.as_bytes())?;
-    match bincode::serialize_into(out, string) {
-        Ok(_) => (),
-        Err(e) => match *e {
-            bincode::ErrorKind::Io(e) => return Err(e),
-            _ => unreachable!(),
-        },
-    };
-    Ok(())
+pub fn build_prefix(string: &str, salt: &str) -> impl Iterator<Item = u8> {
+    salt.as_bytes()
+        .iter()
+        .copied()
+        .chain((string.len() as u64).to_le_bytes())
+        .chain(string.as_bytes().iter().copied())
 }
 
 pub const fn decompose_blocks(inp: &[u32; 16]) -> &[u8; 64] {
@@ -73,7 +62,7 @@ pub const fn decompose_blocks_mut(inp: &mut [u32; 16]) -> &mut [u8; 64] {
 }
 
 pub const fn compute_target(difficulty_factor: u32) -> u128 {
-    u128::max_value() - u128::max_value() / difficulty_factor as u128
+    u128::MAX - u128::MAX / difficulty_factor as u128
 }
 
 pub trait Solver {
@@ -381,7 +370,7 @@ impl Solver for SingleBlockSolver16Way {
 
         // recompute the hash from the beginning
         // this prevents the compiler from having to compute the final B-H registers alive in tight loops
-        let mut final_sha_state = self.prefix_state.clone();
+        let mut final_sha_state = self.prefix_state;
         sha256::compress_block_reference(&mut final_sha_state, &self.message);
 
         Some((
@@ -502,7 +491,7 @@ impl Solver for DoubleBlockSolver16Way {
     }
 
     fn solve(&mut self, target: [u32; 4]) -> Option<(u64, u128)> {
-        let mut partial_state = self.prefix_state.clone();
+        let mut partial_state = self.prefix_state;
         let mut partial_message = [0; 13];
         partial_message.copy_from_slice(&self.message[..13]);
         sha256::ingest_message_prefix(&mut partial_state, partial_message);
@@ -565,12 +554,12 @@ impl Solver for DoubleBlockSolver16Way {
                     sha256::compress_16block_avx512_without_feedback::<13>(&mut state, &mut blocks);
 
                     // we have to do feedback now
-                    for i in 0..8 {
-                        state[i] = _mm512_add_epi32(
-                            state[i],
-                            _mm512_set1_epi32(self.prefix_state[i] as _),
-                        );
-                    }
+                    state.iter_mut().zip(self.prefix_state.iter()).for_each(
+                        |(state, prefix_state)| {
+                            *state =
+                                _mm512_add_epi32(*state, _mm512_set1_epi32(*prefix_state as _));
+                        },
+                    );
 
                     // save only A register for comparison
                     let save_a = state[0];
@@ -603,7 +592,7 @@ impl Solver for DoubleBlockSolver16Way {
 
                         // recompute the hash from the beginning
                         // this prevents the compiler from having to compute the final B-H registers alive in tight loops
-                        let mut final_sha_state = self.prefix_state.clone();
+                        let mut final_sha_state = self.prefix_state;
                         sha256::compress_block_reference(&mut final_sha_state, &self.message);
                         sha256::compress_block_reference(
                             &mut final_sha_state,
@@ -645,6 +634,31 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
+
+    pub fn build_prefix_official<W: std::io::Write>(
+        out: &mut W,
+        string: &str,
+        salt: &str,
+    ) -> std::io::Result<()> {
+        out.write_all(salt.as_bytes())?;
+        match bincode::serialize_into(out, string) {
+            Ok(_) => (),
+            Err(e) => match *e {
+                bincode::ErrorKind::Io(e) => return Err(e),
+                _ => unreachable!(),
+            },
+        };
+        Ok(())
+    }
+
+    #[test]
+    fn test_bincode_string_serialize() {
+        let string = "hello";
+        let homegrown = build_prefix(string, "z").collect::<Vec<_>>();
+        let mut official = Vec::new();
+        build_prefix_official(&mut official, string, "z").unwrap();
+        assert_eq!(homegrown, official);
+    }
 
     pub(crate) fn test_solve<S: Solver>() -> HashSet<usize>
     where
