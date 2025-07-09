@@ -49,6 +49,9 @@ enum SubCommand {
 
         #[clap(short, long, default_value = "1")]
         n_threads: Option<u32>,
+
+        #[clap(long)]
+        double_block: bool,
     },
     Time {
         #[clap(short, long, default_value = "10000000")]
@@ -89,6 +92,7 @@ fn main() {
             difficulty,
             speed,
             n_threads,
+            double_block,
         } => {
             let n_threads = n_threads.unwrap_or_else(|| num_cpus::get() as u32);
             println!(
@@ -96,39 +100,76 @@ fn main() {
                 difficulty, n_threads
             );
             let counter = Arc::new(AtomicU64::new(0));
-            let pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(n_threads as usize)
-                .build()
-                .unwrap();
+
+            for _ in 0..n_threads {
+                let counter = counter.clone();
+                std::thread::spawn(move || {
+                    if double_block {
+                        for prefix in 0..u64::MAX {
+                            let mut prefix_bytes = [0u8; 48];
+                            prefix_bytes[..8].copy_from_slice(&prefix.to_ne_bytes());
+                            let mut solver = DoubleBlockSolver16Way::new((), &prefix_bytes)
+                                .expect("solver is None");
+                            let target = compute_target(difficulty);
+                            let target_bytes = target.to_be_bytes();
+                            let target_u32s = core::array::from_fn(|i| {
+                                u32::from_be_bytes([
+                                    target_bytes[i * 4],
+                                    target_bytes[i * 4 + 1],
+                                    target_bytes[i * 4 + 2],
+                                    target_bytes[i * 4 + 3],
+                                ])
+                            });
+                            let result = solver.solve(target_u32s).expect("solver failed");
+                            counter.fetch_add(1, Ordering::Relaxed);
+                            core::hint::black_box(result);
+                        }
+                    } else {
+                        for prefix in 0..u64::MAX {
+                            let prefix = prefix.to_ne_bytes();
+                            let mut solver =
+                                SingleBlockSolver16Way::new((), &prefix).expect("solver is None");
+                            let target = compute_target(difficulty);
+                            let target_bytes = target.to_be_bytes();
+                            let target_u32s = core::array::from_fn(|i| {
+                                u32::from_be_bytes([
+                                    target_bytes[i * 4],
+                                    target_bytes[i * 4 + 1],
+                                    target_bytes[i * 4 + 2],
+                                    target_bytes[i * 4 + 3],
+                                ])
+                            });
+                            let result = solver.solve(target_u32s).expect("solver failed");
+                            counter.fetch_add(1, Ordering::Relaxed);
+                            core::hint::black_box(result);
+                        }
+                    }
+                });
+            }
             if speed {
                 let counter = counter.clone();
                 let start = Instant::now();
                 loop {
                     let counter = counter.load(Ordering::Relaxed);
-                    eprintln!("{} rps", counter as f32 / start.elapsed().as_secs_f32());
+                    eprintln!(
+                        "{} rps ({:.2} GiB/s)",
+                        counter as f32 / start.elapsed().as_secs_f32(),
+                        counter as f32
+                            * difficulty as f32
+                            * (if double_block { 2.0 } else { 1.0 })
+                            * 64.0
+                            / 1024.0
+                            / 1024.0
+                            / 1024.0
+                            / start.elapsed().as_secs_f32()
+                    );
                     std::thread::sleep(Duration::from_secs(1));
                 }
-            }
-            pool.broadcast(move |_| {
-                for prefix in 0..u64::MAX {
-                    let prefix = prefix.to_ne_bytes();
-                    let mut solver =
-                        SingleBlockSolver16Way::new((), &prefix).expect("solver is None");
-                    let target = compute_target(difficulty);
-                    let target_bytes = target.to_be_bytes();
-                    let target_u32s = core::array::from_fn(|i| {
-                        u32::from_be_bytes([
-                            target_bytes[i * 4],
-                            target_bytes[i * 4 + 1],
-                            target_bytes[i * 4 + 2],
-                            target_bytes[i * 4 + 3],
-                        ])
-                    });
-                    let result = solver.solve(target_u32s).expect("solver failed");
-                    counter.fetch_add(1, Ordering::Relaxed);
-                    core::hint::black_box(result);
+            } else {
+                loop {
+                    core::hint::spin_loop();
                 }
-            });
+            }
         }
         SubCommand::Time {
             difficulty,

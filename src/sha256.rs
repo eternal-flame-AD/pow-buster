@@ -1,5 +1,6 @@
 use core::arch::x86_64::*;
 
+// Initial hash values for SHA-256
 pub(crate) const IV: [u32; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ];
@@ -43,38 +44,18 @@ macro_rules! repeat64 {
 /// The first 16 words are the input block, the rest are computed from them
 #[inline(always)]
 pub(crate) const fn do_message_schedule(w: &mut [u32; 64]) {
-    let w_tmp = [
-        w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9], w[10], w[11], w[12], w[13],
-        w[14], w[15],
-    ];
     repeat64!(i, {
         if i >= 16 {
-            let w15 = w[(i - 15) % 16];
+            let w15 = w[i - 15];
             let s0 = (w15.rotate_right(7)) ^ (w15.rotate_right(18)) ^ (w15 >> 3);
-            let w2 = w[(i - 2) % 16];
+            let w2 = w[i - 2];
             let s1 = (w2.rotate_right(17)) ^ (w2.rotate_right(19)) ^ (w2 >> 10);
-            w[i % 16] = w[i % 16].wrapping_add(s0);
-            w[i % 16] = w[i % 16].wrapping_add(w[(i - 7) % 16]);
-            w[i % 16] = w[i % 16].wrapping_add(s1);
-            w[i] = w[i % 16];
+            w[i] = w[i].wrapping_add(s0);
+            w[i] = w[i].wrapping_add(w[i - 7]);
+            w[i] = w[i].wrapping_add(s1);
+            w[i] = w[i].wrapping_add(w[i - 16]);
         }
     });
-    w[0] = w_tmp[0];
-    w[1] = w_tmp[1];
-    w[2] = w_tmp[2];
-    w[3] = w_tmp[3];
-    w[4] = w_tmp[4];
-    w[5] = w_tmp[5];
-    w[6] = w_tmp[6];
-    w[7] = w_tmp[7];
-    w[8] = w_tmp[8];
-    w[9] = w_tmp[9];
-    w[10] = w_tmp[10];
-    w[11] = w_tmp[11];
-    w[12] = w_tmp[12];
-    w[13] = w_tmp[13];
-    w[14] = w_tmp[14];
-    w[15] = w_tmp[15];
 }
 
 /// A reference software implementation of SHA-256 compression function from sha2 crate
