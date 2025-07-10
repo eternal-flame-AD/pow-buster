@@ -3,6 +3,7 @@
 #![feature(stdarch_x86_avx512)]
 use core::arch::x86_64::*;
 use core::hint::unreachable_unchecked;
+use core::num::NonZeroU8;
 
 #[cfg(feature = "client")]
 /// Web client for solving mCaptcha PoW
@@ -61,8 +62,14 @@ pub const fn decompose_blocks_mut(inp: &mut [u32; 16]) -> &mut [u8; 64] {
     unsafe { core::mem::transmute(inp) }
 }
 
+/// Compute the target for an mCaptcha PoW
 pub const fn compute_target(difficulty_factor: u32) -> u128 {
     u128::MAX - u128::MAX / difficulty_factor as u128
+}
+
+/// Compute the target for an Anubis PoW
+pub const fn compute_target_anubis(difficulty_factor: NonZeroU8) -> u128 {
+    1u128 << (128 - difficulty_factor.get() * 4)
 }
 
 pub trait Solver {
@@ -79,10 +86,21 @@ pub trait Solver {
 
     // returns a valid nonce and "result" value
     //
+    // mCaptcha uses an upwards comparison, Anubis uses a downwards comparison
+    //
     // returns None when the solver cannot solve the prefix
     // failure is usually because the key space is exhausted (or presumed exhausted)
     // it should by design happen extremely rarely for common difficulty settings
-    fn solve(&mut self, target: [u32; 4]) -> Option<(u64, u128)>;
+    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, u128)>;
+
+    // A dynamic dispatching wrapper for solve
+    fn solve_dyn(&mut self, target: [u32; 4], upwards: bool) -> Option<(u64, u128)> {
+        if upwards {
+            self.solve::<true>(target)
+        } else {
+            self.solve::<false>(target)
+        }
+    }
 }
 
 // Solves an mCaptcha SHA256 PoW where the SHA-256 message is a single block (512 bytes minus padding).
@@ -185,7 +203,7 @@ impl Solver for SingleBlockSolver16Way {
         })
     }
 
-    fn solve(&mut self, target: [u32; 4]) -> Option<(u64, u128)> {
+    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, u128)> {
         // the official default difficulty is 5e6, so we design for 1e8
         // and there should almost always be a valid solution within our supported solution space
         // pgeom(5 * 16e7, 1/5e7, lower=F) = 0.03%
@@ -196,7 +214,11 @@ impl Solver for SingleBlockSolver16Way {
         let lane_id_1_word_idx = (self.digit_index + 1) / 4;
 
         // make sure there are no runtime "register indexing" logic
-        fn solve_inner<const DIGIT_WORD_IDX0: usize, const DIGIT_WORD_IDX1: usize>(
+        fn solve_inner<
+            const DIGIT_WORD_IDX0: usize,
+            const DIGIT_WORD_IDX1: usize,
+            const UPWARDS: bool,
+        >(
             this: &mut SingleBlockSolver16Way,
             target: u32,
         ) -> Option<u64> {
@@ -293,16 +315,22 @@ impl Solver for SingleBlockSolver16Way {
                         // which for 1e8 is about 1%, but we get to save the one broadcast add,
                         // a vectorized comparison, and a scalar logic evaluation
                         // which I feel is about 1% of the instructions needed per iteration anyways just more registers used so let's not bother
-                        let a_is_greater = _mm512_cmpgt_epu32_mask(
-                            _mm512_add_epi32(
-                                state[0],
-                                _mm512_set1_epi32(this.prefix_state[0] as _),
-                            ),
-                            _mm512_set1_epi32(target as _),
+
+                        let result_a = _mm512_add_epi32(
+                            state[0],
+                            _mm512_set1_epi32(this.prefix_state[0] as _),
                         );
 
-                        if a_is_greater != 0 {
-                            let success_lane_idx = _tzcnt_u32(a_is_greater as _) as usize;
+                        let cmp_fn = if UPWARDS {
+                            _mm512_cmpgt_epu32_mask
+                        } else {
+                            _mm512_cmplt_epu32_mask
+                        };
+
+                        let a_met_target = cmp_fn(result_a, _mm512_set1_epi32(target as _));
+
+                        if a_met_target != 0 {
+                            let success_lane_idx = _tzcnt_u32(a_met_target as _) as usize;
                             let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
 
                             // stamp the lane ID back onto the message
@@ -328,20 +356,20 @@ impl Solver for SingleBlockSolver16Way {
         macro_rules! dispatch {
             ($idx0:literal) => {
                 match lane_id_1_word_idx {
-                    0 => solve_inner::<$idx0, 0>(self, target[0]),
-                    1 => solve_inner::<$idx0, 1>(self, target[0]),
-                    2 => solve_inner::<$idx0, 2>(self, target[0]),
-                    3 => solve_inner::<$idx0, 3>(self, target[0]),
-                    4 => solve_inner::<$idx0, 4>(self, target[0]),
-                    5 => solve_inner::<$idx0, 5>(self, target[0]),
-                    6 => solve_inner::<$idx0, 6>(self, target[0]),
-                    7 => solve_inner::<$idx0, 7>(self, target[0]),
-                    8 => solve_inner::<$idx0, 8>(self, target[0]),
-                    9 => solve_inner::<$idx0, 9>(self, target[0]),
-                    10 => solve_inner::<$idx0, 10>(self, target[0]),
-                    11 => solve_inner::<$idx0, 11>(self, target[0]),
-                    12 => solve_inner::<$idx0, 12>(self, target[0]),
-                    13 => solve_inner::<$idx0, 13>(self, target[0]),
+                    0 => solve_inner::<$idx0, 0, UPWARDS>(self, target[0]),
+                    1 => solve_inner::<$idx0, 1, UPWARDS>(self, target[0]),
+                    2 => solve_inner::<$idx0, 2, UPWARDS>(self, target[0]),
+                    3 => solve_inner::<$idx0, 3, UPWARDS>(self, target[0]),
+                    4 => solve_inner::<$idx0, 4, UPWARDS>(self, target[0]),
+                    5 => solve_inner::<$idx0, 5, UPWARDS>(self, target[0]),
+                    6 => solve_inner::<$idx0, 6, UPWARDS>(self, target[0]),
+                    7 => solve_inner::<$idx0, 7, UPWARDS>(self, target[0]),
+                    8 => solve_inner::<$idx0, 8, UPWARDS>(self, target[0]),
+                    9 => solve_inner::<$idx0, 9, UPWARDS>(self, target[0]),
+                    10 => solve_inner::<$idx0, 10, UPWARDS>(self, target[0]),
+                    11 => solve_inner::<$idx0, 11, UPWARDS>(self, target[0]),
+                    12 => solve_inner::<$idx0, 12, UPWARDS>(self, target[0]),
+                    13 => solve_inner::<$idx0, 13, UPWARDS>(self, target[0]),
                     // there is no possible way lane ID lands on position 14 or 15, because the padding is 9 bytes and nonce tail is 7 bytes
                     _ => unreachable_unchecked(),
                 }
@@ -490,7 +518,7 @@ impl Solver for DoubleBlockSolver16Way {
         })
     }
 
-    fn solve(&mut self, target: [u32; 4]) -> Option<(u64, u128)> {
+    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, u128)> {
         let mut partial_state = self.prefix_state;
         let mut partial_message = [0; 13];
         partial_message.copy_from_slice(&self.message[..13]);
@@ -569,13 +597,19 @@ impl Solver for DoubleBlockSolver16Way {
                         &self.terminal_message_schedule,
                     );
 
-                    let a_is_greater = _mm512_cmpgt_epu32_mask(
+                    let cmp_fn = if UPWARDS {
+                        _mm512_cmpgt_epu32_mask
+                    } else {
+                        _mm512_cmplt_epu32_mask
+                    };
+
+                    let a_met_target = (cmp_fn)(
                         _mm512_add_epi32(state[0], save_a),
                         _mm512_set1_epi32(target[0] as _),
                     );
 
-                    if a_is_greater != 0 {
-                        let success_lane_idx = _tzcnt_u32(a_is_greater as _) as usize;
+                    if a_met_target != 0 {
+                        let success_lane_idx = _tzcnt_u32(a_met_target as _) as usize;
                         let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
 
                         self.message[14] = cum0;
@@ -652,6 +686,22 @@ mod tests {
     }
 
     #[test]
+    fn test_compute_target_anubis() {
+        assert_eq!(
+            compute_target_anubis(NonZeroU8::new(1).unwrap()),
+            0x10000000000000000000000000000000,
+        );
+        assert_eq!(
+            compute_target_anubis(NonZeroU8::new(2).unwrap()),
+            0x01000000000000000000000000000000,
+        );
+        assert_eq!(
+            compute_target_anubis(NonZeroU8::new(3).unwrap()),
+            0x00100000000000000000000000000000,
+        );
+    }
+
+    #[test]
     fn test_bincode_string_serialize() {
         let string = "hello";
         let homegrown = build_prefix(string, "z").collect::<Vec<_>>();
@@ -675,6 +725,7 @@ mod tests {
 
             let config = pow_sha256::Config { salt: SALT.into() };
             const DIFFICULTY: u32 = 100_000;
+            const ANUBIS_DIFFICULTY: NonZeroU8 = NonZeroU8::new(4).unwrap();
 
             let solver = S::new(Default::default(), &concatenated_prefix);
             let Some(mut solver) = solver else {
@@ -686,6 +737,7 @@ mod tests {
                 cannot_solve += 1;
                 continue;
             };
+            let mut anubis_solver = S::new(Default::default(), &concatenated_prefix).unwrap();
             solved.insert(phrase_len);
             let target_bytes = compute_target(DIFFICULTY).to_be_bytes();
             let target_u32s = core::array::from_fn(|i| {
@@ -696,7 +748,22 @@ mod tests {
                     target_bytes[i * 4 + 3],
                 ])
             });
-            let (nonce, result) = solver.solve(target_u32s).expect("solver failed");
+            let target_anubis = compute_target_anubis(ANUBIS_DIFFICULTY);
+            let target_anubis_bytes = target_anubis.to_be_bytes();
+            let target_anubis_u32s = core::array::from_fn(|i| {
+                u32::from_be_bytes([
+                    target_anubis_bytes[i * 4],
+                    target_anubis_bytes[i * 4 + 1],
+                    target_anubis_bytes[i * 4 + 2],
+                    target_anubis_bytes[i * 4 + 3],
+                ])
+            });
+            let (nonce, result) = solver.solve::<true>(target_u32s).expect("solver failed");
+
+            let (anubis_nonce, anubis_result) = anubis_solver
+                .solve::<false>(target_anubis_u32s)
+                .expect("solver failed");
+            assert!(target_anubis > anubis_result);
 
             /*
             let mut expected_message = concatenated_prefix.clone();
@@ -712,9 +779,21 @@ mod tests {
                 .result(result.to_string())
                 .build()
                 .unwrap();
+            let anubis_test_response = pow_sha256::PoWBuilder::default()
+                .nonce(anubis_nonce)
+                .result(anubis_result.to_string())
+                .build()
+                .unwrap();
+            let anubis_result_bytes = anubis_result.to_be_bytes();
             assert_eq!(
                 config.calculate(&test_response, &phrase_str).unwrap(),
                 result
+            );
+            assert_eq!(
+                config
+                    .calculate(&anubis_test_response, &phrase_str)
+                    .unwrap(),
+                anubis_result
             );
 
             assert!(
@@ -731,6 +810,22 @@ mod tests {
                 compute_target(DIFFICULTY),
                 core::any::type_name::<S>()
             );
+
+            // based on proof-of-work.mjs
+            for i in 0..ANUBIS_DIFFICULTY.get() as usize {
+                let byte_index = i / 2;
+                let nibble_index = (1 - i % 2) as u8;
+
+                let nibble = (anubis_result_bytes[byte_index] >> (nibble_index * 4)) & 0x0f;
+                assert_eq!(
+                    nibble,
+                    0,
+                    "{:08x} is not valid anubis proof (solver: {}, nibble: {})",
+                    anubis_result,
+                    core::any::type_name::<S>(),
+                    i
+                );
+            }
         }
 
         println!(

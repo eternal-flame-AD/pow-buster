@@ -1,4 +1,5 @@
 use std::{
+    num::NonZeroU8,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -8,7 +9,9 @@ use std::{
 
 use clap::{Parser, Subcommand};
 
-use simd_mcaptcha::{DoubleBlockSolver16Way, SingleBlockSolver16Way, Solver, compute_target};
+use simd_mcaptcha::{
+    DoubleBlockSolver16Way, SingleBlockSolver16Way, Solver, compute_target, compute_target_anubis,
+};
 
 #[derive(Parser)]
 struct Cli {
@@ -84,7 +87,7 @@ fn main() {
                         target_bytes[i * 4 + 3],
                     ])
                 });
-                let result = solver.solve(target_u32s).expect("solver failed");
+                let result = solver.solve::<true>(target_u32s).expect("solver failed");
                 core::hint::black_box(result);
             }
         }
@@ -101,6 +104,16 @@ fn main() {
             );
             let counter = Arc::new(AtomicU64::new(0));
 
+            let (upwards, target, expected_iters) = if difficulty > 32 {
+                (true, compute_target(difficulty), difficulty)
+            } else {
+                (
+                    false,
+                    compute_target_anubis(NonZeroU8::new(difficulty as u8).unwrap()),
+                    1 << (4 * (difficulty as u8)),
+                )
+            };
+
             for _ in 0..n_threads {
                 let counter = counter.clone();
                 std::thread::spawn(move || {
@@ -110,7 +123,6 @@ fn main() {
                             prefix_bytes[..8].copy_from_slice(&prefix.to_ne_bytes());
                             let mut solver = DoubleBlockSolver16Way::new((), &prefix_bytes)
                                 .expect("solver is None");
-                            let target = compute_target(difficulty);
                             let target_bytes = target.to_be_bytes();
                             let target_u32s = core::array::from_fn(|i| {
                                 u32::from_be_bytes([
@@ -120,7 +132,9 @@ fn main() {
                                     target_bytes[i * 4 + 3],
                                 ])
                             });
-                            let result = solver.solve(target_u32s).expect("solver failed");
+                            let result = solver
+                                .solve_dyn(target_u32s, upwards)
+                                .expect("solver failed");
                             counter.fetch_add(1, Ordering::Relaxed);
                             core::hint::black_box(result);
                         }
@@ -129,7 +143,7 @@ fn main() {
                             let prefix = prefix.to_ne_bytes();
                             let mut solver =
                                 SingleBlockSolver16Way::new((), &prefix).expect("solver is None");
-                            let target = compute_target(difficulty);
+
                             let target_bytes = target.to_be_bytes();
                             let target_u32s = core::array::from_fn(|i| {
                                 u32::from_be_bytes([
@@ -139,7 +153,9 @@ fn main() {
                                     target_bytes[i * 4 + 3],
                                 ])
                             });
-                            let result = solver.solve(target_u32s).expect("solver failed");
+                            let result = solver
+                                .solve_dyn(target_u32s, upwards)
+                                .expect("solver failed");
                             counter.fetch_add(1, Ordering::Relaxed);
                             core::hint::black_box(result);
                         }
@@ -152,12 +168,9 @@ fn main() {
                 loop {
                     let counter = counter.load(Ordering::Relaxed);
                     eprintln!(
-                        "{} rps ({:.2} GiB/s)",
+                        "{} rps ({:.2} GH/s)",
                         counter as f32 / start.elapsed().as_secs_f32(),
-                        counter as f32
-                            * difficulty as f32
-                            * (if double_block { 2.0 } else { 1.0 })
-                            * 64.0
+                        counter as f32 * expected_iters as f32
                             / 1024.0
                             / 1024.0
                             / 1024.0
@@ -176,7 +189,15 @@ fn main() {
             #[cfg(feature = "official")]
             test_official,
         } => {
-            let target = compute_target(difficulty);
+            let (upwards, target, expected_iters) = if difficulty > 32 {
+                (true, compute_target(difficulty), difficulty)
+            } else {
+                (
+                    false,
+                    compute_target_anubis(NonZeroU8::new(difficulty as u8).unwrap()),
+                    1 << (4 * (difficulty as u8)),
+                )
+            };
             let target_bytes = target.to_be_bytes();
             let target_u32s = core::array::from_fn(|i| {
                 u32::from_be_bytes([
@@ -191,18 +212,23 @@ fn main() {
                 let mut solver =
                     SingleBlockSolver16Way::new((), &i.to_ne_bytes()).expect("solver is None");
                 let inner_begin = Instant::now();
-                let (nonce, result) = solver.solve(target_u32s).expect("solver failed");
+                let (nonce, result) = solver
+                    .solve_dyn(target_u32s, upwards)
+                    .expect("solver failed");
                 eprintln!(
-                    "native: in {:.3} seconds {:?}",
+                    "[{}]: in {:.3} seconds {:?}",
+                    core::any::type_name::<SingleBlockSolver16Way>(),
                     inner_begin.elapsed().as_secs_f32(),
                     (nonce, result)
                 );
             }
             let elapsed = begin.elapsed();
             println!(
-                "Single block solver: {} seconds at difficulty {}",
+                "[{}]: {} seconds at difficulty {} ({:.2} MH/s)",
+                core::any::type_name::<SingleBlockSolver16Way>(),
                 elapsed.as_secs_f32() / 20.0,
-                difficulty
+                expected_iters,
+                expected_iters as f32 / elapsed.as_secs_f32() * 20.0 / 1024.0 / 1024.0
             );
             let begin = Instant::now();
             let mut prefix = [0u8; 48];
@@ -210,18 +236,23 @@ fn main() {
                 prefix[0] = i.to_ne_bytes()[0];
                 let mut solver = DoubleBlockSolver16Way::new((), &prefix).expect("solver is None");
                 let inner_begin = Instant::now();
-                let (nonce, result) = solver.solve(target_u32s).expect("solver failed");
+                let (nonce, result) = solver
+                    .solve_dyn(target_u32s, upwards)
+                    .expect("solver failed");
                 eprintln!(
-                    "double block solver: in {:.3} seconds {:?}",
+                    "[{}]: in {:.3} seconds {:?}",
+                    core::any::type_name::<DoubleBlockSolver16Way>(),
                     inner_begin.elapsed().as_secs_f32(),
                     (nonce, result)
                 );
             }
             let elapsed = begin.elapsed();
             println!(
-                "Double block solver: {} seconds at difficulty {}",
+                "[{}]: {} seconds at difficulty {} ({:.2} MH/s)",
+                core::any::type_name::<DoubleBlockSolver16Way>(),
                 elapsed.as_secs_f32() / 20.0,
-                difficulty
+                expected_iters,
+                expected_iters as f32 / elapsed.as_secs_f32() * 20.0 / 1024.0 / 1024.0
             );
             #[cfg(feature = "official")]
             if test_official {

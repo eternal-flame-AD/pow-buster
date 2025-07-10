@@ -236,7 +236,12 @@ impl<'a, WorkGroupSize: Unsigned + IsGreater<U0, Output = B1>> crate::Solver
         })
     }
 
-    fn solve(&mut self, target: [u32; 4]) -> Option<(u64, u128)> {
+    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, u128)> {
+        assert!(
+            UPWARDS,
+            "wgpu solver currently only supports upwards comparisons"
+        );
+
         self.saved_state[Self::SAVED_STATE_TARGET_MSB_IDX] = target[0];
 
         let effective_difficulty = u32::MAX.div_ceil(u32::MAX - target[0]);
@@ -425,7 +430,7 @@ mod tests {
                 ])
             });
             eprintln!("target: {:08x?}", target_u32s);
-            let result = solver.solve(target_u32s).unwrap();
+            let result = solver.solve::<true>(target_u32s).unwrap();
             eprintln!("result: {:?}", result);
 
             let test_response = pow_sha256::PoWBuilder::default()

@@ -22,7 +22,7 @@
   - [License](#license)
   - [AI Disclaimer](#ai-disclaimer)
 
-A fast, adversarially implemented mCaptcha PoW solver, targeting AVX-512 and SPIR-V compute (shader in WGSL).
+A fast, adversarially implemented mCaptcha PoW solver, targeting AVX-512 and SPIR-V compute (shader in WGSL). Now also solves Anubis style challenges (API adaptation is still WIP)!
 
 Tracking issue for upstream: [mCaptcha/mCaptcha#186](https://github.com/mCaptcha/mCaptcha/issues/186)
 

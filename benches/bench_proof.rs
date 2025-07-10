@@ -164,7 +164,7 @@ pub fn bench_proof(c: &mut Criterion) {
                             )
                             .expect("solver is None");
                             core::hint::black_box(
-                                solver.solve(target_u32s).expect("solver failed"),
+                                solver.solve::<true>(target_u32s).expect("solver failed"),
                             );
                         }
                     }
@@ -197,7 +197,7 @@ pub fn bench_proof(c: &mut Criterion) {
                             let mut solver =
                                 DoubleBlockSolver16Way::new((), &prefix).expect("solver is None");
                             core::hint::black_box(
-                                solver.solve(target_u32s).expect("solver failed"),
+                                solver.solve::<true>(target_u32s).expect("solver failed"),
                             );
                         }
                     }
@@ -229,7 +229,7 @@ pub fn bench_proof(c: &mut Criterion) {
                             )
                             .expect("solver is None");
                             core::hint::black_box(
-                                solver.solve(target_u32s).expect("solver failed"),
+                                solver.solve::<true>(target_u32s).expect("solver failed"),
                             );
                         }
                     }
@@ -359,7 +359,7 @@ pub fn bench_proof(c: &mut Criterion) {
                                 )
                                 .unwrap();
                                 core::hint::black_box(
-                                    solver.solve(target_u32s).expect("solver failed"),
+                                    solver.solve::<true>(target_u32s).expect("solver failed"),
                                 );
                             }
                         }
@@ -408,7 +408,7 @@ pub fn bench_proof_rayon(c: &mut Criterion) {
                                 .expect("solver is None");
 
                         let start = std::time::Instant::now();
-                        solver.solve(target_u32s).expect("solver failed");
+                        solver.solve::<true>(target_u32s).expect("solver failed");
                         start.elapsed()
                     })
                     .sum::<Duration>()
@@ -436,7 +436,7 @@ pub fn bench_proof_rayon(c: &mut Criterion) {
                             DoubleBlockSolver16Way::new((), &prefix).expect("solver is None");
 
                         let start = std::time::Instant::now();
-                        solver.solve(target_u32s).expect("solver failed");
+                        solver.solve::<true>(target_u32s).expect("solver failed");
                         start.elapsed()
                     })
                     .sum::<Duration>()

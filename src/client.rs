@@ -76,13 +76,13 @@ pub async fn solve_mcaptcha(
         if (47..=52).contains(&prefix.len()) {
             pool.spawn(move || {
                 let mut solver = crate::DoubleBlockSolver16Way::new((), &prefix).unwrap();
-                let result = solver.solve(target_u32s);
+                let result = solver.solve::<true>(target_u32s);
                 tx.send(result).ok();
             });
         } else {
             pool.spawn(move || {
                 let mut solver = crate::SingleBlockSolver16Way::new((), &prefix).unwrap();
-                let result = solver.solve(target_u32s);
+                let result = solver.solve::<true>(target_u32s);
                 tx.send(result).ok();
             });
         }
@@ -163,7 +163,7 @@ pub async fn solve_mcaptcha_wgpu(
     let (nonce, result) = if really_solve {
         tokio::task::block_in_place(|| {
             let solve_begin = std::time::Instant::now();
-            let result = solver.solve(target_u32s);
+            let result = solver.solve::<true>(target_u32s);
             eprintln!("solve time: {:?}", solve_begin.elapsed());
             result.ok_or(SolveError::SolverFailed)
         })?
