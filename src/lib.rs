@@ -1,13 +1,25 @@
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![doc = include_str!("../README.md")]
-#![feature(stdarch_x86_avx512)]
+#![cfg_attr(target_arch = "x86_64", feature(stdarch_x86_avx512))]
+
+#[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
+
+#[cfg(target_arch = "wasm32")]
+use core::arch::wasm32::*;
+
 use core::hint::unreachable_unchecked;
 use core::num::NonZeroU8;
+
+#[cfg(feature = "alloc")]
+extern crate alloc;
 
 #[cfg(feature = "client")]
 /// Web client for solving mCaptcha PoW
 pub mod client;
+
+#[cfg(feature = "wasm-bindgen")]
+mod wasm_ffi;
 
 mod sha256;
 
@@ -41,17 +53,29 @@ static LANE_ID_LSB_STR: Align16<[u8; 5 * 16]> =
     Align16(*b"01234567890123456789012345678901234567890123456789012345678901234567890123456789");
 
 #[inline(always)]
+#[cfg(target_arch = "x86_64")]
 fn load_lane_id_epi32(src: &Align16<[u8; 5 * 16]>, set_idx: usize) -> __m512i {
     debug_assert!(set_idx < 5);
     unsafe { _mm512_cvtepi8_epi32(_mm_load_si128(src.as_ptr().add(set_idx * 16).cast())) }
 }
 
-pub fn build_prefix(string: &str, salt: &str) -> impl Iterator<Item = u8> {
-    salt.as_bytes()
-        .iter()
-        .copied()
-        .chain((string.len() as u64).to_le_bytes())
-        .chain(string.as_bytes().iter().copied())
+#[inline(always)]
+#[cfg(target_arch = "wasm32")]
+fn load_lane_id_epi32(src: &Align16<[u8; 5 * 16]>, set_idx: usize) -> v128 {
+    unsafe {
+        u32x4(
+            src[set_idx * 4] as _,
+            src[set_idx * 4 + 1] as _,
+            src[set_idx * 4 + 2] as _,
+            src[set_idx * 4 + 3] as _,
+        )
+    }
+}
+
+pub fn build_prefix<E: Extend<u8>>(out: &mut E, string: &str, salt: &str) {
+    out.extend(salt.as_bytes().iter().copied());
+    out.extend((string.len() as u64).to_le_bytes());
+    out.extend(string.as_bytes().iter().copied());
 }
 
 pub const fn decompose_blocks(inp: &[u32; 16]) -> &[u8; 64] {
@@ -70,6 +94,32 @@ pub const fn compute_target(difficulty_factor: u32) -> u128 {
 /// Compute the target for an Anubis PoW
 pub const fn compute_target_anubis(difficulty_factor: NonZeroU8) -> u128 {
     1u128 << (128 - difficulty_factor.get() * 4)
+}
+
+/// Extract top 128 bits from a 64-bit word array
+pub const fn extract128_be(inp: [u32; 8]) -> u128 {
+    (inp[0] as u128) << 96 | (inp[1] as u128) << 64 | (inp[2] as u128) << 32 | (inp[3] as u128)
+}
+
+/// Encode a sha-256 hash into hex
+pub fn encode_hex(out: &mut [u8; 64], inp: [u32; 8]) {
+    for w in 0..8 {
+        let be_bytes = inp[w].to_be_bytes();
+        be_bytes.iter().enumerate().for_each(|(i, b)| {
+            let high_nibble = b >> 4;
+            let low_nibble = b & 0xf;
+            out[w * 8 + i * 2] = if high_nibble < 10 {
+                high_nibble + b'0'
+            } else {
+                high_nibble + b'a' - 10
+            };
+            out[w * 8 + i * 2 + 1] = if low_nibble < 10 {
+                low_nibble + b'0'
+            } else {
+                low_nibble + b'a' - 10
+            };
+        });
+    }
 }
 
 pub trait Solver {
@@ -91,10 +141,10 @@ pub trait Solver {
     // returns None when the solver cannot solve the prefix
     // failure is usually because the key space is exhausted (or presumed exhausted)
     // it should by design happen extremely rarely for common difficulty settings
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, u128)>;
+    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])>;
 
     // A dynamic dispatching wrapper for solve
-    fn solve_dyn(&mut self, target: [u32; 4], upwards: bool) -> Option<(u64, u128)> {
+    fn solve_dyn(&mut self, target: [u32; 4], upwards: bool) -> Option<(u64, [u32; 8])> {
         if upwards {
             self.solve::<true>(target)
         } else {
@@ -203,7 +253,8 @@ impl Solver for SingleBlockSolver16Way {
         })
     }
 
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, u128)> {
+    #[cfg(target_arch = "x86_64")]
+    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
         // the official default difficulty is 5e6, so we design for 1e8
         // and there should almost always be a valid solution within our supported solution space
         // pgeom(5 * 16e7, 1/5e7, lower=F) = 0.03%
@@ -302,7 +353,7 @@ impl Solver for SingleBlockSolver16Way {
 
                         // do 16-way SHA-256 without feedback so as not to force the compiler to save 8 registers
                         // we already have them in scalar form, this allows more registers to be reused in the next iteration
-                        sha256::compress_16block_avx512_without_feedback::<0>(
+                        sha256::avx512::compress_16block_avx512_without_feedback::<0>(
                             &mut state,
                             &mut blocks,
                         );
@@ -401,13 +452,104 @@ impl Solver for SingleBlockSolver16Way {
         let mut final_sha_state = self.prefix_state;
         sha256::compress_block_reference(&mut final_sha_state, &self.message);
 
-        Some((
-            nonce + self.nonce_addend,
-            (final_sha_state[0] as u128) << 96
-                | (final_sha_state[1] as u128) << 64
-                | (final_sha_state[2] as u128) << 32
-                | (final_sha_state[3] as u128),
-        ))
+        Some((nonce + self.nonce_addend, final_sha_state))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+        // wasm don't have registers, so we there is no need for code bloat
+
+        let lane_id_0_word_idx = self.digit_index / 4;
+        let lane_id_1_word_idx = (self.digit_index + 1) / 4;
+        let lane_id_0_byte_idx = self.digit_index % 4;
+        let lane_id_1_byte_idx = (self.digit_index + 1) % 4;
+        unsafe {
+            for prefix_set_index in 0..((100 - 10) / 4) {
+                let lane_id_0_or_value = u32x4_shl(
+                    load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index),
+                    ((3 - lane_id_0_byte_idx) * 8) as _,
+                );
+                let lane_id_1_or_value = u32x4_shl(
+                    load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index),
+                    ((3 - lane_id_1_byte_idx) * 8) as _,
+                );
+                for inner_key in 0..10_000_000 {
+                    {
+                        let message_bytes = decompose_blocks_mut(&mut self.message);
+                        let mut key_copy = inner_key;
+                        for i in (0..7).rev() {
+                            let output = key_copy % 10;
+                            key_copy /= 10;
+                            *message_bytes.get_unchecked_mut(
+                                *SWAP_DWORD_BYTE_ORDER.get_unchecked(self.digit_index + i + 2),
+                            ) = output as u8 + b'0';
+                        }
+
+                        if key_copy != 0 {
+                            debug_assert_eq!(key_copy, 0);
+                            unreachable_unchecked();
+                        }
+                    }
+
+                    let mut blocks = core::array::from_fn(|i| u32x4_splat(self.message[i]));
+                    blocks[lane_id_0_word_idx] =
+                        v128_or(blocks[lane_id_0_word_idx], lane_id_0_or_value);
+                    blocks[lane_id_1_word_idx] =
+                        v128_or(blocks[lane_id_1_word_idx], lane_id_1_or_value);
+
+                    let mut state = core::array::from_fn(|i| u32x4_splat(self.prefix_state[i]));
+                    sha256::simd128::compress_16block_simd128_without_feedback::<0>(
+                        &mut state,
+                        &mut blocks,
+                    );
+
+                    let result_a = u32x4_add(state[0], u32x4_splat(self.prefix_state[0]));
+
+                    let cmp_fn = if UPWARDS { u32x4_le } else { u32x4_ge };
+
+                    let a_not_met_target = cmp_fn(result_a, u32x4_splat(target[0]));
+
+                    if !u32x4_all_true(a_not_met_target) {
+                        let mut extract = [0u32; 4];
+                        v128_store(extract.as_mut_ptr().cast(), result_a);
+                        let success_lane_idx = extract
+                            .iter()
+                            .position(|x| {
+                                if UPWARDS {
+                                    *x > target[0]
+                                } else {
+                                    *x < target[0]
+                                }
+                            })
+                            .unwrap();
+                        let nonce_prefix = 10 + 4 * prefix_set_index + success_lane_idx;
+
+                        // stamp the lane ID back onto the message
+                        {
+                            let message_bytes = decompose_blocks_mut(&mut self.message);
+                            *message_bytes.get_unchecked_mut(
+                                *SWAP_DWORD_BYTE_ORDER.get_unchecked(self.digit_index),
+                            ) = (nonce_prefix / 10) as u8 + b'0';
+                            *message_bytes.get_unchecked_mut(
+                                *SWAP_DWORD_BYTE_ORDER.get_unchecked(self.digit_index + 1),
+                            ) = (nonce_prefix % 10) as u8 + b'0';
+                        }
+
+                        // recompute the hash from the beginning
+                        // this prevents the compiler from having to compute the final B-H registers alive in tight loops
+                        let mut final_sha_state = self.prefix_state;
+                        sha256::compress_block_reference(&mut final_sha_state, &self.message);
+
+                        // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
+                        return Some((
+                            nonce_prefix as u64 * 10u64.pow(7) + inner_key + self.nonce_addend,
+                            final_sha_state,
+                        ));
+                    }
+                }
+            }
+        }
+        None
     }
 }
 
@@ -498,8 +640,8 @@ impl Solver for DoubleBlockSolver16Way {
         let message_length = complete_blocks_before * 64 + ptr;
 
         let mut terminal_message_schedule = [0; 64];
-        terminal_message_schedule[14] = ((message_length * 8) >> 32) as u32;
-        terminal_message_schedule[15] = (message_length * 8) as u32;
+        terminal_message_schedule[14] = ((message_length as u64 * 8) >> 32) as u32;
+        terminal_message_schedule[15] = (message_length as u64 * 8) as u32;
 
         sha256::do_message_schedule(&mut terminal_message_schedule);
 
@@ -518,7 +660,8 @@ impl Solver for DoubleBlockSolver16Way {
         })
     }
 
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, u128)> {
+    #[cfg(target_arch = "x86_64")]
+    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
         let mut partial_state = self.prefix_state;
         let mut partial_message = [0; 13];
         partial_message.copy_from_slice(&self.message[..13]);
@@ -579,7 +722,10 @@ impl Solver for DoubleBlockSolver16Way {
                     let mut state =
                         core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
 
-                    sha256::compress_16block_avx512_without_feedback::<13>(&mut state, &mut blocks);
+                    sha256::avx512::compress_16block_avx512_without_feedback::<13>(
+                        &mut state,
+                        &mut blocks,
+                    );
 
                     // we have to do feedback now
                     state.iter_mut().zip(self.prefix_state.iter()).for_each(
@@ -592,7 +738,7 @@ impl Solver for DoubleBlockSolver16Way {
                     // save only A register for comparison
                     let save_a = state[0];
 
-                    sha256::compress_16block_avx512_bcst_without_feedback::<14>(
+                    sha256::avx512::compress_16block_avx512_bcst_without_feedback::<14>(
                         &mut state,
                         &self.terminal_message_schedule,
                     );
@@ -647,13 +793,151 @@ impl Solver for DoubleBlockSolver16Way {
                             + self.nonce_addend;
 
                         // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
-                        return Some((
-                            computed_nonce,
-                            (final_sha_state[0] as u128) << 96
-                                | (final_sha_state[1] as u128) << 64
-                                | (final_sha_state[2] as u128) << 32
-                                | (final_sha_state[3] as u128),
-                        ));
+                        return Some((computed_nonce, final_sha_state));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+        let mut partial_state = self.prefix_state;
+        let mut partial_message = [0; 13];
+        partial_message.copy_from_slice(&self.message[..13]);
+        sha256::ingest_message_prefix(&mut partial_state, partial_message);
+
+        for prefix_set_index in 0..((100 - 10) / 4) {
+            unsafe {
+                let lane_id_0_or_value =
+                    u32x4_shl(load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index), 8);
+                let lane_id_1_or_value = load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index);
+
+                let lane_index_value_v = v128_or(
+                    u32x4_splat(self.message[13] as _),
+                    v128_or(lane_id_0_or_value, lane_id_1_or_value),
+                );
+
+                for inner_key in 0..10_000_000 {
+                    let mut key_copy = inner_key;
+                    let mut cum0 = 0;
+                    for _ in 0..4 {
+                        cum0 <<= 8;
+                        cum0 |= key_copy % 10;
+                        key_copy /= 10;
+                    }
+                    cum0 |= u32::from_be_bytes(*b"0000");
+                    let mut cum1 = 0;
+                    for _ in 0..3 {
+                        cum1 += key_copy % 10;
+                        cum1 <<= 8;
+                        key_copy /= 10;
+                    }
+                    cum1 |= u32::from_be_bytes(*b"000\x80");
+
+                    if key_copy != 0 {
+                        debug_assert_eq!(key_copy, 0);
+                        unreachable_unchecked();
+                    }
+
+                    let mut blocks = [
+                        u32x4_splat(self.message[0] as _),
+                        u32x4_splat(self.message[1] as _),
+                        u32x4_splat(self.message[2] as _),
+                        u32x4_splat(self.message[3] as _),
+                        u32x4_splat(self.message[4] as _),
+                        u32x4_splat(self.message[5] as _),
+                        u32x4_splat(self.message[6] as _),
+                        u32x4_splat(self.message[7] as _),
+                        u32x4_splat(self.message[8] as _),
+                        u32x4_splat(self.message[9] as _),
+                        u32x4_splat(self.message[10] as _),
+                        u32x4_splat(self.message[11] as _),
+                        u32x4_splat(self.message[12] as _),
+                        lane_index_value_v,
+                        u32x4_splat(cum0 as _),
+                        u32x4_splat(cum1 as _),
+                    ];
+
+                    let mut state = core::array::from_fn(|i| u32x4_splat(partial_state[i]));
+                    sha256::simd128::compress_16block_simd128_without_feedback::<13>(
+                        &mut state,
+                        &mut blocks,
+                    );
+
+                    state.iter_mut().zip(self.prefix_state.iter()).for_each(
+                        |(state, prefix_state)| {
+                            *state = u32x4_add(*state, u32x4_splat(*prefix_state as _));
+                        },
+                    );
+
+                    let save_a = state[0];
+
+                    sha256::simd128::compress_16block_simd128_bcst_without_feedback::<14>(
+                        &mut state,
+                        &self.terminal_message_schedule,
+                    );
+
+                    let result_a = u32x4_add(state[0], save_a);
+
+                    let cmp_fn = if UPWARDS { u32x4_le } else { u32x4_ge };
+
+                    let a_not_met_target = cmp_fn(result_a, u32x4_splat(target[0]));
+
+                    if !u32x4_all_true(a_not_met_target) {
+                        let mut extract = [0u32; 4];
+                        v128_store(extract.as_mut_ptr().cast(), result_a);
+                        let success_lane_idx = extract
+                            .iter()
+                            .position(|x| {
+                                if UPWARDS {
+                                    *x > target[0]
+                                } else {
+                                    *x < target[0]
+                                }
+                            })
+                            .unwrap();
+                        let nonce_prefix = 10 + 4 * prefix_set_index + success_lane_idx;
+
+                        self.message[14] = cum0;
+                        self.message[15] = cum1;
+                        // stamp the lane ID back onto the message
+                        {
+                            let message_bytes = decompose_blocks_mut(&mut self.message);
+                            *message_bytes.get_unchecked_mut(
+                                *SWAP_DWORD_BYTE_ORDER.get_unchecked(Self::DIGIT_IDX as usize),
+                            ) = (nonce_prefix / 10) as u8 + b'0';
+                            *message_bytes.get_unchecked_mut(
+                                *SWAP_DWORD_BYTE_ORDER.get_unchecked(Self::DIGIT_IDX as usize + 1),
+                            ) = (nonce_prefix % 10) as u8 + b'0';
+                        }
+
+                        // recompute the hash from the beginning
+                        // this prevents the compiler from having to compute the final B-H registers alive in tight loops
+                        let mut final_sha_state = self.prefix_state;
+                        sha256::compress_block_reference(&mut final_sha_state, &self.message);
+                        sha256::compress_block_reference(
+                            &mut final_sha_state,
+                            self.terminal_message_schedule[0..16].try_into().unwrap(),
+                        );
+
+                        // reverse the byte order
+                        let mut nonce_suffix = 0;
+                        let mut key_copy = inner_key;
+                        for _ in 0..7 {
+                            nonce_suffix *= 10;
+                            nonce_suffix += key_copy % 10;
+                            key_copy /= 10;
+                        }
+
+                        let computed_nonce = nonce_prefix as u64 * 10u64.pow(7)
+                            + nonce_suffix as u64
+                            + self.nonce_addend;
+
+                        // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
+                        return Some((computed_nonce, final_sha_state));
                     }
                 }
             }
@@ -686,6 +970,24 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(feature = "wasm-bindgen", wasm_bindgen_test::wasm_bindgen_test)]
+    fn test_encode_hex() {
+        let mut out = [0u8; 64];
+        encode_hex(
+            &mut out,
+            [
+                0x12345678, 0x9abcdef0, 0x12345678, 0x9abcdef0, 0x12345678, 0x9abcdef0, 0x12345678,
+                0x9abcdef0,
+            ],
+        );
+        assert_eq!(
+            unsafe { std::str::from_utf8_unchecked(&out) },
+            "123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"
+        );
+    }
+
+    #[test]
+    #[cfg_attr(feature = "wasm-bindgen", wasm_bindgen_test::wasm_bindgen_test)]
     fn test_compute_target_anubis() {
         assert_eq!(
             compute_target_anubis(NonZeroU8::new(1).unwrap()),
@@ -702,9 +1004,11 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(feature = "wasm-bindgen", wasm_bindgen_test::wasm_bindgen_test)]
     fn test_bincode_string_serialize() {
         let string = "hello";
-        let homegrown = build_prefix(string, "z").collect::<Vec<_>>();
+        let mut homegrown = Vec::new();
+        build_prefix(&mut homegrown, string, "z");
         let mut official = Vec::new();
         build_prefix_official(&mut official, string, "z").unwrap();
         assert_eq!(homegrown, official);
@@ -759,11 +1063,19 @@ mod tests {
                 ])
             });
             let (nonce, result) = solver.solve::<true>(target_u32s).expect("solver failed");
-
+            let result_128 = extract128_be(result);
             let (anubis_nonce, anubis_result) = anubis_solver
                 .solve::<false>(target_anubis_u32s)
                 .expect("solver failed");
-            assert!(target_anubis > anubis_result);
+            let anubis_result_128 = extract128_be(anubis_result);
+            let anubis_result_bytes = anubis_result_128.to_be_bytes();
+            assert!(
+                target_anubis > anubis_result_128,
+                "[{}] target_anubis: {:016x} <= anubis_result: {:016x}",
+                core::any::type_name::<S>(),
+                target_anubis,
+                anubis_result_128
+            );
 
             /*
             let mut expected_message = concatenated_prefix.clone();
@@ -776,37 +1088,36 @@ mod tests {
 
             let test_response = pow_sha256::PoWBuilder::default()
                 .nonce(nonce)
-                .result(result.to_string())
+                .result(result_128.to_string())
                 .build()
                 .unwrap();
             let anubis_test_response = pow_sha256::PoWBuilder::default()
                 .nonce(anubis_nonce)
-                .result(anubis_result.to_string())
+                .result(anubis_result_128.to_string())
                 .build()
                 .unwrap();
-            let anubis_result_bytes = anubis_result.to_be_bytes();
             assert_eq!(
                 config.calculate(&test_response, &phrase_str).unwrap(),
-                result
+                result_128
             );
             assert_eq!(
                 config
                     .calculate(&anubis_test_response, &phrase_str)
                     .unwrap(),
-                anubis_result
+                anubis_result_128
             );
 
             assert!(
                 config.is_valid_proof(&test_response, &phrase_str),
                 "{} is not valid proof (solver: {})",
-                result,
+                result_128,
                 core::any::type_name::<S>()
             );
 
             assert!(
                 config.is_sufficient_difficulty(&test_response, DIFFICULTY),
                 "{:016x} is not sufficient difficulty, expected {:016x} (solver: {})",
-                result,
+                result_128,
                 compute_target(DIFFICULTY),
                 core::any::type_name::<S>()
             );
@@ -821,7 +1132,7 @@ mod tests {
                     nibble,
                     0,
                     "{:08x} is not valid anubis proof (solver: {}, nibble: {})",
-                    anubis_result,
+                    anubis_result_128,
                     core::any::type_name::<S>(),
                     i
                 );
@@ -839,6 +1150,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(feature = "wasm-bindgen", wasm_bindgen_test::wasm_bindgen_test)]
     fn test_solve_16way() {
         let solved_single_block = test_solve::<SingleBlockSolver16Way>();
         let solved_double_block = test_solve::<DoubleBlockSolver16Way>();

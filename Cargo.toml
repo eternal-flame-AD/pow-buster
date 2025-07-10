@@ -3,20 +3,27 @@ name = "simd-mcaptcha"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 sha2 = { version = "0.10", default-features = false, features = ["compress"] }
 
+wasm-bindgen = { version = "0.2", optional = true }
 typenum = { version = "1.18", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
-reqwest = { version = "0.12", default-features = false, features = ["json", "http2", "rustls-tls"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "http2", "rustls-tls", "gzip"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
-tokio = { version = "1", features = ["rt", "net"], optional = true }
+tokio = { version = "1", features = ["rt", "net", "macros"], optional = true }
 pow_sha256 = { git = "https://github.com/mcaptcha/pow_sha256", tag = "0.3.1", optional = true }
 rayon = { version = "1.10", optional = true }
 wgpu = { version = "25", optional = true }
 num_cpus = { version = "1.17", optional = true }
+criterion = { version = "0.6", features = ["html_reports"], optional = true }   
 thiserror = { version = "2", optional = true }
+scraper = { version = "0.23", optional = true }
+url = { version = "2.5", optional = true }
 
 [profile.release]
 opt-level = 3
@@ -26,23 +33,28 @@ panic = "abort"
 [dev-dependencies]
 bincode = "1.3"
 pow_sha256 = { git = "https://github.com/mcaptcha/pow_sha256", tag = "0.3.1" }
-rand = "0.9"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
-criterion = { version = "0.6", features = ["html_reports"] }
+rand = { version = "0.9", default-features = false, features = ["small_rng"] }
 pollster = "0.4"
+wasm-bindgen-test = "0.3"
 
 [[bench]]
 name = "bench_proof"
 harness = false
+required-features = ["criterion"]
 
 [features]
-std = []
-client = ["std", "rayon", "tokio", "tokio/rt-multi-thread", "dep:serde", "dep:serde_json", "dep:reqwest", "dep:thiserror", "dep:num_cpus"]
+alloc = []
+std = ["alloc"]
+wasm-bindgen = ["alloc", "dep:wasm-bindgen"]
+client = ["std", "rayon", "tokio", "tokio/rt-multi-thread", "dep:url", "dep:serde", "dep:serde_json", "dep:reqwest", "dep:thiserror", "dep:num_cpus", "dep:scraper"]
 cli = ["std", "dep:clap", "rayon", "dep:num_cpus"]
 tokio = ["std", "dep:tokio"]
 official = ["dep:pow_sha256"]
 wgpu = ["std", "dep:wgpu", "dep:typenum"]
 rayon = ["std", "dep:rayon"]
+criterion = ["std", "dep:criterion"]
+scraper = ["dep:scraper"]
+url = ["dep:url"]
 
 [[bin]]
 name = "simd-mcaptcha"

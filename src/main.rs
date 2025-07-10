@@ -1,5 +1,6 @@
 use std::{
     num::NonZeroU8,
+    str::FromStr,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -19,14 +20,34 @@ struct Cli {
     subcommand: SubCommand,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApiType {
+    Mcaptcha,
+    Anubis,
+}
+
+impl FromStr for ApiType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "mcaptcha" => Ok(ApiType::Mcaptcha),
+            "anubis" => Ok(ApiType::Anubis),
+            _ => Err(format!("invalid api type: {}", s)),
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum SubCommand {
     #[cfg(feature = "client")]
     Live {
+        #[clap(long, default_value = "mcaptcha")]
+        api_type: String,
+
         #[clap(long, default_value = "http://localhost:7000")]
         host: String,
 
-        #[clap(long)]
+        #[clap(long, default_value = "x")]
         site_key: String,
 
         #[clap(short, long, default_value = "32")]
@@ -38,6 +59,11 @@ enum SubCommand {
         #[cfg(feature = "wgpu")]
         #[clap(long)]
         use_gpu: bool,
+    },
+    #[cfg(feature = "client")]
+    Anubis {
+        #[clap(long, default_value = "http://localhost:8923/")]
+        url: String,
     },
     Profile {
         #[clap(short, long, default_value = "10000000")]
@@ -279,7 +305,27 @@ fn main() {
             }
         }
         #[cfg(feature = "client")]
+        SubCommand::Anubis { url } => {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+
+            runtime.block_on(async move {
+                let client = reqwest::ClientBuilder::new()
+                    .gzip(true)
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .unwrap();
+                let response = simd_mcaptcha::client::solve_anubis(&client, &url, true)
+                    .await
+                    .unwrap();
+                println!("set-cookie: {}", response);
+            });
+        }
+        #[cfg(feature = "client")]
         SubCommand::Live {
+            api_type,
             host,
             site_key,
             n_workers,
@@ -289,6 +335,7 @@ fn main() {
         } => {
             use std::io::Write;
 
+            let api_type = ApiType::from_str(&api_type).unwrap();
             let n_workers = n_workers.unwrap_or_else(|| num_cpus::get() as u32);
             eprintln!("You are hitting host {}, n_workers: {}", host, n_workers);
             let pool = rayon::ThreadPoolBuilder::new()
@@ -309,7 +356,11 @@ fn main() {
                     let pool = pool.clone();
                     tokio::spawn(async move {
                         eprintln!("running 10 seconds of control sending random proofs");
-                        let client = reqwest::ClientBuilder::new().build().unwrap();
+                        let client = reqwest::ClientBuilder::new()
+                            .gzip(api_type == ApiType::Anubis) // for some reason anubis requires gzip
+                            .redirect(reqwest::redirect::Policy::none())
+                            .build()
+                            .unwrap();
                         let begin = Instant::now();
                         let count = Arc::new(AtomicU64::new(0));
                         let mut js = tokio::task::JoinSet::new();
@@ -320,13 +371,31 @@ fn main() {
                             let site_key = site_key.clone();
                             let pool = pool.clone();
                             js.spawn(async move {
-                                while begin.elapsed() < Duration::from_secs(10) {
-                                    simd_mcaptcha::client::solve_mcaptcha(
-                                        &pool, &client, &host, &site_key, false,
-                                    )
-                                    .await
-                                    .expect_err("random proof should fail but somehow succeeded");
-                                    count_clone.fetch_add(1, Ordering::SeqCst);
+                                match api_type {
+                                    ApiType::Mcaptcha => {
+                                        while begin.elapsed() < Duration::from_secs(10) {
+                                            simd_mcaptcha::client::solve_mcaptcha(
+                                                &pool, &client, &host, &site_key, false,
+                                            )
+                                            .await
+                                            .expect_err(
+                                                "random proof should fail but somehow succeeded",
+                                            );
+                                            count_clone.fetch_add(1, Ordering::SeqCst);
+                                        }
+                                    }
+                                    ApiType::Anubis => {
+                                        while begin.elapsed() < Duration::from_secs(10) {
+                                            simd_mcaptcha::client::solve_anubis(
+                                                &client, &host, false,
+                                            )
+                                            .await
+                                            .expect_err(
+                                                "random proof should fail but somehow succeeded",
+                                            );
+                                            count_clone.fetch_add(1, Ordering::SeqCst);
+                                        }
+                                    }
                                 }
                             });
                         }
@@ -407,31 +476,62 @@ fn main() {
                         continue;
                     }
 
+                    let api_type = api_type.clone();
                     tokio::spawn(async move {
-                        let client = reqwest::ClientBuilder::new().build().unwrap();
+                        let client = reqwest::ClientBuilder::new()
+                            .gzip(api_type == ApiType::Anubis) // for some reason anubis requires gzip
+                            .redirect(reqwest::redirect::Policy::none())
+                            .build()
+                            .unwrap();
 
-                        loop {
-                            match simd_mcaptcha::client::solve_mcaptcha(
-                                &pool,
-                                &client,
-                                &host_clone,
-                                &site_key_clone,
-                                true,
-                            )
-                            .await
-                            {
-                                Ok(token) => {
-                                    let mut stdout = std::io::stdout().lock();
-                                    stdout
-                                        .write_all(token.as_bytes())
-                                        .expect("stdout write failed");
-                                    stdout.write_all(b"\n").expect("stdout write failed");
-                                    stdout.flush().expect("stdout flush failed");
+                        match api_type {
+                            ApiType::Mcaptcha => loop {
+                                match simd_mcaptcha::client::solve_mcaptcha(
+                                    &pool,
+                                    &client,
+                                    &host_clone,
+                                    &site_key_clone,
+                                    true,
+                                )
+                                .await
+                                {
+                                    Ok(token) => {
+                                        let mut stdout = std::io::stdout().lock();
+                                        stdout
+                                            .write_all(token.as_bytes())
+                                            .expect("stdout write failed");
+                                        stdout.write_all(b"\n").expect("stdout write failed");
+                                        stdout.flush().expect("stdout flush failed");
 
-                                    succeeded_clone.fetch_add(1, Ordering::Relaxed)
-                                }
-                                Err(_) => failed_clone.fetch_add(1, Ordering::Relaxed),
-                            };
+                                        succeeded_clone.fetch_add(1, Ordering::Relaxed)
+                                    }
+                                    Err(_) => failed_clone.fetch_add(1, Ordering::Relaxed),
+                                };
+                            },
+                            ApiType::Anubis => loop {
+                                match simd_mcaptcha::client::solve_anubis(
+                                    &client,
+                                    &host_clone,
+                                    true,
+                                )
+                                .await
+                                {
+                                    Ok(response) => {
+                                        let mut stdout = std::io::stdout().lock();
+                                        stdout
+                                            .write_all(response.as_bytes())
+                                            .expect("stdout write failed");
+                                        stdout.write_all(b"\n").expect("stdout write failed");
+                                        stdout.flush().expect("stdout flush failed");
+
+                                        succeeded_clone.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("anubis error: {:?}", e);
+                                        failed_clone.fetch_add(1, Ordering::Relaxed);
+                                    }
+                                };
+                            },
                         }
                     });
                 }

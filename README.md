@@ -13,7 +13,6 @@
     - [Official Widget Benchmark](#official-widget-benchmark)
     - [End to End Benchmark](#end-to-end-benchmark)
       - [CPU only](#cpu-only)
-      - [wgpu Solution](#wgpu-solution)
     - [Throughput Sanity Check](#throughput-sanity-check)
   - [Security Implications](#security-implications)
   - [Server-Side Performance Observations](#server-side-performance-observations)
@@ -22,7 +21,7 @@
   - [License](#license)
   - [AI Disclaimer](#ai-disclaimer)
 
-A fast, adversarially implemented mCaptcha PoW solver, targeting AVX-512 and SPIR-V compute (shader in WGSL). Now also solves Anubis style challenges (API adaptation is still WIP)!
+A fast, adversarially implemented mCaptcha and Anubis PoW solver, targeting AVX-512, simd128 and SPIR-V compute (shader in WGSL).
 
 Tracking issue for upstream: [mCaptcha/mCaptcha#186](https://github.com/mCaptcha/mCaptcha/issues/186)
 
@@ -152,42 +151,35 @@ Fake Proof Control: 3732 requests in 10.1 seconds, 369.2 rps
 [60.0s] succeeded: 13761, failed: 0, 5s: 251.2rps, 5s_failed: 0.0rps
 ```
 
-All 32 cores of a AMD Ryzen 9 7950X are used for the end-to-end benchmark. It seems we are at the bottleneck of the server being able to record successful attempts, as further performance tuning only show improvement in offline benchmarks.
-
-#### wgpu Solution
-
-This is a `wgpu` powered non-batched solution (each dispatch only solves one nonce), running at the highest difficulty (50_000_000) where the official Captcha widget do not break due to timeout (30 seconds):
-
-Note: this is ran at the highest difficulty to minimize the overhead of non-batched kernel launch. This is an academic demo not designed to be "efficient" to attack the most realistic settings.
-
-10 consecutive solutions using the official Captcha widget: [3.26s, 1.86s, 2.20s, 5.76s, 10.20s, 2.13s, 8.29s, 23.09s, 3.21s, 2.40s, 15.00s, 1.20s, 23.40s, 9.00s, 29.40s, 2.40s, 12.60s, 1.80s, 4.80s]
-
+Anubis "extreme suspicion" (4):
 
 ```sh
-target/release/mcaptcha_pow_solver  live \
-    --site-key 0wSp29HfHz2HPbro0vLtoLubQcMtocv7 \
+cargo run --features cli --release -- anubis \
+    --url http://localhost:8923/ \
     --do-control \
-    --use-gpu \
-    --n-workers 4 \
+    --n-workers 40 \
     >/dev/null
 
-You are hitting host http://localhost:7000
+You are hitting host http://localhost:8923/, n_workers: 40
 running 10 seconds of control sending random proofs
-[0.0s] succeeded: 1, failed: 0, 5s: 0.2rps, 5s_failed: 0.0rps
-[5.0s] succeeded: 277, failed: 0, 5s: 55.2rps, 5s_failed: 0.0rps
-Fake Proof Control: 5462 requests in 10.0 seconds, 545.7 rps
-[10.0s] succeeded: 563, failed: 0, 5s: 57.2rps, 5s_failed: 0.0rps
-[15.0s] succeeded: 853, failed: 0, 5s: 58.0rps, 5s_failed: 0.0rps
-[20.0s] succeeded: 1158, failed: 0, 5s: 61.0rps, 5s_failed: 0.0rps
-[25.0s] succeeded: 1407, failed: 0, 5s: 49.8rps, 5s_failed: 0.0rps
-[30.0s] succeeded: 1691, failed: 0, 5s: 56.8rps, 5s_failed: 0.0rps
-[35.0s] succeeded: 1934, failed: 0, 5s: 48.6rps, 5s_failed: 0.0rps
-[40.0s] succeeded: 2187, failed: 0, 5s: 50.6rps, 5s_failed: 0.0rps
-[45.0s] succeeded: 2453, failed: 0, 5s: 53.2rps, 5s_failed: 0.0rps
-[50.0s] succeeded: 2676, failed: 0, 5s: 44.6rps, 5s_failed: 0.0rps
-[55.0s] succeeded: 2924, failed: 0, 5s: 49.6rps, 5s_failed: 0.0rps
-[60.0s] succeeded: 3195, failed: 0, 5s: 54.2rps, 5s_failed: 0.0rps
+[0.0s] succeeded: 0, failed: 0, 5s: 0.0rps, 5s_failed: 0.0rps
+[5.0s] succeeded: 34906, failed: 0, 5s: 6981.2rps, 5s_failed: 0.0rps
+[10.0s] succeeded: 69816, failed: 0, 5s: 6982.0rps, 5s_failed: 0.0rps
+Fake Proof Control: 81249 requests in 10.0 seconds, 8110.1 rps
+[15.0s] succeeded: 132294, failed: 0, 5s: 12495.6rps, 5s_failed: 0.0rps
+[20.0s] succeeded: 194841, failed: 0, 5s: 12509.4rps, 5s_failed: 0.0rps
+[25.0s] succeeded: 257433, failed: 0, 5s: 12518.4rps, 5s_failed: 0.0rps
+[30.0s] succeeded: 320410, failed: 0, 5s: 12595.4rps, 5s_failed: 0.0rps
+[35.0s] succeeded: 383561, failed: 0, 5s: 12630.2rps, 5s_failed: 0.0rps
+[40.0s] succeeded: 446068, failed: 0, 5s: 12501.4rps, 5s_failed: 0.0rps
+[45.0s] succeeded: 509071, failed: 0, 5s: 12600.6rps, 5s_failed: 0.0rps
+[50.0s] succeeded: 571523, failed: 0, 5s: 12490.4rps, 5s_failed: 0.0rps
+[55.0s] succeeded: 633624, failed: 0, 5s: 12420.2rps, 5s_failed: 0.0rps
+[60.0s] succeeded: 695687, failed: 0, 5s: 12412.6rps, 5s_failed: 0.0rps
 ```
+
+All 32 cores of a AMD Ryzen 9 7950X are used for the end-to-end benchmark. It seems we are at the bottleneck of the server being able to record successful attempts, as further performance tuning only show improvement in offline benchmarks.
+
 
 ### Throughput Sanity Check
 

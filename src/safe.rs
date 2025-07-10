@@ -90,7 +90,7 @@ impl crate::Solver for SingleBlockSolver {
         })
     }
 
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, u128)> {
+    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
         // start from the blind-spot of the AVX-512 solution first
         for keyspace in [900_000_000..1_000_000_000, 100_000_000..900_000_000] {
             for key in keyspace {
@@ -110,13 +110,7 @@ impl crate::Solver for SingleBlockSolver {
                 };
 
                 if pass {
-                    return Some((
-                        key + self.nonce_addend,
-                        (state[0] as u128) << 96
-                            | (state[1] as u128) << 64
-                            | (state[2] as u128) << 32
-                            | (state[3] as u128),
-                    ));
+                    return Some((key + self.nonce_addend, state));
                 }
             }
         }

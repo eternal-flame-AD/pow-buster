@@ -236,7 +236,7 @@ impl<'a, WorkGroupSize: Unsigned + IsGreater<U0, Output = B1>> crate::Solver
         })
     }
 
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, u128)> {
+    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
         assert!(
             UPWARDS,
             "wgpu solver currently only supports upwards comparisons"
@@ -349,12 +349,10 @@ impl<'a, WorkGroupSize: Unsigned + IsGreater<U0, Output = B1>> crate::Solver
                     &self.message,
                 );
 
-                let mut result = 0u128;
-                for i in 0..4 {
-                    result <<= 32;
-                    result |= self.saved_state[i] as u128;
-                }
-                return Some(((solution_nonce as u64) + self.nonce_addend, result));
+                return Some((
+                    (solution_nonce as u64) + self.nonce_addend,
+                    self.saved_state[0..8].try_into().unwrap(),
+                ));
             }
 
             search_begin = search_end;
@@ -435,12 +433,12 @@ mod tests {
 
             let test_response = pow_sha256::PoWBuilder::default()
                 .nonce(result.0)
-                .result(result.1.to_string())
+                .result(crate::extract128_be(result.1).to_string())
                 .build()
                 .unwrap();
 
             let expected_result = config.calculate(&test_response, &phrase_str).unwrap();
-            assert_eq!(expected_result, result.1,);
+            assert_eq!(expected_result, crate::extract128_be(result.1));
             assert!(config.is_valid_proof(&test_response, &phrase_str));
         }
 
