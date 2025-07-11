@@ -4,6 +4,7 @@
 
 - [simd-mCaptcha](#simd-mcaptcha)
   - [Table of Contents](#table-of-contents)
+  - [Why?](#why)
   - [Limitations](#limitations)
   - [Ethical Disclaimer (i.e. the "How Dare you Publish this?" question)](#ethical-disclaimer-ie-the-how-dare-you-publish-this-question)
     - [Why not private disclosure?](#why-not-private-disclosure)
@@ -21,11 +22,18 @@
   - [License](#license)
   - [AI Disclaimer](#ai-disclaimer)
 
-A fast, adversarially implemented mCaptcha and Anubis PoW solver, targeting AVX-512, simd128 and SPIR-V compute (shader in WGSL).
-
-Tracking issue for upstream: [mCaptcha/mCaptcha#186](https://github.com/mCaptcha/mCaptcha/issues/186)
+A fast, adversarially implemented mCaptcha/Anubis/go-away PoW solver, targeting AVX-512, simd128 and SPIR-V compute (shader in WGSL).
 
 The benchmarks demonstrate a significant performance gap between browser-based JavaScript execution and native implementations (both optimized CPU and unoptimized GPU), suggesting fundamental challenges for PoW-based browser CAPTCHA systems.
+
+## Why?
+
+I personally don't like some projects put themselves at the ethical high ground of "protecting the website" when they:
+- Don't really protect the website better than heuristics (and this program serves as a proof of concept that it can be gamed using pure CPU).
+- Requires users to disable their anti fingerprinting protection like JShelter, and don't give users an opportunity to re-enable them before automatically redirecting them to the a website they have never been to before, which can very well hide fingerprinting scripts. This program emits solutions to these challenges fast without requiring JavaScript.
+- Justify the annoying friction by claiming the lack of a transparent spec and alternative manual solutions to be ["[good] taste [for] a 'security product'"](https://anubis.techaro.lol/docs/user/frequently-asked-questions), despite themselves not publishing sound security analysis to justify the friction. I did the reverse engineering that nobody should even have to do for an open source security product.
+
+[A longer blabbing post regarding this](https://mi.yumechi.jp/notes/aa223tk8c5ao02v9)
 
 ## Limitations
 
@@ -35,27 +43,19 @@ We assume you have a relatively modern and powerful platform, specifically:
 - For Anubis, assumes the server is 64-bit
 - Only builds on nightly Rust because avx512 intrinsics are not stable yet, it also currently doesn't build on non-x86_64 targets.
 - This is designed for "low", practical-for-a-website difficulty settings, A $1 - P_{geom}(80e7, 1/\text{difficulty})$ chance of failure for any particular challenge, which for 1e8 (takes about 10 seconds on a browser) is about 0.03%, the GPU solver has much lower failure rate.
-- The WGSL implementation is not optimized for performance, it has some major problems:
-  1. Didn't use vectorized arithmetic.
-  2. Didn't use workgroup shared memory.
-  3. Didn't properly batch challenges.
-  4. Didn't generate specialized optimal kernel code.
-  5. How to efficiently fetch challenges and feed to the GPU is completely implemented synchronously.
-
-  However I want to keep this a limitation, I do not intend on writing "attack ready" code.
+- The WGSL implementation is not optimized for performance, it has some major problems. However I want to keep this a limitation, I do not intend on writing "attack ready" code.
 
 ## Ethical Disclaimer (i.e. the "How Dare you Publish this?" question)
 
 ### Why not private disclosure? 
 
-1. This isn't a vulnerability nor anything previously unknown, it's a structural weakness that needs to be assessed. I didn't "skip" or somehow "simplify" any number of SHA-2 rounds, it is a materialized analysis of performance characteristics of the system. Everybody knows PoW system loses protection margin using hardware or software optimizations.
-2.  I am not the first person to point this out either, there is this [mcaptcha_bypass](https://github.com/evilsocket/mcaptcha_bypass) prior-art [mCatptcha/mCaptcha#37](https://github.com/mCaptcha/mCaptcha/issues/37) that the author know for years, I didn't do astronomically better than that, just ~100x vs. ~500x, I don't think that is worth thinking a "new" thing suddenly valuable to the author. The value proposition of this research is not to reveal a new, "weird trick" that flips the system over, but to provide new information that deployer should be aware of even if they decided the original ~100x were acceptable risk.
+This isn't a vulnerability nor anything previously unknown, it's a structural weakness that needs to be assessed. I didn't "skip" or somehow "simplify" any number of SHA-2 rounds, it is a materialized analysis of performance characteristics of the system. Everybody knows PoW system loses protection margin using hardware or software optimizations.
  
-Website operators deploying mCaptcha bear the responsibility to understand the performance characteristics and security implications of their chosen PoW parameters, and whether that protects against their identified threat. __The purpose of this research is to provide the statistical analysis and empirical validation data necessary for informed deployment decisions, including optimized CPU only solutions.__ 
+Website operators deploying a PoW system bear the responsibility to understand the performance characteristics and security implications of their chosen PoW parameters, and whether that protects against their identified threat. __The purpose of this research is to provide the statistical analysis and empirical validation data necessary for informed deployment decisions, including optimized CPU only solutions.__ 
 
 ### Can't this be used to attack a real website?
 
-Yes and no, yes, if you can reproduce the benchmark you by definition _has_ to have the capacity to hit an mCaptcha endpoint much faster than clicking the Captcha widget, but also no, I don't think it's too complicated to do much better than this PoC, for a particular website. This is an academic demo of optimization space for non-batched "universal" CPU and GPU solutions, it is not economical for wielding a true targeted attack.
+Yes and no, yes, if you can reproduce the benchmark you by definition _has_ to have the capacity to hit an these challenges much faster than a browser, but also no, I don't think it's too complicated to do much better than this PoC, for a particular website. This is an academic demo of optimization space for non-batched "universal" CPU and GPU solutions, it is not economical for wielding a true targeted attack.
 
 If you _really_ want to attack a real website with mCaptcha, you should:
 

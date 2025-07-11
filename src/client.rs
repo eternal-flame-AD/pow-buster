@@ -1,8 +1,9 @@
+use core::num::NonZeroU8;
 use std::fmt::Write;
 
 use reqwest::Client;
 
-use crate::{Solver, compute_target, compute_target_anubis};
+use crate::{Align16, Solver, compute_target, compute_target_anubis, compute_target_goaway};
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
 pub struct PoWConfig {
@@ -271,23 +272,28 @@ pub async fn solve_anubis(
     Ok(auth_cookie)
 }
 
-#[cfg(feature = "wgpu")]
-pub async fn solve_mcaptcha_wgpu(
-    ctx: &mut crate::wgpu::VulkanDeviceContext,
+#[derive(serde::Deserialize, Debug)]
+struct GoAwayConfig {
+    challenge: String,
+    // target: String,
+    difficulty: NonZeroU8,
+}
+
+pub async fn solve_goaway_js_pow_sha256(
     client: &Client,
     base_url: &str,
-    site_key: &str,
     really_solve: bool,
 ) -> Result<String, SolveError> {
-    use typenum::U256;
-
-    let url_get_work = format!("{}/api/v1/pow/config", base_url);
+    let base_url = url::Url::parse(base_url)?;
+    let make_challenge_url = base_url.join("/.well-known/.git.gammaspectra.live/git/go-away/cmd/go-away/challenge/js-pow-sha256/make-challenge")?;
     let res = client
-        .post(url_get_work)
+        .post(make_challenge_url)
         .header("Accept", "application/json")
-        .json(&serde_json::json!({
-            "key": site_key,
-        }))
+        .header("Sec-Gpc", "1")
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Android 15; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0",
+        )
         .send()
         .await?;
     if !res.status().is_success() {
@@ -295,58 +301,118 @@ pub async fn solve_mcaptcha_wgpu(
         let body = res.text().await?;
         return Err(SolveError::UnexpectedStatusRequest(status, body));
     }
-    let config: PoWConfig = res.json().await?;
+    let config: GoAwayConfig = res.json().await?;
 
-    let mut prefix = Vec::new();
-    crate::build_prefix(&mut prefix, &config.string, &config.salt);
-    let mut solver = crate::wgpu::VulkanSingleBlockSolver::<U256>::new(ctx, &prefix)
-        .ok_or(SolveError::NotImplemented)?;
-    let target_bytes = compute_target(config.difficulty_factor).to_be_bytes();
+    let mut solver = crate::GoAwaySolver16Way::new((), &config.challenge.as_bytes()).unwrap();
+    let target_bytes = compute_target_goaway(config.difficulty).to_be_bytes();
     let target_u32s = core::array::from_fn(|i| {
+        let i = i * 4;
         u32::from_be_bytes([
-            target_bytes[i * 4],
-            target_bytes[i * 4 + 1],
-            target_bytes[i * 4 + 2],
-            target_bytes[i * 4 + 3],
+            target_bytes[i],
+            target_bytes[i + 1],
+            target_bytes[i + 2],
+            target_bytes[i + 3],
         ])
     });
+
+    let estimated_workload = 1u64 << config.difficulty.get();
 
     let (nonce, result) = if really_solve {
         tokio::task::block_in_place(|| {
             let solve_begin = std::time::Instant::now();
-            let result = solver.solve::<true>(target_u32s);
-            eprintln!("solve time: {:?}", solve_begin.elapsed());
-            result.ok_or(SolveError::SolverFailed)
+            let result = solver.solve::<false>(target_u32s);
+            let Some(result) = result else {
+                return Err(SolveError::SolverFailed);
+            };
+            let elapsed = solve_begin.elapsed();
+            eprintln!(
+                "solve time: {:?} ({:.2} MH/s)",
+                elapsed,
+                result.0 as f64 / elapsed.as_secs_f64() / 1024.0 / 1024.0
+            );
+            Ok(result)
         })?
     } else {
         Default::default()
     };
 
-    let work = Work {
-        string: config.string,
-        result: crate::extract128_be(result).to_string(),
-        nonce,
-        key: site_key,
-    };
-    let url_send_work = format!("{}/api/v1/pow/verify", base_url);
+    let plausible_time = estimated_workload / 1024;
 
-    #[derive(Clone, serde::Deserialize, Debug)]
-    struct TokenResponse {
-        token: String,
+    let mut goaway_token = Align16([b'0'; 64 + 8 * 2]);
+    goaway_token[..64].copy_from_slice(config.challenge.as_bytes());
+    let nonce_bytes = nonce.to_be_bytes();
+    for i in 0..8 {
+        let high_nibble = nonce_bytes[i] >> 4;
+        let low_nibble = nonce_bytes[i] & 0x0f;
+        goaway_token[64 + i * 2] = if high_nibble < 10 {
+            b'0' + high_nibble
+        } else {
+            b'a' + high_nibble - 10
+        };
+        goaway_token[64 + i * 2 + 1] = if low_nibble < 10 {
+            b'0' + low_nibble
+        } else {
+            b'a' + low_nibble - 10
+        };
     }
 
-    let res = client
-        .post(url_send_work)
-        .header("Accept", "application/json")
-        .json(&work)
+    let mut goaway_id = Align16([0; 32]);
+    // this doesn't do anything, just make something up for the id
+    for i in 0..4 {
+        let result_bytes: [u8; 4] = result[i].to_ne_bytes();
+        for j in 0..4 {
+            let high_nibble = result_bytes[j] >> 4;
+            let low_nibble = result_bytes[j] & 0x0f;
+            goaway_id[(4 * i + j) * 2] = if high_nibble < 10 {
+                b'0' + high_nibble
+            } else {
+                b'a' + high_nibble - 10
+            };
+            goaway_id[(4 * i + j) * 2 + 1] = if low_nibble < 10 {
+                b'0' + low_nibble
+            } else {
+                b'a' + low_nibble - 10
+            };
+        }
+    }
+
+    let mut url_send_work = base_url.join("/.well-known/.git.gammaspectra.live/git/go-away/cmd/go-away/challenge/js-pow-sha256/verify-challenge")?.to_string();
+    write!(
+        url_send_work,
+        "?__goaway_ElapsedTime={}&__goaway_challenge=js-pow-sha256&__goaway_redirect={}://{}/&__goaway_token={}&__goaway_id={}",
+        plausible_time,
+        base_url.scheme(),
+        base_url.host_str().unwrap(),
+        unsafe { std::str::from_utf8_unchecked(&goaway_token[..]) },
+        unsafe { std::str::from_utf8_unchecked(&goaway_id[..]) },
+    )
+    .unwrap();
+
+    let golden_response = client
+        .get(url_send_work)
+        .header("Accept", "text/html")
+        .header("Sec-Gpc", "1")
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Android 15; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0",
+        )
         .send()
         .await?;
-    if !res.status().is_success() {
-        let status = res.status();
-        let body = res.text().await?;
-        return Err(SolveError::UnexpectedStatusSend(status, body));
-    }
-    let token: TokenResponse = res.json().await?;
 
-    Ok(token.token)
+    if golden_response.status().is_client_error() || golden_response.status().is_server_error() {
+        let status = golden_response.status();
+        let body = golden_response.text().await?;
+        return Err(SolveError::UnexpectedStatusRequest(status, body));
+    }
+    let auth_cookie = golden_response
+        .headers()
+        .iter()
+        .filter(|(k, _)| k.as_str().eq_ignore_ascii_case("set-cookie"))
+        .filter_map(|(_, v)| v.to_str().unwrap().split(';').next())
+        .filter(|v| v.starts_with(".go-away"))
+        .next()
+        .ok_or(SolveError::GoldenTicketNotFound)?
+        .to_string();
+
+    Ok(auth_cookie)
 }

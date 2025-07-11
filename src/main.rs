@@ -11,7 +11,8 @@ use std::{
 use clap::{Parser, Subcommand};
 
 use simd_mcaptcha::{
-    DoubleBlockSolver16Way, SingleBlockSolver16Way, Solver, compute_target, compute_target_anubis,
+    DoubleBlockSolver16Way, GoAwaySolver16Way, SingleBlockSolver16Way, Solver, compute_target,
+    compute_target_anubis,
 };
 
 #[derive(Parser)]
@@ -55,14 +56,15 @@ enum SubCommand {
 
         #[clap(long)]
         do_control: bool,
-
-        #[cfg(feature = "wgpu")]
-        #[clap(long)]
-        use_gpu: bool,
     },
     #[cfg(feature = "client")]
     Anubis {
         #[clap(long, default_value = "http://localhost:8923/")]
+        url: String,
+    },
+    #[cfg(feature = "client")]
+    GoAway {
+        #[clap(long, default_value = "http://localhost:8080/")]
         url: String,
     },
     Profile {
@@ -239,10 +241,10 @@ fn main() {
                 ])
             });
             let begin = Instant::now();
-            for i in 0..20u64 {
+            for i in 0..20u8 {
                 // mimick an anubis-like situation
-                let mut prefix_bytes = [0; 64];
-                prefix_bytes[..8].copy_from_slice(&i.to_ne_bytes());
+                let mut prefix_bytes = [0; 32];
+                prefix_bytes[0] = i;
                 let mut solver =
                     SingleBlockSolver16Way::new((), &prefix_bytes).expect("solver is None");
                 let inner_begin = Instant::now();
@@ -269,8 +271,8 @@ fn main() {
             );
             let begin = Instant::now();
             let mut prefix = [0u8; 48];
-            for i in 0..20u64 {
-                prefix[0] = i.to_ne_bytes()[0];
+            for i in 0..20u8 {
+                prefix[0] = i;
                 let mut solver = DoubleBlockSolver16Way::new((), &prefix).expect("solver is None");
                 let inner_begin = Instant::now();
                 let (nonce, result) = solver
@@ -294,6 +296,35 @@ fn main() {
                 expected_iters,
                 expected_iters as f32 / elapsed.as_secs_f32() * 20.0 / 1024.0 / 1024.0
             );
+            let begin = Instant::now();
+            let mut total_iters = 0;
+            for i in 0..20u8 {
+                let mut prefix = [0u8; 32];
+                prefix[0] = i;
+                let mut solver = GoAwaySolver16Way::new((), &prefix).expect("solver is None");
+                let inner_begin = Instant::now();
+                let (nonce, result) = solver
+                    .solve_dyn(target_u32s, upwards)
+                    .expect("solver failed");
+                let mut hex_output = [0u8; 64];
+                simd_mcaptcha::encode_hex(&mut hex_output, result);
+                eprintln!(
+                    "[{}]: in {:.3} seconds ({}, {})",
+                    core::any::type_name::<GoAwaySolver16Way>(),
+                    inner_begin.elapsed().as_secs_f32(),
+                    nonce,
+                    unsafe { std::str::from_utf8_unchecked(&hex_output) }
+                );
+                total_iters += nonce;
+            }
+            let elapsed = begin.elapsed();
+            println!(
+                "[{}]: {} seconds at difficulty {} ({:.2} MH/s)",
+                core::any::type_name::<GoAwaySolver16Way>(),
+                elapsed.as_secs_f32() / 20.0,
+                expected_iters,
+                total_iters as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0
+            );
             #[cfg(feature = "official")]
             if test_official {
                 let solver = pow_sha256::ConfigBuilder::default()
@@ -312,9 +343,10 @@ fn main() {
                 }
                 let elapsed = begin.elapsed();
                 println!(
-                    "{} seconds at difficulty {}",
+                    "official: {} seconds at difficulty {} ({:.2} MH/s)",
                     elapsed.as_secs_f32() / 10.0,
-                    difficulty
+                    difficulty,
+                    difficulty as f32 / elapsed.as_secs_f32() * 10.0 / 1024.0 / 1024.0
                 );
             }
         }
@@ -338,14 +370,31 @@ fn main() {
             });
         }
         #[cfg(feature = "client")]
+        SubCommand::GoAway { url } => {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+
+            runtime.block_on(async move {
+                let client = reqwest::ClientBuilder::new()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .unwrap();
+                let response =
+                    simd_mcaptcha::client::solve_goaway_js_pow_sha256(&client, &url, true)
+                        .await
+                        .unwrap();
+                println!("set-cookie: {}", response);
+            });
+        }
+        #[cfg(feature = "client")]
         SubCommand::Live {
             api_type,
             host,
             site_key,
             n_workers,
             do_control,
-            #[cfg(feature = "wgpu")]
-            use_gpu,
         } => {
             use std::io::Write;
 
@@ -435,60 +484,6 @@ fn main() {
                     let failed_clone = failed.clone();
                     let site_key_clone = site_key.clone();
                     let pool = pool.clone();
-
-                    #[cfg(feature = "wgpu")]
-                    if use_gpu {
-                        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-                            backends: wgpu::Backends::VULKAN,
-                            ..Default::default()
-                        });
-                        let adapter = instance
-                            .request_adapter(&wgpu::RequestAdapterOptions {
-                                power_preference: wgpu::PowerPreference::HighPerformance,
-                                compatible_surface: None,
-                                force_fallback_adapter: false,
-                            })
-                            .await
-                            .unwrap();
-                        let mut features = wgpu::Features::empty();
-                        features.insert(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS);
-                        let (device, queue) = adapter
-                            .request_device(&wgpu::DeviceDescriptor {
-                                label: None,
-                                required_features: features,
-                                required_limits: wgpu::Limits::default(),
-                                memory_hints: wgpu::MemoryHints::Performance,
-                                trace: wgpu::Trace::Off,
-                            })
-                            .await
-                            .unwrap();
-                        let mut ctx = simd_mcaptcha::wgpu::VulkanDeviceContext::new(device, queue);
-
-                        tokio::spawn(async move {
-                            let client = reqwest::ClientBuilder::new().build().unwrap();
-                            loop {
-                                match simd_mcaptcha::client::solve_mcaptcha_wgpu(
-                                    &mut ctx,
-                                    &client,
-                                    &host_clone,
-                                    &site_key_clone,
-                                    true,
-                                )
-                                .await
-                                {
-                                    Ok(_) => {
-                                        succeeded_clone.fetch_add(1, Ordering::Relaxed);
-                                    }
-                                    Err(e) => {
-                                        eprintln!("wgpu error: {:?}", e);
-                                        failed_clone.fetch_add(1, Ordering::Relaxed);
-                                    }
-                                }
-                            }
-                        });
-
-                        continue;
-                    }
 
                     let api_type = api_type.clone();
                     tokio::spawn(async move {

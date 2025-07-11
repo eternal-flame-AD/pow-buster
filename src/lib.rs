@@ -40,6 +40,12 @@ impl<T> core::ops::Deref for Align16<T> {
     }
 }
 
+impl<T> core::ops::DerefMut for Align16<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 const SWAP_DWORD_BYTE_ORDER: [usize; 64] = [
     3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12, 19, 18, 17, 16, 23, 22, 21, 20, 27, 26,
     25, 24, 31, 30, 29, 28, 35, 34, 33, 32, 39, 38, 37, 36, 43, 42, 41, 40, 47, 46, 45, 44, 51, 50,
@@ -94,6 +100,11 @@ pub const fn compute_target(difficulty_factor: u32) -> u128 {
 /// Compute the target for an Anubis PoW
 pub const fn compute_target_anubis(difficulty_factor: NonZeroU8) -> u128 {
     1u128 << (128 - difficulty_factor.get() * 4)
+}
+
+/// Compute the target for a GoAway PoW
+pub const fn compute_target_goaway(difficulty_factor: NonZeroU8) -> u128 {
+    1u128 << (128 - difficulty_factor.get())
 }
 
 /// Extract top 128 bits from a 64-bit word array
@@ -968,9 +979,214 @@ impl Solver for DoubleBlockSolver16Way {
     }
 }
 
+/// Solver for GoAway style SHA-256 challenges
+///
+/// Goaway challenge has construction:
+///
+/// challenge := SHA256 (difficulty || secret)
+/// criteria := SHA256 (challenge || nonce) where nonce is 8 bytes, which gives us 9 rounds of hot start and a fully explorable nonce space
+/// proof := challenge || nonce
+pub struct GoAwaySolver16Way {
+    challenge: [u32; 8],
+}
+
+impl GoAwaySolver16Way {
+    const MSG_LEN: u32 = 10 * 4 * 8;
+}
+
+impl Solver for GoAwaySolver16Way {
+    type Ctx = ();
+
+    fn new(_ctx: Self::Ctx, prefix: &[u8]) -> Option<Self> {
+        let mut prefix_fixed_up = [0; 32];
+        let mut final_prefix = &*prefix;
+        if prefix.len() != 32 {
+            if prefix.len() == 64 {
+                for i in 0..32 {
+                    let byte_hex: [u8; 2] = prefix[i * 2..][..2].try_into().unwrap();
+                    let high_nibble = if (b'a'..=b'f').contains(&byte_hex[0]) {
+                        byte_hex[0] - b'a' + 10
+                    } else {
+                        byte_hex[0] - b'0'
+                    };
+                    let low_nibble = if (b'a'..=b'f').contains(&byte_hex[1]) {
+                        byte_hex[1] - b'a' + 10
+                    } else {
+                        byte_hex[1] - b'0'
+                    };
+                    prefix_fixed_up[i] = (high_nibble << 4) | low_nibble;
+                }
+                final_prefix = &prefix_fixed_up;
+            } else {
+                return None;
+            }
+        }
+
+        Some(Self {
+            challenge: core::array::from_fn(|i| {
+                u32::from_be_bytes([
+                    final_prefix[i * 4],
+                    final_prefix[i * 4 + 1],
+                    final_prefix[i * 4 + 2],
+                    final_prefix[i * 4 + 3],
+                ])
+            }),
+        })
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+        unsafe {
+            let lane_id_v = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+
+            for high_word in 0..u32::MAX {
+                let mut partial_state = sha256::IV;
+                let mut msg_prefix: [u32; 9] = [0; 9];
+                msg_prefix[..8].copy_from_slice(&self.challenge);
+                msg_prefix[8] = high_word;
+                sha256::ingest_message_prefix(&mut partial_state, msg_prefix);
+
+                for low_word in (0..u32::MAX).step_by(16) {
+                    let mut state =
+                        core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
+
+                    let mut msg = [
+                        _mm512_set1_epi32(msg_prefix[0] as _),
+                        _mm512_set1_epi32(msg_prefix[1] as _),
+                        _mm512_set1_epi32(msg_prefix[2] as _),
+                        _mm512_set1_epi32(msg_prefix[3] as _),
+                        _mm512_set1_epi32(msg_prefix[4] as _),
+                        _mm512_set1_epi32(msg_prefix[5] as _),
+                        _mm512_set1_epi32(msg_prefix[6] as _),
+                        _mm512_set1_epi32(msg_prefix[7] as _),
+                        _mm512_set1_epi32(high_word as _),
+                        _mm512_or_epi32(_mm512_set1_epi32(low_word as _), lane_id_v),
+                        _mm512_set1_epi32(u32::from_be_bytes([0x80, 0, 0, 0]) as _),
+                        _mm512_setzero_epi32(),
+                        _mm512_setzero_epi32(),
+                        _mm512_setzero_epi32(),
+                        _mm512_setzero_epi32(),
+                        _mm512_set1_epi32(Self::MSG_LEN as _),
+                    ];
+                    sha256::avx512::compress_16block_avx512_without_feedback::<9>(
+                        &mut state, &mut msg,
+                    );
+                    let result_a =
+                        _mm512_add_epi32(state[0], _mm512_set1_epi32(sha256::IV[0] as _));
+
+                    let cmp_fn = if UPWARDS {
+                        _mm512_cmpgt_epu32_mask
+                    } else {
+                        _mm512_cmplt_epu32_mask
+                    };
+                    let a_met_target = cmp_fn(result_a, _mm512_set1_epi32(target[0] as _));
+                    if a_met_target != 0 {
+                        let success_lane_idx = _tzcnt_u32(a_met_target as _);
+                        let mut output_msg: [u32; 16] = [0; 16];
+
+                        let final_low_word = low_word | (success_lane_idx as u32);
+                        output_msg[..8].copy_from_slice(&self.challenge);
+                        output_msg[8] = high_word;
+                        output_msg[9] = final_low_word;
+                        output_msg[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
+                        output_msg[15] = Self::MSG_LEN as _;
+
+                        let mut final_sha_state = sha256::IV;
+                        sha256::compress_block_reference(&mut final_sha_state, &output_msg);
+
+                        return Some((
+                            (high_word as u64) << 32 | final_low_word as u64,
+                            final_sha_state,
+                        ));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+        unsafe {
+            let lane_id_v = u32x4(0, 1, 2, 3);
+            for high_word in 0..u32::MAX {
+                let mut partial_state = sha256::IV;
+                let mut msg_prefix: [u32; 9] = [0; 9];
+                msg_prefix[..8].copy_from_slice(&self.challenge);
+                msg_prefix[8] = high_word;
+                sha256::ingest_message_prefix(&mut partial_state, msg_prefix);
+
+                for low_word in (0..u32::MAX).step_by(4) {
+                    let mut state = core::array::from_fn(|i| u32x4_splat(partial_state[i]));
+
+                    let mut msg = [
+                        u32x4_splat(msg_prefix[0]),
+                        u32x4_splat(msg_prefix[1]),
+                        u32x4_splat(msg_prefix[2]),
+                        u32x4_splat(msg_prefix[3]),
+                        u32x4_splat(msg_prefix[4]),
+                        u32x4_splat(msg_prefix[5]),
+                        u32x4_splat(msg_prefix[6]),
+                        u32x4_splat(msg_prefix[7]),
+                        u32x4_splat(high_word),
+                        v128_or(u32x4_splat(low_word), lane_id_v),
+                        u32x4_splat(u32::from_be_bytes([0x80, 0, 0, 0])),
+                        u32x4_splat(0),
+                        u32x4_splat(0),
+                        u32x4_splat(0),
+                        u32x4_splat(0),
+                        u32x4_splat(Self::MSG_LEN as _),
+                    ];
+
+                    sha256::simd128::compress_16block_simd128_without_feedback::<9>(
+                        &mut state, &mut msg,
+                    );
+                    let result_a = u32x4_add(state[0], u32x4_splat(sha256::IV[0]));
+                    let cmp_fn = if UPWARDS { u32x4_le } else { u32x4_ge };
+
+                    let a_not_met_target = cmp_fn(result_a, u32x4_splat(target[0]));
+
+                    if !u32x4_all_true(a_not_met_target) {
+                        let mut extract = [0u32; 4];
+                        v128_store(extract.as_mut_ptr().cast(), result_a);
+                        let success_lane_idx = extract
+                            .iter()
+                            .position(|x| {
+                                if UPWARDS {
+                                    *x > target[0]
+                                } else {
+                                    *x < target[0]
+                                }
+                            })
+                            .unwrap();
+                        let final_low_word = low_word | (success_lane_idx as u32);
+                        let mut output_msg: [u32; 16] = [0; 16];
+                        output_msg[..8].copy_from_slice(&self.challenge);
+                        output_msg[8] = high_word;
+                        output_msg[9] = final_low_word;
+                        output_msg[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
+                        output_msg[15] = Self::MSG_LEN as _;
+
+                        let mut final_sha_state = sha256::IV;
+                        sha256::compress_block_reference(&mut final_sha_state, &output_msg);
+
+                        return Some((
+                            (high_word as u64) << 32 | final_low_word as u64,
+                            final_sha_state,
+                        ));
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+
+    use sha2::{Digest, Sha256, digest::Output};
 
     use super::*;
 
@@ -1187,5 +1403,33 @@ mod tests {
                 total_solved
             );
         }
+    }
+
+    #[test]
+    #[cfg_attr(feature = "wasm-bindgen", wasm_bindgen_test::wasm_bindgen_test)]
+    fn test_solve_goaway() {
+        const DIFFICULTY: NonZeroU8 = NonZeroU8::new(12).unwrap();
+        let target = compute_target_goaway(DIFFICULTY).to_be_bytes();
+        let target_u32s = core::array::from_fn(|i| {
+            u32::from_be_bytes([
+                target[i * 4],
+                target[i * 4 + 1],
+                target[i * 4 + 2],
+                target[i * 4 + 3],
+            ])
+        });
+        let mut test_prefix: Output<Sha256> = Default::default();
+        test_prefix[..3].copy_from_slice(b"abc");
+
+        let mut solver =
+            GoAwaySolver16Way::new(Default::default(), &test_prefix.as_slice()).unwrap();
+        let (nonce, result) = solver.solve::<false>(target_u32s).expect("solver failed");
+        assert!(result[0].leading_zeros() >= DIFFICULTY.get() as u32);
+
+        let mut hasher = Sha256::default();
+        hasher.update(&test_prefix);
+        hasher.update(&nonce.to_be_bytes());
+        let hash = hasher.finalize();
+        assert!(u128::from_be_bytes(hash[..16].try_into().unwrap()) >= DIFFICULTY.get() as _);
     }
 }
