@@ -228,7 +228,8 @@ impl Solver for SingleBlockSolver16Way {
         // try to hot start as much as possible, micro-optimize anubis-like situation
         // we used to not do this as it is not typical for mCaptcha, but all Anubis deployments start at offset 0, so there is very good incentive to micro-optimize
         if ptr < 32 {
-            while nonce_addend.checked_mul(10_000_000_000).is_some() {
+            // times 2 because for some reason anubis uses signed nonces ... I wonder if we can send negative nonces
+            while nonce_addend.checked_mul(10_000_000_000 * 2).is_some() {
                 nonce_addend *= 10;
                 nonce_addend += 1;
                 message[ptr] = b'1';

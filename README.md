@@ -31,7 +31,8 @@ The benchmarks demonstrate a significant performance gap between browser-based J
 
 We assume you have a relatively modern and powerful platform, specifically:
 
-- Requires AVX-512 CPU or a [wgpu](https://wgpu.rs) compatible GPU
+- Requires AVX-512 CPU, simd128 or a [wgpu](https://wgpu.rs) compatible GPU
+- For Anubis, assumes the server is 64-bit
 - Only builds on nightly Rust because avx512 intrinsics are not stable yet, it also currently doesn't build on non-x86_64 targets.
 - This is designed for "low", practical-for-a-website difficulty settings, A $1 - P_{geom}(80e7, 1/\text{difficulty})$ chance of failure for any particular challenge, which for 1e8 (takes about 10 seconds on a browser) is about 0.03%, the GPU solver has much lower failure rate.
 - The WGSL implementation is not optimized for performance, it has some major problems:
