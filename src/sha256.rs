@@ -52,7 +52,7 @@ pub(crate) fn compress_block_reference(state: &mut [u32; 8], block: &[u32; 16]) 
     sha2::compress256(state, &[tmp]);
 }
 
-// taken verbatim from sha2 crate
+// truncated sha2 rounds for hotstart, taken verbatim from sha2 crate
 #[inline(always)]
 pub(crate) fn ingest_message_prefix<const LENGTH: usize>(state: &mut [u32; 8], w: [u32; LENGTH]) {
     let [a, b, c, d, e, f, g, h] = &mut *state;

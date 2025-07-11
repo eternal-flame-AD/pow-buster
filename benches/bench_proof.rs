@@ -156,13 +156,12 @@ pub fn bench_proof(c: &mut Criterion) {
                     let start = std::time::Instant::now();
                     for _ in 0..iters {
                         for _ in 0..10 {
-                            let mut solver: SingleBlockSolver16Way = SingleBlockSolver16Way::new(
-                                (),
-                                &(COUNTER
-                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                                    .to_ne_bytes()),
-                            )
-                            .expect("solver is None");
+                            let counter =
+                                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let mut prefix = [0; 64];
+                            prefix[..8].copy_from_slice(&counter.to_ne_bytes());
+                            let mut solver: SingleBlockSolver16Way =
+                                SingleBlockSolver16Way::new((), &prefix).expect("solver is None");
                             core::hint::black_box(
                                 solver.solve::<true>(target_u32s).expect("solver failed"),
                             );
@@ -258,12 +257,11 @@ pub fn bench_proof(c: &mut Criterion) {
                     let start = std::time::Instant::now();
                     for _ in 0..iters {
                         for _ in 0..10 {
-                            let pow = solver.prove_work_serialized::<()>(
-                                &COUNTER
-                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                                    .to_ne_bytes(),
-                                difficulty,
-                            );
+                            let counter =
+                                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let mut prefix = [0; 64];
+                            prefix[..8].copy_from_slice(&counter.to_ne_bytes());
+                            let pow = solver.prove_work_serialized::<()>(&prefix, difficulty);
                             core::hint::black_box((pow.nonce, pow.result));
                         }
                     }
@@ -403,9 +401,10 @@ pub fn bench_proof_rayon(c: &mut Criterion) {
                 (0..1024)
                     .into_par_iter()
                     .map(|addend| {
+                        let mut prefix = [0; 64];
+                        prefix[..8].copy_from_slice(&(addend + start).to_ne_bytes());
                         let mut solver =
-                            SingleBlockSolver16Way::new((), &(addend + start).to_ne_bytes())
-                                .expect("solver is None");
+                            SingleBlockSolver16Way::new((), &prefix).expect("solver is None");
 
                         let start = std::time::Instant::now();
                         solver.solve::<true>(target_u32s).expect("solver failed");

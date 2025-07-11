@@ -101,8 +101,11 @@ fn main() {
                 difficulty
             );
             for prefix in 0..u64::MAX {
-                let prefix = prefix.to_ne_bytes();
-                let mut solver = SingleBlockSolver16Way::new((), &prefix).expect("solver is None");
+                // mimick an anubis-like situation
+                let mut prefix_bytes = [0; 64];
+                prefix_bytes[..8].copy_from_slice(&prefix.to_ne_bytes());
+                let mut solver =
+                    SingleBlockSolver16Way::new((), &prefix_bytes).expect("solver is None");
                 let target = compute_target(difficulty);
                 let target_bytes = target.to_be_bytes();
                 let target_u32s = core::array::from_fn(|i| {
@@ -166,9 +169,11 @@ fn main() {
                         }
                     } else {
                         for prefix in 0..u64::MAX {
-                            let prefix = prefix.to_ne_bytes();
-                            let mut solver =
-                                SingleBlockSolver16Way::new((), &prefix).expect("solver is None");
+                            // mimick an anubis-like situation
+                            let mut prefix_bytes = [0; 64];
+                            prefix_bytes[..8].copy_from_slice(&prefix.to_ne_bytes());
+                            let mut solver = SingleBlockSolver16Way::new((), &prefix_bytes)
+                                .expect("solver is None");
 
                             let target_bytes = target.to_be_bytes();
                             let target_u32s = core::array::from_fn(|i| {
@@ -235,17 +240,23 @@ fn main() {
             });
             let begin = Instant::now();
             for i in 0..20u64 {
+                // mimick an anubis-like situation
+                let mut prefix_bytes = [0; 64];
+                prefix_bytes[..8].copy_from_slice(&i.to_ne_bytes());
                 let mut solver =
-                    SingleBlockSolver16Way::new((), &i.to_ne_bytes()).expect("solver is None");
+                    SingleBlockSolver16Way::new((), &prefix_bytes).expect("solver is None");
                 let inner_begin = Instant::now();
                 let (nonce, result) = solver
                     .solve_dyn(target_u32s, upwards)
                     .expect("solver failed");
+                let mut hex_output = [0u8; 64];
+                simd_mcaptcha::encode_hex(&mut hex_output, result);
                 eprintln!(
-                    "[{}]: in {:.3} seconds {:?}",
+                    "[{}]: in {:.3} seconds ({}, {})",
                     core::any::type_name::<SingleBlockSolver16Way>(),
                     inner_begin.elapsed().as_secs_f32(),
-                    (nonce, result)
+                    nonce,
+                    unsafe { std::str::from_utf8_unchecked(&hex_output) }
                 );
             }
             let elapsed = begin.elapsed();
@@ -265,11 +276,14 @@ fn main() {
                 let (nonce, result) = solver
                     .solve_dyn(target_u32s, upwards)
                     .expect("solver failed");
+                let mut hex_output = [0u8; 64];
+                simd_mcaptcha::encode_hex(&mut hex_output, result);
                 eprintln!(
-                    "[{}]: in {:.3} seconds {:?}",
+                    "[{}]: in {:.3} seconds ({}, {})",
                     core::any::type_name::<DoubleBlockSolver16Way>(),
                     inner_begin.elapsed().as_secs_f32(),
-                    (nonce, result)
+                    nonce,
+                    unsafe { std::str::from_utf8_unchecked(&hex_output) }
                 );
             }
             let elapsed = begin.elapsed();

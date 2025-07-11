@@ -204,7 +204,7 @@ impl Solver for SingleBlockSolver16Way {
                 nonce_addend += 1;
                 *b = b'1';
             });
-            nonce_addend = nonce_addend.checked_mul(1_000_000_000)?;
+            nonce_addend.checked_mul(1_000_000_000)?; // make sure we still have enough headroom
             complete_blocks_before += 1;
             prefix = &[];
             sha256::compress_block_reference(
@@ -224,6 +224,19 @@ impl Solver for SingleBlockSolver16Way {
         let mut ptr = 0;
         message[..prefix.len()].copy_from_slice(prefix);
         ptr += prefix.len();
+
+        // try to hot start as much as possible, micro-optimize anubis-like situation
+        // we used to not do this as it is not typical for mCaptcha, but all Anubis deployments start at offset 0, so there is very good incentive to micro-optimize
+        if ptr < 32 {
+            while nonce_addend.checked_mul(10_000_000_000).is_some() {
+                nonce_addend *= 10;
+                nonce_addend += 1;
+                message[ptr] = b'1';
+                ptr += 1;
+            }
+        }
+        nonce_addend = nonce_addend.checked_mul(1_000_000_000)?;
+
         let digit_index = ptr;
 
         // skip 9 zeroes, this is the part we will interpolate N into
@@ -273,6 +286,12 @@ impl Solver for SingleBlockSolver16Way {
             this: &mut SingleBlockSolver16Way,
             target: u32,
         ) -> Option<u64> {
+            let mut partial_state = this.prefix_state;
+            sha256::ingest_message_prefix::<DIGIT_WORD_IDX0>(
+                &mut partial_state,
+                core::array::from_fn(|i| this.message[i]),
+            );
+
             let lane_id_0_byte_idx = this.digit_index % 4;
             let lane_id_1_byte_idx = (this.digit_index + 1) % 4;
             for prefix_set_index in 0..5 {
@@ -349,11 +368,11 @@ impl Solver for SingleBlockSolver16Way {
                         ];
 
                         let mut state =
-                            core::array::from_fn(|i| _mm512_set1_epi32(this.prefix_state[i] as _));
+                            core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
 
                         // do 16-way SHA-256 without feedback so as not to force the compiler to save 8 registers
                         // we already have them in scalar form, this allows more registers to be reused in the next iteration
-                        sha256::avx512::compress_16block_avx512_without_feedback::<0>(
+                        sha256::avx512::compress_16block_avx512_without_feedback::<DIGIT_WORD_IDX0>(
                             &mut state,
                             &mut blocks,
                         );
@@ -458,6 +477,7 @@ impl Solver for SingleBlockSolver16Way {
     #[cfg(target_arch = "wasm32")]
     fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
         // wasm don't have registers, so we there is no need for code bloat
+        // todo: do the hotstart
 
         let lane_id_0_word_idx = self.digit_index / 4;
         let lane_id_1_word_idx = (self.digit_index + 1) / 4;
