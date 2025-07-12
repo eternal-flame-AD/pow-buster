@@ -429,7 +429,7 @@ impl Solver for SingleBlockSolver16Way {
                         let a_met_target = cmp_fn(result_a, _mm512_set1_epi32(target as _));
 
                         if a_met_target != 0 {
-                            let success_lane_idx = _tzcnt_u32(a_met_target as _) as usize;
+                            let success_lane_idx = _tzcnt_u16(a_met_target) as usize;
                             let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
 
                             // stamp the lane ID back onto the message
@@ -802,7 +802,7 @@ impl Solver for DoubleBlockSolver16Way {
                     );
 
                     if a_met_target != 0 {
-                        let success_lane_idx = _tzcnt_u32(a_met_target as _) as usize;
+                        let success_lane_idx = _tzcnt_u16(a_met_target) as usize;
                         let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
 
                         self.message[14] = cum0;
@@ -1052,7 +1052,6 @@ impl Solver for GoAwaySolver16Way {
     }
 
     #[cfg(target_arch = "x86_64")]
-    #[inline(never)]
     fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
         unsafe {
             let lane_id_v = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
@@ -1099,7 +1098,7 @@ impl Solver for GoAwaySolver16Way {
                     };
                     let a_met_target = cmp_fn(result_a, _mm512_set1_epi32(target[0] as _));
                     if a_met_target != 0 {
-                        let success_lane_idx = _tzcnt_u32(a_met_target as _);
+                        let success_lane_idx = _tzcnt_u16(a_met_target);
                         let mut output_msg: [u32; 16] = [0; 16];
 
                         let final_low_word = low_word | (success_lane_idx as u32);
