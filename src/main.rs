@@ -213,7 +213,7 @@ fn main() {
                 }
             } else {
                 loop {
-                    core::hint::spin_loop();
+                    std::thread::park();
                 }
             }
         }
