@@ -16,7 +16,6 @@
       - [CPU only](#cpu-only)
     - [Throughput Sanity Check](#throughput-sanity-check)
   - [Security Implications](#security-implications)
-  - [Server-Side Performance Observations](#server-side-performance-observations)
   - [Future Work (i.e. Okay, so what would be a good PoW then?)](#future-work-ie-okay-so-what-would-be-a-good-pow-then)
   - [Contributing](#contributing)
   - [License](#license)
@@ -207,29 +206,6 @@ The performance benchmarks demonstrate a fundamental challenge for browser-based
 2. The GPU implementation, even unoptimized, shows that commodity hardware can solve high-difficulty challenges orders of magnitude faster than browsers.
 
 These findings suggest that both designing and adopting a PoW-based CAPTCHA systems may need additional verification mechanisms beyond empirical testing.
-
-## Server-Side Performance Observations
-
-> Wait, why is the "fake proof" RPS so low? (only ~650RPS)?
-
-An important observation from our end-to-end testing: even when sending **completely invalid proofs** that should be rejected immediately, the mCaptcha server could only handle ~650 RPS on a 32-core AMD Ryzen 9 7950X with very low effective CPU utilization.
-
-A brief analysis of the server-side code reveals significant architectural overhead of the mCaptcha system itself, it includes overheads like:
-
-- String construction/cloning (expensive memory allocation)
-- Async context switch (to query Redis)
-- Sync context switch (back to thread pool)
-- Improperly implemented spin loop without yielding (try_recv() in a tight loop - no PAUSE, no parking, no yielding)
-- HashMap/VecDeque based per-IP queuing with no eviction (memory leak with IPv6 /64 prefixes?)
-- Cross-thread message passing for every single verification
-
-All for a single SHA-256 verification. The "correct" solution is simply act as a timestamp server, send the signed timestamp to the client statelessly, and on challenge response verify the timestamp is within acceptable range, all would be completed in likely fewer CPU cycles than it took to parse and respond to a JSON-HTTP request.
-
-This finding is corroborated by the original developer's [own performance testing](https://github.com/mCaptcha/mCaptcha/issues/37), where their "DDoS protection" demonstration showed that on their i7-7950H:
-- **"Protected" server**: 60-80 RPS sustained with 5+ second response times  
-- **"Unprotected" server**: 150 RPS maximum before collapse, with no significantly higher response time.
-
-The fact that our optimized CPU solver can generate **250 RPS** of valid solutions (i.e. ~1.2 Ghashes/s) while our own hosted server can only handle **650 RPS** of any requests (effectively one single hash per request) demonstrates that the protection margin is minimal - less than 3x between "protected" then the "captcha" itself is completely overwhelmed, for a single commodity CPU.
 
 ## Future Work (i.e. Okay, so what would be a good PoW then?)
 
