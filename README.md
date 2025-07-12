@@ -11,7 +11,6 @@
     - [Can't this be used to attack a real website?](#cant-this-be-used-to-attack-a-real-website)
   - [Benchmark](#benchmark)
     - [Formal Benchmark](#formal-benchmark)
-    - [Official Widget Benchmark](#official-widget-benchmark)
     - [End to End Benchmark](#end-to-end-benchmark)
       - [CPU only](#cpu-only)
     - [Throughput Sanity Check](#throughput-sanity-check)
@@ -95,27 +94,6 @@ Results on AMD Ryzen 9 7950X, 32 cores, when supported, single-hash number comes
 [^2]: NVIDIA RTX 4070 is used
 [^3]: Manivannan, A.; Sethuraman, S. C.; Vimala Sudhakaran, D. P. MCaptcha: Replacing Captchas with Rate Limiters to Improve Security and Accessibility. Communications of the ACM 2024, 67 (10), 70–80. https://doi.org/10.1145/3660628.
 
-### Official Widget Benchmark
-
-WASM benchmark reported by [official benchmark page](https://mcaptcha.github.io/benches/), this is _only_ to illustrate what difficulty numbers are realistic for a website, they are _not_ directly comparable to the Criterion.rs benchmark as they do not have a proper warm-up and statistical testing like Criterion.rs does:
-
-```text
-User Agent: Mozilla/5.0 (X11; Linux x86_64; rv:139.0) Gecko/20100101 Firefox/139.0
-Hardware concurrency: 32
-```
-
-| Difficulty factor | Duration(ms) |
-| ----------------- | ------------ |
-| 500_000           | 238          |
-| 1_000_000         | 224          |
-| 1_500_000         | 223          |
-| 2_000_000         | 223          |
-| 2_500_000         | 845          |
-| 3_000_000         | 844          |
-| 3_500_000         | 2161         |
-| 4_000_000         | 2147         |
-| 4_500_000         | 2145         |
-
 ### End to End Benchmark
 
 A default official docker-compose instance is used for the benchmark target  (the default 33-byte salt was unchanged).
@@ -180,7 +158,6 @@ Fake Proof Control: 81249 requests in 10.0 seconds, 8110.1 rps
 
 All 32 cores of a AMD Ryzen 9 7950X are used for the end-to-end benchmark. It seems we are at the bottleneck of the server being able to record successful attempts, as further performance tuning only show improvement in offline benchmarks.
 
-
 ### Throughput Sanity Check
 
 Just as a sanity check to make sure we are actually performing checks with effective data parallelism and the difference is not just because implementation overhead, here are the numbers from OpenSSL with SHA-NI support:
@@ -194,6 +171,8 @@ sha256          207107.04k   645724.06k  1507281.95k  2220402.22k  2655970.10k  
 The single-threaded throughput for OpenSSL with SHA-NI support is about 12.94 MH/s (828.2MB/s) single block, 42.00 MH/s (2.86 GB/s) continuous, for us it is about 61.82 MH/s (3.96 GB/s) single-hash, 53.760 MH/s (6.88 GB/s) double-hash at difficulty closest to default highest (4e6).
 
 The peak throughput reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous. The multi-threaded rash rate derived from formal benchmark is 1.290 GH/s (95% conf: 1.286, 1.294, 82.56GB/s derived) at default highest difficulty (5e6) for single-hash, 841.94 MH/s (95% conf: 839.89, 843.91, 107.77 GB/s derived) for double-hash case. We have better luck with the more predicable go-away construct at 1.541 GH/s (95% conf: 1.536, 1.546, 98.62GB/s derived).
+
+The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and about 20% of that on Firefox, this is corroborated by Anubis's own accounts in their code comments using 7950X3D empirical testing. Empirical throughput of mCaptcha is unreliable due to lack of official benchmark tools, but should be around 2MH/s.
 
 ## Security Implications
 
