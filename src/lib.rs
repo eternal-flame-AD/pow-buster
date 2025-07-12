@@ -21,6 +21,7 @@ pub mod client;
 #[cfg(feature = "wasm-bindgen")]
 mod wasm_ffi;
 
+/// SHA-256 primitives
 mod sha256;
 
 /// Implementations considered "safe" for production use
@@ -41,6 +42,22 @@ impl<T> core::ops::Deref for Align16<T> {
 }
 
 impl<T> core::ops::DerefMut for Align16<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[repr(align(64))]
+struct Align64<T>(T);
+
+impl<T> core::ops::Deref for Align64<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> core::ops::DerefMut for Align64<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -695,9 +712,7 @@ impl Solver for DoubleBlockSolver16Way {
     #[cfg(target_arch = "x86_64")]
     fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
         let mut partial_state = self.prefix_state;
-        let mut partial_message = [0; 13];
-        partial_message.copy_from_slice(&self.message[..13]);
-        sha256::ingest_message_prefix(&mut partial_state, partial_message);
+        sha256::sha2_arx::<0, 13>(&mut partial_state, self.message[..13].try_into().unwrap());
 
         for prefix_set_index in 0..5 {
             unsafe {
@@ -836,10 +851,8 @@ impl Solver for DoubleBlockSolver16Way {
 
     #[cfg(target_arch = "wasm32")]
     fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
-        let mut partial_state = self.prefix_state;
-        let mut partial_message = [0; 13];
-        partial_message.copy_from_slice(&self.message[..13]);
-        sha256::ingest_message_prefix(&mut partial_state, partial_message);
+        let mut partial_state = Align64(self.prefix_state);
+        sha256::sha2_arx::<0, 13>(&mut partial_state, self.message[..13].try_into().unwrap());
 
         for prefix_set_index in 0..((100 - 10) / 4) {
             unsafe {
@@ -1006,13 +1019,17 @@ impl Solver for GoAwaySolver16Way {
                     let byte_hex: [u8; 2] = prefix[i * 2..][..2].try_into().unwrap();
                     let high_nibble = if (b'a'..=b'f').contains(&byte_hex[0]) {
                         byte_hex[0] - b'a' + 10
-                    } else {
+                    } else if (b'0'..=b'9').contains(&byte_hex[0]) {
                         byte_hex[0] - b'0'
+                    } else {
+                        return None;
                     };
                     let low_nibble = if (b'a'..=b'f').contains(&byte_hex[1]) {
                         byte_hex[1] - b'a' + 10
-                    } else {
+                    } else if (b'0'..=b'9').contains(&byte_hex[1]) {
                         byte_hex[1] - b'0'
+                    } else {
+                        return None;
                     };
                     prefix_fixed_up[i] = (high_nibble << 4) | low_nibble;
                 }
@@ -1035,30 +1052,31 @@ impl Solver for GoAwaySolver16Way {
     }
 
     #[cfg(target_arch = "x86_64")]
+    #[inline(never)]
     fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
         unsafe {
             let lane_id_v = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
 
+            let mut prefix_state = sha256::IV;
+            sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
+
             for high_word in 0..u32::MAX {
-                let mut partial_state = sha256::IV;
-                let mut msg_prefix: [u32; 9] = [0; 9];
-                msg_prefix[..8].copy_from_slice(&self.challenge);
-                msg_prefix[8] = high_word;
-                sha256::ingest_message_prefix(&mut partial_state, msg_prefix);
+                let mut partial_state = Align64(prefix_state);
+                sha256::sha2_arx::<8, _>(&mut partial_state, [high_word]);
 
                 for low_word in (0..u32::MAX).step_by(16) {
                     let mut state =
                         core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
 
                     let mut msg = [
-                        _mm512_set1_epi32(msg_prefix[0] as _),
-                        _mm512_set1_epi32(msg_prefix[1] as _),
-                        _mm512_set1_epi32(msg_prefix[2] as _),
-                        _mm512_set1_epi32(msg_prefix[3] as _),
-                        _mm512_set1_epi32(msg_prefix[4] as _),
-                        _mm512_set1_epi32(msg_prefix[5] as _),
-                        _mm512_set1_epi32(msg_prefix[6] as _),
-                        _mm512_set1_epi32(msg_prefix[7] as _),
+                        _mm512_set1_epi32(self.challenge[0] as _),
+                        _mm512_set1_epi32(self.challenge[1] as _),
+                        _mm512_set1_epi32(self.challenge[2] as _),
+                        _mm512_set1_epi32(self.challenge[3] as _),
+                        _mm512_set1_epi32(self.challenge[4] as _),
+                        _mm512_set1_epi32(self.challenge[5] as _),
+                        _mm512_set1_epi32(self.challenge[6] as _),
+                        _mm512_set1_epi32(self.challenge[7] as _),
                         _mm512_set1_epi32(high_word as _),
                         _mm512_or_epi32(_mm512_set1_epi32(low_word as _), lane_id_v),
                         _mm512_set1_epi32(u32::from_be_bytes([0x80, 0, 0, 0]) as _),
@@ -1109,25 +1127,26 @@ impl Solver for GoAwaySolver16Way {
     fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
         unsafe {
             let lane_id_v = u32x4(0, 1, 2, 3);
+
+            let mut prefix_state = sha256::IV;
+            sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
+
             for high_word in 0..u32::MAX {
-                let mut partial_state = sha256::IV;
-                let mut msg_prefix: [u32; 9] = [0; 9];
-                msg_prefix[..8].copy_from_slice(&self.challenge);
-                msg_prefix[8] = high_word;
-                sha256::ingest_message_prefix(&mut partial_state, msg_prefix);
+                let mut partial_state = prefix_state;
+                sha256::sha2_arx::<8, _>(&mut partial_state, [high_word]);
 
                 for low_word in (0..u32::MAX).step_by(4) {
                     let mut state = core::array::from_fn(|i| u32x4_splat(partial_state[i]));
 
                     let mut msg = [
-                        u32x4_splat(msg_prefix[0]),
-                        u32x4_splat(msg_prefix[1]),
-                        u32x4_splat(msg_prefix[2]),
-                        u32x4_splat(msg_prefix[3]),
-                        u32x4_splat(msg_prefix[4]),
-                        u32x4_splat(msg_prefix[5]),
-                        u32x4_splat(msg_prefix[6]),
-                        u32x4_splat(msg_prefix[7]),
+                        u32x4_splat(self.challenge[0]),
+                        u32x4_splat(self.challenge[1]),
+                        u32x4_splat(self.challenge[2]),
+                        u32x4_splat(self.challenge[3]),
+                        u32x4_splat(self.challenge[4]),
+                        u32x4_splat(self.challenge[5]),
+                        u32x4_splat(self.challenge[6]),
+                        u32x4_splat(self.challenge[7]),
                         u32x4_splat(high_word),
                         v128_or(u32x4_splat(low_word), lane_id_v),
                         u32x4_splat(u32::from_be_bytes([0x80, 0, 0, 0])),
