@@ -135,11 +135,10 @@ fn main() {
             );
             let counter = Arc::new(AtomicU64::new(0));
 
-            let (upwards, target, expected_iters) = if difficulty > 32 {
-                (true, compute_target(difficulty), difficulty)
+            let (target, expected_iters) = if difficulty > 32 {
+                (compute_target(difficulty), difficulty)
             } else {
                 (
-                    false,
                     compute_target_anubis(NonZeroU8::new(difficulty as u8).unwrap()),
                     1 << (4 * (difficulty as u8)),
                 )
@@ -163,9 +162,7 @@ fn main() {
                                     target_bytes[i * 4 + 3],
                                 ])
                             });
-                            let result = solver
-                                .solve_dyn(target_u32s, upwards)
-                                .expect("solver failed");
+                            let result = solver.solve::<true>(target_u32s).expect("solver failed");
                             counter.fetch_add(1, Ordering::Relaxed);
                             core::hint::black_box(result);
                         }
@@ -186,9 +183,7 @@ fn main() {
                                     target_bytes[i * 4 + 3],
                                 ])
                             });
-                            let result = solver
-                                .solve_dyn(target_u32s, upwards)
-                                .expect("solver failed");
+                            let result = solver.solve::<true>(target_u32s).expect("solver failed");
                             counter.fetch_add(1, Ordering::Relaxed);
                             core::hint::black_box(result);
                         }
@@ -222,15 +217,7 @@ fn main() {
             #[cfg(feature = "official")]
             test_official,
         } => {
-            let (upwards, target, expected_iters) = if difficulty > 32 {
-                (true, compute_target(difficulty), difficulty)
-            } else {
-                (
-                    false,
-                    compute_target_anubis(NonZeroU8::new(difficulty as u8).unwrap()),
-                    1 << (4 * (difficulty as u8)),
-                )
-            };
+            let target = compute_target(difficulty);
             let target_bytes = target.to_be_bytes();
             let target_u32s = core::array::from_fn(|i| {
                 u32::from_be_bytes([
@@ -241,51 +228,41 @@ fn main() {
                 ])
             });
             let begin = Instant::now();
-            for i in 0..20u8 {
+            for i in 0..40u8 {
                 // mimick an anubis-like situation
                 let mut prefix_bytes = [0; 32];
                 prefix_bytes[0] = i;
                 let mut solver =
                     SingleBlockSolver16Way::new((), &prefix_bytes).expect("solver is None");
                 let inner_begin = Instant::now();
-                let (nonce, result) = solver
-                    .solve_dyn(target_u32s, upwards)
-                    .expect("solver failed");
-                let mut hex_output = [0u8; 64];
-                simd_mcaptcha::encode_hex(&mut hex_output, result);
+                let (nonce, _) = solver.solve::<true>(target_u32s).expect("solver failed");
                 eprintln!(
-                    "[{}]: in {:.3} seconds ({}, {})",
+                    "[{}]: in {:.3} seconds ({})",
                     core::any::type_name::<SingleBlockSolver16Way>(),
                     inner_begin.elapsed().as_secs_f32(),
                     nonce,
-                    unsafe { std::str::from_utf8_unchecked(&hex_output) }
                 );
             }
             let elapsed = begin.elapsed();
             println!(
                 "[{}]: {} seconds at difficulty {} ({:.2} MH/s)",
                 core::any::type_name::<SingleBlockSolver16Way>(),
-                elapsed.as_secs_f32() / 20.0,
-                expected_iters,
-                expected_iters as f32 / elapsed.as_secs_f32() * 20.0 / 1024.0 / 1024.0
+                elapsed.as_secs_f32() / 40.0,
+                difficulty,
+                difficulty as f32 / elapsed.as_secs_f32() * 40.0 / 1024.0 / 1024.0
             );
             let begin = Instant::now();
             let mut prefix = [0u8; 48];
-            for i in 0..20u8 {
+            for i in 0..40u8 {
                 prefix[0] = i;
                 let mut solver = DoubleBlockSolver16Way::new((), &prefix).expect("solver is None");
                 let inner_begin = Instant::now();
-                let (nonce, result) = solver
-                    .solve_dyn(target_u32s, upwards)
-                    .expect("solver failed");
-                let mut hex_output = [0u8; 64];
-                simd_mcaptcha::encode_hex(&mut hex_output, result);
+                let (nonce, _) = solver.solve::<true>(target_u32s).expect("solver failed");
                 eprintln!(
-                    "[{}]: in {:.3} seconds ({}, {})",
+                    "[{}]: in {:.3} seconds ({})",
                     core::any::type_name::<DoubleBlockSolver16Way>(),
                     inner_begin.elapsed().as_secs_f32(),
                     nonce,
-                    unsafe { std::str::from_utf8_unchecked(&hex_output) }
                 );
             }
             let elapsed = begin.elapsed();
@@ -293,27 +270,22 @@ fn main() {
                 "[{}]: {} seconds at difficulty {} ({:.2} MH/s)",
                 core::any::type_name::<DoubleBlockSolver16Way>(),
                 elapsed.as_secs_f32() / 20.0,
-                expected_iters,
-                expected_iters as f32 / elapsed.as_secs_f32() * 20.0 / 1024.0 / 1024.0
+                difficulty,
+                difficulty as f32 / elapsed.as_secs_f32() * 40.0 / 1024.0 / 1024.0
             );
             let begin = Instant::now();
             let mut total_iters = 0;
-            for i in 0..20u8 {
+            for i in 0..40u8 {
                 let mut prefix = [0u8; 32];
                 prefix[0] = i;
                 let mut solver = GoAwaySolver16Way::new((), &prefix).expect("solver is None");
                 let inner_begin = Instant::now();
-                let (nonce, result) = solver
-                    .solve_dyn(target_u32s, upwards)
-                    .expect("solver failed");
-                let mut hex_output = [0u8; 64];
-                simd_mcaptcha::encode_hex(&mut hex_output, result);
+                let (nonce, _) = solver.solve::<true>(target_u32s).expect("solver failed");
                 eprintln!(
-                    "[{}]: in {:.3} seconds ({}, {})",
+                    "[{}]: in {:.3} seconds ({})",
                     core::any::type_name::<GoAwaySolver16Way>(),
                     inner_begin.elapsed().as_secs_f32(),
-                    nonce,
-                    unsafe { std::str::from_utf8_unchecked(&hex_output) }
+                    nonce
                 );
                 total_iters += nonce;
             }
@@ -321,8 +293,8 @@ fn main() {
             println!(
                 "[{}]: {} seconds at difficulty {} ({:.2} MH/s)",
                 core::any::type_name::<GoAwaySolver16Way>(),
-                elapsed.as_secs_f32() / 20.0,
-                expected_iters,
+                elapsed.as_secs_f32() / 40.0,
+                difficulty,
                 total_iters as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0
             );
             #[cfg(feature = "official")]

@@ -168,7 +168,7 @@ type             16 bytes     64 bytes    256 bytes   1024 bytes   8192 bytes  1
 sha256          207107.04k   645724.06k  1507281.95k  2220402.22k  2655970.10k  2687872.17k
 ```
 
-The single-threaded throughput for OpenSSL with SHA-NI support is about 12.94 MH/s (828.2MB/s) single block, 42.00 MH/s (2.86 GB/s) continuous, for us it is about 61.82 MH/s (3.96 GB/s) single-hash, 53.760 MH/s (6.88 GB/s) double-hash at difficulty closest to default highest (4e6).
+The single-threaded throughput for OpenSSL with SHA-NI support is about 12.94 MH/s (828.2MB/s) single block, 42.00 MH/s (2.86 GB/s) continuous, for us it is about 87.85 MH/s (5.62 GB/s) single-hash, 43.84 MH/s (5.61 GB/s) double-hash at difficulty closest to default highest (4e6). For go-away construct it is 99.49 MH/s (6.37 GB/s). [log](time.txt)
 
 The peak throughput reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous. The multi-threaded rash rate derived from formal benchmark is 1.290 GH/s (95% conf: 1.286, 1.294, 82.56GB/s derived) at default highest difficulty (5e6) for single-hash, 841.94 MH/s (95% conf: 839.89, 843.91, 107.77 GB/s derived) for double-hash case. We have better luck with the more predicable go-away construct at 1.541 GH/s (95% conf: 1.536, 1.546, 98.62GB/s derived).
 
@@ -206,10 +206,9 @@ And obviously, IO-bound task are much "greener" and discriminate much less again
 
 Contributions are welcome, roughly in priority order we want:
 
-1. We need 6 special cases where messages cross block boundaries, it needs some SIMD (particularly register pressure management) expertise but should not be too hard. A macro or typenum generic solution would be best.
-2. General profiling and further optimization.
-3. Would be nice to have a real WebGPU solution that runs side-by-side with the current real Captcha widget.
-4. An AVX-2 solution and corresponding benchmark. (low priority as this isn't really a "product")
+1. General profiling and further optimization.
+2. Would be nice to have a real WebGPU solution that runs side-by-side with the current real Captcha widget.
+3. An AVX-2 solution and corresponding benchmark. (low priority as this isn't really a "product")
 
 ## License
 
