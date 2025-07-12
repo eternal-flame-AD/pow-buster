@@ -443,6 +443,36 @@ pub fn bench_proof_rayon(c: &mut Criterion) {
             criterion::BatchSize::SmallInput,
         )
     });
+
+    group.bench_function("proof_rayon (go away)", |b| {
+        let mut counter = 0u64;
+        b.iter_batched(
+            || {
+                counter += 1;
+                counter * 1024
+            },
+            |start| {
+                use rayon::iter::{IntoParallelIterator, ParallelIterator};
+
+                (0..1024)
+                    .into_par_iter()
+                    .map(|addend| {
+                        use simd_mcaptcha::GoAwaySolver16Way;
+
+                        let mut prefix = [0; 32];
+                        prefix[..8].copy_from_slice(&(addend + start).to_ne_bytes());
+                        let mut solver =
+                            GoAwaySolver16Way::new((), &prefix).expect("solver is None");
+
+                        let start = std::time::Instant::now();
+                        solver.solve::<true>(target_u32s).expect("solver failed");
+                        start.elapsed()
+                    })
+                    .sum::<Duration>()
+            },
+            criterion::BatchSize::SmallInput,
+        )
+    });
 }
 
 criterion_group!(
