@@ -10,7 +10,7 @@
     - [Why not private disclosure?](#why-not-private-disclosure)
     - [Can't this be used to attack a real website?](#cant-this-be-used-to-attack-a-real-website)
   - [Benchmark](#benchmark)
-    - [Formal Benchmark](#formal-benchmark)
+    - [Formal Benchmark (mCaptcha only)](#formal-benchmark-mcaptcha-only)
     - [End to End Benchmark](#end-to-end-benchmark)
       - [CPU only](#cpu-only)
     - [Throughput Sanity Check](#throughput-sanity-check)
@@ -37,17 +37,19 @@ I personally don't like some projects put themselves at the ethical high ground 
 
 We assume you have a relatively modern and powerful platform, specifically:
 
-- Requires AVX-512 CPU or simd128 on WASM. The go-away solver has a SHA-NI fallback implementation. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security".
+- Requires AVX-512 CPU or simd128 on WASM. The go-away solver has a SHA-NI fallback implementation with comparable latency. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard).
 - For Anubis target, this assumes the server is 64-bit (is able to accept a signed 64-bit nonce).
-- Only builds on nightly Rust because avx512 intrinsics are not stable yet, it also currently doesn't build on non-x86_64 targets.
-- This is designed for "low", practical-for-a-website difficulty settings, A $1 - P_{geom}(80e7, 1/\text{difficulty})$ chance of failure for any particular challenge, which for 1e8 (takes about 10 seconds on a browser) is about 0.03%, the GPU solver has much lower failure rate.
-- The WGSL implementation is not optimized for performance, it has some major problems. However I want to keep this a limitation, I do not intend on writing "attack ready" code.
+- Only builds on nightly Rust because avx512 intrinsics are not stable yet.
+- This is designed for "low", practical-for-a-website difficulty settings, A $1 - P_{geom}(80e7, 1/\text{difficulty})$ chance of failure for any particular challenge, which for 1e8 (takes about 10 seconds on a browser for mCaptcha and an eternity for Anubis) is about 0.03%. Go-away solver explores the full solution space.
+- The WGSL implementation is not optimized for performance, it has some major problems. However I want to keep this a limitation, I do not intend on writing "attack ready" code with maximum throughput. I agree large scale spam/scraping attack is a real threat and I don't want to make it worse. This is simply demonstrating I don't believe PoW is the right solution by defeating the system with only commodity CPU.
 
 ## Ethical Disclaimer (i.e. the "How Dare you Publish this?" question)
 
 ### Why not private disclosure? 
 
-This isn't a vulnerability nor anything previously unknown, it's a structural weakness that needs to be assessed. I didn't "skip" or somehow "simplify" any number of SHA-2 rounds, it is a materialized analysis of performance characteristics of the system. Everybody knows PoW system loses protection margin using hardware or software optimizations.
+This isn't a vulnerability nor anything previously unknown, it's a structural weakness that needs to be assessed. I didn't "skip" or somehow "simplify" any number of SHA-2 rounds, it is a materialized analysis of performance characteristics of the system.
+
+This is a structural limitation, PoW is supposed for global consensus, not maintaining a meaningful peer-to-peer "fair" hash rate margin, especially not when compared to commodity hardware. Every academic paper will tell you that PoW system loses protection margin using hardware or software optimizations. I implemented it, that's it.
  
 Website operators deploying a PoW system bear the responsibility to understand the performance characteristics and security implications of their chosen PoW parameters, and whether that protects against their identified threat. __The purpose of this research is to provide the statistical analysis and empirical validation data necessary for informed deployment decisions, including optimized CPU only solutions.__ 
 
@@ -65,13 +67,15 @@ If you _really_ want to attack a real website with mCaptcha, you should:
 
 ## Benchmark
 
+Most of the formal comparison is done against mCaptcha, because they have a WASM solver and cannot be immediately dismissed as "that's JS overhead"/"we will do better later".
+
 TLDR; My extrapolated throughput for each approach, corroborated by empirical and formal benchmarks:
 
 ![Extrapolated throughput](plots/time.png)
 
 Note: To reproduce, you don't need to clone the submodule, it is only used as a pointer for what I used to for benchmarking.
 
-### Formal Benchmark
+### Formal Benchmark (mCaptcha only)
 
 Speedup against official solution, reported by Criterion.rs, single-threaded:
 
@@ -174,7 +178,7 @@ For us it is about 87.85 MH/s (5.62 GB/s) single-hash, 43.84 MH/s (5.61 GB/s) do
 
 The peak throughput reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous. The multi-threaded rash rate derived from formal benchmark is 1.290 GH/s (95% conf: 1.286, 1.294, 82.56GB/s derived) at default highest difficulty (5e6) for single-hash, 841.94 MH/s (95% conf: 839.89, 843.91, 107.77 GB/s derived) for double-hash case. We have better luck with the more predicable go-away construct at 1.541 GH/s (95% conf: 1.536, 1.546, 98.62GB/s derived).
 
-The fallback SHA-NI go-away kernel has 122.23MH/s single-threaded performance, but is slower on multi-threaded benchmarks at ~1.206GH/s (95% conf: 1.202, 1.210, 77.184 GB/s derived)
+The fallback SHA-NI go-away kernel has 122.23MH/s single-threaded performance (this is probably only on Zen4 due to "double pumping", CPUs with 512-bit units should have AVX-512 faster), but is slower on multi-threaded benchmarks at ~1.206GH/s (95% conf: 1.202, 1.210, 77.184 GB/s derived)
 
 The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and about 20% of that on Firefox, this is corroborated by Anubis's own accounts in their code comments using 7950X3D empirical testing. Empirical throughput of mCaptcha is unreliable due to lack of official benchmark tools, but should be around 2MH/s.
 
@@ -192,19 +196,7 @@ These findings suggest that both designing and adopting a PoW-based CAPTCHA syst
 
 ## Future Work (i.e. Okay, so what would be a good PoW then?)
 
-My own early thoughts, all speculative:
-
-The intuitive solution is to use a memory bound (script, Argon2, etc.) function, but I argue that is also a bad idea. For the scale of services that require a PoW Captcha, they likely _cannot_ take 100 RPS of even just validating a memory hard function. They need a semaphore, which is using a DDoS attack vector to substitute another (the endpoint being protected).
-
-The issue with using PoW in a "one-on-one" configuration (unlike cryptocurrency like BTC where it is "one-on-all") is, in fact, even if the function is perfect (an ideal VDF), most services scales sub-linearly (buying twice as much hardware don't serve twice as much users) but you need to adapt to the lowest common denominator for legitimate users, and the attacker would use the fastest and most economic solution possible (which is often superlinear for most intents and purposes when stacking up better hardware and more optimizations), which often is at least one order of magnitude if not more different. So trying to do any kind of pure PoW, for a website, is a losing game.
-
-I think a better avenue to minimize "I got x times faster by doing ..." would be to add fixed constant factor, IO-serialized "mini-PoW" challenges that are easily solved but the challenger needs to submit the results for the first sub-goal to get the input for the next sub-goal (which can be implemented using cheap cryptographic primitives statelessly). 
-
-The benefit of this approach is that it makes it incredibly difficult to get an advantage using more compute-oriented hardware, for example, GPU would never be able to amortize the transfer and dispatch overhead, and with a fixed large constant factor (IO latency), any data parallelism solution would be unlikely to get multiple folds of speedup. Additionally, the server can randomize and withhold the exact number of steps required, which makes building purpose-built solvers (like ASICs) almost impossible. 
-
-On the server end, trying to respond to a particular WebSocket message or HTTP request is incredibly fast (often on the order of 1e5+ RPS), and up to 10 round trips are unlikely to make a significant difference than the capacity of 1 round trip for a traditional pure PoW system.
-
-And obviously, IO-bound task are much "greener" and discriminate much less against less powerful hardware, both are good properties for "the good guys".
+[See FUTURE.md](FUTURE.md)
 
 ## Contributing
 
