@@ -37,8 +37,8 @@ I personally don't like some projects put themselves at the ethical high ground 
 
 We assume you have a relatively modern and powerful platform, specifically:
 
-- Requires AVX-512 CPU, simd128 or a [wgpu](https://wgpu.rs) compatible GPU
-- For Anubis, assumes the server is 64-bit
+- Requires AVX-512 CPU or simd128 on WASM. The go-away solver has a SHA-NI fallback implementation. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security".
+- For Anubis target, this assumes the server is 64-bit (is able to accept a signed 64-bit nonce).
 - Only builds on nightly Rust because avx512 intrinsics are not stable yet, it also currently doesn't build on non-x86_64 targets.
 - This is designed for "low", practical-for-a-website difficulty settings, A $1 - P_{geom}(80e7, 1/\text{difficulty})$ chance of failure for any particular challenge, which for 1e8 (takes about 10 seconds on a browser) is about 0.03%, the GPU solver has much lower failure rate.
 - The WGSL implementation is not optimized for performance, it has some major problems. However I want to keep this a limitation, I do not intend on writing "attack ready" code.
@@ -168,9 +168,13 @@ type             16 bytes     64 bytes    256 bytes   1024 bytes   8192 bytes  1
 sha256          207107.04k   645724.06k  1507281.95k  2220402.22k  2655970.10k  2687872.17k
 ```
 
-The single-threaded throughput for OpenSSL with SHA-NI support is about 12.94 MH/s (828.2MB/s) single block, 42.00 MH/s (2.86 GB/s) continuous, for us it is about 87.85 MH/s (5.62 GB/s) single-hash, 43.84 MH/s (5.61 GB/s) double-hash at difficulty closest to default highest (4e6). For go-away construct it is 99.49 MH/s (6.37 GB/s). [log](time.txt)
+The single-threaded throughput for OpenSSL with SHA-NI support is about 12.94 MH/s (828.2MB/s) single block, 42.00 MH/s (2.86 GB/s) continuous.
+
+For us it is about 87.85 MH/s (5.62 GB/s) single-hash, 43.84 MH/s (5.61 GB/s) double-hash at difficulty closest to default highest (4e6). For go-away construct it is 99.49 MH/s (6.37 GB/s). [log](time.txt)
 
 The peak throughput reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous. The multi-threaded rash rate derived from formal benchmark is 1.290 GH/s (95% conf: 1.286, 1.294, 82.56GB/s derived) at default highest difficulty (5e6) for single-hash, 841.94 MH/s (95% conf: 839.89, 843.91, 107.77 GB/s derived) for double-hash case. We have better luck with the more predicable go-away construct at 1.541 GH/s (95% conf: 1.536, 1.546, 98.62GB/s derived).
+
+The fallback SHA-NI go-away kernel has 122.23MH/s single-threaded performance, but is slower on multi-threaded benchmarks at ~1.206GH/s (95% conf: 1.202, 1.210, 77.184 GB/s derived)
 
 The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and about 20% of that on Firefox, this is corroborated by Anubis's own accounts in their code comments using 7950X3D empirical testing. Empirical throughput of mCaptcha is unreliable due to lack of official benchmark tools, but should be around 2MH/s.
 

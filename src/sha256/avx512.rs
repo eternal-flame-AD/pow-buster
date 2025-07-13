@@ -11,7 +11,7 @@ include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/local_macros.rs"));
 /// Do a 16-way SHA-256 compression function without adding back the saved state, without feedback
 ///
 /// This is useful for making state share registers with a-h when caller has the previous state recalled cheaply from elsewhere after the fact
-pub(crate) fn compress_16block_avx512_without_feedback<const BEGIN_ROUND: usize>(
+pub(crate) fn multiway_arx<const BEGIN_ROUND: usize>(
     state: &mut [__m512i; 8],
     block: &mut [__m512i; 16],
 ) {
@@ -78,7 +78,7 @@ pub(crate) fn compress_16block_avx512_without_feedback<const BEGIN_ROUND: usize>
 ///
 /// You can skip loading the first couple words by passing a non-zero value for `LeadingZeroes`
 #[cfg_attr(all(not(debug_assertions), target_feature = "avx512f"), inline(always))]
-pub(crate) fn compress_16block_avx512_bcst_without_feedback<const LEAD_ZEROES: usize>(
+pub(crate) fn bcst_multiway_arx<const LEAD_ZEROES: usize>(
     state: &mut [__m512i; 8],
     block: &[u32; 64],
 ) {
@@ -134,7 +134,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_compress_block_reference_equivalence() {
+    fn test_digest_block_equivalence() {
         let mut rng = rand::rngs::SmallRng::seed_from_u64(1);
         let mut states: [[u32; 8]; 16] =
             core::array::from_fn(|_| core::array::from_fn(|_| rng.random()));
@@ -183,9 +183,9 @@ mod tests {
         });
 
         for i in 0..16 {
-            compress_block_reference(&mut states[i], &blocks[i]);
+            digest_block(&mut states[i], &blocks[i]);
         }
-        compress_16block_avx512_without_feedback::<0>(&mut state_avx512, &mut block_avx512);
+        multiway_arx::<0>(&mut state_avx512, &mut block_avx512);
         for i in 0..8 {
             state_avx512[i] = unsafe { _mm512_add_epi32(state_avx512[i], states_avx512_save[i]) };
         }
@@ -219,7 +219,7 @@ mod tests {
         let mut state = IV;
 
         // Process the block
-        compress_block_reference(&mut state, &input);
+        digest_block(&mut state, &input);
 
         // Expected output hash for "abc"
         let expected = [
@@ -250,7 +250,7 @@ mod tests {
 
         // Process the blocks
         let mut state = state_avx512;
-        compress_16block_avx512_without_feedback::<0>(&mut state, &mut block_avx512);
+        multiway_arx::<0>(&mut state, &mut block_avx512);
         for i in 0..8 {
             state[i] = unsafe { _mm512_add_epi32(state[i], state_avx512[i]) };
         }
@@ -298,7 +298,7 @@ mod tests {
         let mut state_avx512: [__m512i; 8] =
             core::array::from_fn(|i| unsafe { _mm512_set1_epi32(IV[i] as _) });
 
-        compress_16block_avx512_bcst_without_feedback::<0>(&mut state_avx512, &block);
+        bcst_multiway_arx::<0>(&mut state_avx512, &block);
         for i in 0..8 {
             state_avx512[i] =
                 unsafe { _mm512_add_epi32(state_avx512[i], _mm512_set1_epi32(IV[i] as _)) };

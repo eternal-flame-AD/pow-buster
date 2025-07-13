@@ -230,7 +230,7 @@ fn main() {
             let begin = Instant::now();
             for i in 0..40u8 {
                 // mimick an anubis-like situation
-                let mut prefix_bytes = [0; 32];
+                let mut prefix_bytes = [0; 64];
                 prefix_bytes[0] = i;
                 let mut solver =
                     SingleBlockSolver16Way::new((), &prefix_bytes).expect("solver is None");
@@ -269,7 +269,7 @@ fn main() {
             println!(
                 "[{}]: {} seconds at difficulty {} ({:.2} MH/s)",
                 core::any::type_name::<DoubleBlockSolver16Way>(),
-                elapsed.as_secs_f32() / 20.0,
+                elapsed.as_secs_f32() / 40.0,
                 difficulty,
                 difficulty as f32 / elapsed.as_secs_f32() * 40.0 / 1024.0 / 1024.0
             );

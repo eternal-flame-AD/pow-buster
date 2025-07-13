@@ -24,7 +24,7 @@ impl crate::Solver for SingleBlockSolver {
 
         // first consume all full blocks, this is shared so use scalar reference implementation
         while prefix.len() >= 64 {
-            crate::sha256::compress_block_reference(
+            crate::sha256::digest_block(
                 &mut prefix_state,
                 &core::array::from_fn(|i| {
                     u32::from_be_bytes([
@@ -51,7 +51,7 @@ impl crate::Solver for SingleBlockSolver {
             nonce_addend = nonce_addend.checked_mul(1_000_000_000)?;
             complete_blocks_before += 1;
             prefix = &[];
-            crate::sha256::compress_block_reference(
+            crate::sha256::digest_block(
                 &mut prefix_state,
                 &core::array::from_fn(|i| {
                     u32::from_be_bytes([

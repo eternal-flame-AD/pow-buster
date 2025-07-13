@@ -32,6 +32,7 @@ pub mod safe;
 pub mod wgpu;
 
 #[repr(align(16))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Align16<T>(T);
 
 impl<T> core::ops::Deref for Align16<T> {
@@ -48,6 +49,7 @@ impl<T> core::ops::DerefMut for Align16<T> {
 }
 
 #[repr(align(64))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Align64<T>(T);
 
 impl<T> core::ops::Deref for Align64<T> {
@@ -208,7 +210,7 @@ impl Solver for SingleBlockSolver16Way {
 
         // first consume all full blocks, this is shared so use scalar reference implementation
         while prefix.len() >= 64 {
-            sha256::compress_block_reference(
+            sha256::digest_block(
                 &mut prefix_state,
                 &core::array::from_fn(|i| {
                     u32::from_be_bytes([
@@ -235,7 +237,7 @@ impl Solver for SingleBlockSolver16Way {
             nonce_addend.checked_mul(1_000_000_000)?; // make sure we still have enough headroom
             complete_blocks_before += 1;
             prefix = &[];
-            sha256::compress_block_reference(
+            sha256::digest_block(
                 &mut prefix_state,
                 &core::array::from_fn(|i| {
                     u32::from_be_bytes([
@@ -401,10 +403,7 @@ impl Solver for SingleBlockSolver16Way {
 
                         // do 16-way SHA-256 without feedback so as not to force the compiler to save 8 registers
                         // we already have them in scalar form, this allows more registers to be reused in the next iteration
-                        sha256::avx512::compress_16block_avx512_without_feedback::<DIGIT_WORD_IDX0>(
-                            &mut state,
-                            &mut blocks,
-                        );
+                        sha256::avx512::multiway_arx::<DIGIT_WORD_IDX0>(&mut state, &mut blocks);
 
                         // the target is big endian interpretation of the first 16 bytes of the hash (A-D) >= target
                         // however, the largest 32-bit digits is unlikely to be all ones (otherwise a legitimate challenger needs on average >2^32 attempts)
@@ -498,7 +497,7 @@ impl Solver for SingleBlockSolver16Way {
         // recompute the hash from the beginning
         // this prevents the compiler from having to compute the final B-H registers alive in tight loops
         let mut final_sha_state = self.prefix_state;
-        sha256::compress_block_reference(&mut final_sha_state, &self.message);
+        sha256::digest_block(&mut final_sha_state, &self.message);
 
         Some((nonce + self.nonce_addend, final_sha_state))
     }
@@ -547,10 +546,7 @@ impl Solver for SingleBlockSolver16Way {
                         v128_or(blocks[lane_id_1_word_idx], lane_id_1_or_value);
 
                     let mut state = core::array::from_fn(|i| u32x4_splat(self.prefix_state[i]));
-                    sha256::simd128::compress_16block_simd128_without_feedback::<0>(
-                        &mut state,
-                        &mut blocks,
-                    );
+                    sha256::simd128::multiway_arx::<0>(&mut state, &mut blocks);
 
                     let result_a = u32x4_add(state[0], u32x4_splat(self.prefix_state[0]));
 
@@ -587,7 +583,7 @@ impl Solver for SingleBlockSolver16Way {
                         // recompute the hash from the beginning
                         // this prevents the compiler from having to compute the final B-H registers alive in tight loops
                         let mut final_sha_state = self.prefix_state;
-                        sha256::compress_block_reference(&mut final_sha_state, &self.message);
+                        sha256::digest_block(&mut final_sha_state, &self.message);
 
                         // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
                         return Some((
@@ -636,7 +632,7 @@ impl Solver for DoubleBlockSolver16Way {
 
         // first consume all full blocks, this is shared so use scalar reference implementation
         while prefix.len() >= 64 {
-            sha256::compress_block_reference(
+            sha256::digest_block(
                 &mut prefix_state,
                 &core::array::from_fn(|i| {
                     u32::from_be_bytes([
@@ -769,10 +765,7 @@ impl Solver for DoubleBlockSolver16Way {
                     let mut state =
                         core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
 
-                    sha256::avx512::compress_16block_avx512_without_feedback::<13>(
-                        &mut state,
-                        &mut blocks,
-                    );
+                    sha256::avx512::multiway_arx::<13>(&mut state, &mut blocks);
 
                     // we have to do feedback now
                     state.iter_mut().zip(self.prefix_state.iter()).for_each(
@@ -785,7 +778,7 @@ impl Solver for DoubleBlockSolver16Way {
                     // save only A register for comparison
                     let save_a = state[0];
 
-                    sha256::avx512::compress_16block_avx512_bcst_without_feedback::<14>(
+                    sha256::avx512::bcst_multiway_arx::<14>(
                         &mut state,
                         &self.terminal_message_schedule,
                     );
@@ -820,8 +813,8 @@ impl Solver for DoubleBlockSolver16Way {
                         // recompute the hash from the beginning
                         // this prevents the compiler from having to compute the final B-H registers alive in tight loops
                         let mut final_sha_state = self.prefix_state;
-                        sha256::compress_block_reference(&mut final_sha_state, &self.message);
-                        sha256::compress_block_reference(
+                        sha256::digest_block(&mut final_sha_state, &self.message);
+                        sha256::digest_block(
                             &mut final_sha_state,
                             self.terminal_message_schedule[0..16].try_into().unwrap(),
                         );
@@ -907,10 +900,7 @@ impl Solver for DoubleBlockSolver16Way {
                     ];
 
                     let mut state = core::array::from_fn(|i| u32x4_splat(partial_state[i]));
-                    sha256::simd128::compress_16block_simd128_without_feedback::<13>(
-                        &mut state,
-                        &mut blocks,
-                    );
+                    sha256::simd128::multiway_arx::<13>(&mut state, &mut blocks);
 
                     state.iter_mut().zip(self.prefix_state.iter()).for_each(
                         |(state, prefix_state)| {
@@ -920,7 +910,7 @@ impl Solver for DoubleBlockSolver16Way {
 
                     let save_a = state[0];
 
-                    sha256::simd128::compress_16block_simd128_bcst_without_feedback::<14>(
+                    sha256::simd128::bcst_multiway_arx::<14>(
                         &mut state,
                         &self.terminal_message_schedule,
                     );
@@ -962,8 +952,8 @@ impl Solver for DoubleBlockSolver16Way {
                         // recompute the hash from the beginning
                         // this prevents the compiler from having to compute the final B-H registers alive in tight loops
                         let mut final_sha_state = self.prefix_state;
-                        sha256::compress_block_reference(&mut final_sha_state, &self.message);
-                        sha256::compress_block_reference(
+                        sha256::digest_block(&mut final_sha_state, &self.message);
+                        sha256::digest_block(
                             &mut final_sha_state,
                             self.terminal_message_schedule[0..16].try_into().unwrap(),
                         );
@@ -1051,7 +1041,7 @@ impl Solver for GoAwaySolver16Way {
         })
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
         unsafe {
             let lane_id_v = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
@@ -1085,9 +1075,7 @@ impl Solver for GoAwaySolver16Way {
                         _mm512_setzero_epi32(),
                         _mm512_set1_epi32(Self::MSG_LEN as _),
                     ];
-                    sha256::avx512::compress_16block_avx512_without_feedback::<9>(
-                        &mut state, &mut msg,
-                    );
+                    sha256::avx512::multiway_arx::<9>(&mut state, &mut msg);
                     let result_a =
                         _mm512_add_epi32(state[0], _mm512_set1_epi32(sha256::IV[0] as _));
 
@@ -1109,7 +1097,89 @@ impl Solver for GoAwaySolver16Way {
                         output_msg[15] = Self::MSG_LEN as _;
 
                         let mut final_sha_state = sha256::IV;
-                        sha256::compress_block_reference(&mut final_sha_state, &output_msg);
+                        sha256::digest_block(&mut final_sha_state, &output_msg);
+
+                        return Some((
+                            (high_word as u64) << 32 | final_low_word as u64,
+                            final_sha_state,
+                        ));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    #[cfg(all(
+        target_arch = "x86_64",
+        not(target_feature = "avx512f"),
+        target_feature = "sha"
+    ))]
+    #[inline(never)]
+    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+        unsafe {
+            use core::arch::x86_64::*;
+
+            let mut prefix_state = Align16(sha256::IV);
+            sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
+
+            for high_word in 0..u32::MAX {
+                let prepared_state = sha256::sha_ni::prepare_state(&prefix_state);
+
+                for low_word in (0..u32::MAX).step_by(4) {
+                    let mut states0 = prepared_state;
+                    let mut states1 = prepared_state;
+                    let mut states2 = prepared_state;
+                    let mut states3 = prepared_state;
+
+                    let mut msg0 = Align16([0; 16]);
+                    msg0[0..8].copy_from_slice(&self.challenge);
+                    msg0[8] = high_word;
+                    msg0[9] = low_word;
+                    msg0[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
+                    msg0[15] = Self::MSG_LEN as _;
+
+                    struct LaneIdPlucker;
+                    impl sha256::sha_ni::Plucker for LaneIdPlucker {
+                        #[inline(always)]
+                        fn pluck_word2(&mut self, lane: usize, w: &mut __m128i) {
+                            *w = unsafe { _mm_or_si128(*w, _mm_setr_epi32(0, lane as _, 0, 0)) };
+                        }
+                    }
+
+                    sha256::sha_ni::multiway_arx_abef_cdgh::<2, 4, _>(
+                        [&mut states0, &mut states1, &mut states2, &mut states3],
+                        &msg0,
+                        LaneIdPlucker,
+                    );
+
+                    let result_as = [
+                        (_mm_extract_epi32(states0[0], 3) as u32).wrapping_add(sha256::IV[0]),
+                        (_mm_extract_epi32(states1[0], 3) as u32).wrapping_add(sha256::IV[0]),
+                        (_mm_extract_epi32(states0[1], 3) as u32).wrapping_add(sha256::IV[0]),
+                        (_mm_extract_epi32(states1[1], 3) as u32).wrapping_add(sha256::IV[0]),
+                    ];
+
+                    let success_lane_idx = result_as.iter().position(|x| {
+                        if UPWARDS {
+                            *x > target[0]
+                        } else {
+                            *x < target[0]
+                        }
+                    });
+
+                    if let Some(success_lane_idx) = success_lane_idx {
+                        let mut output_msg: [u32; 16] = [0; 16];
+
+                        let final_low_word = low_word | (success_lane_idx as u32);
+                        output_msg[..8].copy_from_slice(&self.challenge);
+                        output_msg[8] = high_word;
+                        output_msg[9] = final_low_word;
+                        output_msg[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
+                        output_msg[15] = Self::MSG_LEN as _;
+
+                        let mut final_sha_state = sha256::IV;
+                        sha256::digest_block(&mut final_sha_state, &output_msg);
 
                         return Some((
                             (high_word as u64) << 32 | final_low_word as u64,
@@ -1156,9 +1226,7 @@ impl Solver for GoAwaySolver16Way {
                         u32x4_splat(Self::MSG_LEN as _),
                     ];
 
-                    sha256::simd128::compress_16block_simd128_without_feedback::<9>(
-                        &mut state, &mut msg,
-                    );
+                    sha256::simd128::multiway_arx::<9>(&mut state, &mut msg);
                     let result_a = u32x4_add(state[0], u32x4_splat(sha256::IV[0]));
                     let cmp_fn = if UPWARDS { u32x4_le } else { u32x4_ge };
 
@@ -1186,7 +1254,7 @@ impl Solver for GoAwaySolver16Way {
                         output_msg[15] = Self::MSG_LEN as _;
 
                         let mut final_sha_state = sha256::IV;
-                        sha256::compress_block_reference(&mut final_sha_state, &output_msg);
+                        sha256::digest_block(&mut final_sha_state, &output_msg);
 
                         return Some((
                             (high_word as u64) << 32 | final_low_word as u64,

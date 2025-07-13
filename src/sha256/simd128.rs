@@ -9,7 +9,7 @@ fn u32x4_ror(x: v128, shift: u32) -> v128 {
     unsafe { v128_or(u32x4_shr(x, shift), u32x4_shl(x, 32 - shift)) }
 }
 
-pub(crate) fn compress_16block_simd128_without_feedback<const BEGIN_ROUND: usize>(
+pub(crate) fn multiway_arx<const BEGIN_ROUND: usize>(
     state: &mut [v128; 8],
     block: &mut [v128; 16],
 ) {
@@ -72,7 +72,7 @@ pub(crate) fn compress_16block_simd128_without_feedback<const BEGIN_ROUND: usize
     }
 }
 
-pub(crate) fn compress_16block_simd128_bcst_without_feedback<const LEAD_ZEROES: usize>(
+pub(crate) fn bcst_multiway_arx<const LEAD_ZEROES: usize>(
     state: &mut [v128; 8],
     block: &[u32; 64],
 ) {
@@ -163,7 +163,7 @@ mod tests {
 
         // Process the blocks
         let mut state = state_save;
-        compress_16block_simd128_without_feedback::<0>(&mut state, &mut block_simd128);
+        multiway_arx::<0>(&mut state, &mut block_simd128);
         for i in 0..8 {
             state[i] = unsafe { u32x4_add(state_save[i], state[i]) };
         }
