@@ -7,8 +7,6 @@
   - [Why?](#why)
   - [Limitations](#limitations)
   - [Ethical Disclaimer (i.e. the "How Dare you Publish this?" question)](#ethical-disclaimer-ie-the-how-dare-you-publish-this-question)
-    - [Why not private disclosure?](#why-not-private-disclosure)
-    - [Can't this be used to attack a real website?](#cant-this-be-used-to-attack-a-real-website)
   - [Benchmark](#benchmark)
     - [Formal Benchmark (mCaptcha only)](#formal-benchmark-mcaptcha-only)
     - [End to End Benchmark](#end-to-end-benchmark)
@@ -22,7 +20,7 @@
   - [License](#license)
   - [AI Disclaimer](#ai-disclaimer)
 
-A fast, adversarially implemented mCaptcha/Anubis/go-away PoW solver, targeting AVX-512, simd128 and SPIR-V compute (shader in WGSL).
+A fast, adversarially implemented mCaptcha/Anubis/go-away PoW solver, targeting AVX-512/SHA-NI/simd128 with an experimental shader in WGSL. Can be used for computing solutions to these systems without disabling privacy-enhancing features without wasting energy in the browser.
 
 The benchmarks demonstrate a significant performance gap between browser-based JavaScript execution and native implementations (both optimized CPU and unoptimized GPU), suggesting fundamental challenges for PoW-based browser CAPTCHA systems.
 
@@ -41,31 +39,17 @@ We assume you have a relatively modern and powerful platform, specifically:
 
 - Requires AVX-512 or SHA-NI CPU or simd128 on WASM. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard), please use the vendor provided solutions.
 - For Anubis target, this assumes the server is 64-bit (i.e. is able to accept a signed 64-bit nonce).
-- Only builds on nightly Rust because avx512 intrinsics are not stable yet.
-- This is designed for "low", practical-for-a-website difficulty settings, A $1 - P_{geom}(80e7, 1/\text{difficulty})$ chance of failure for any particular challenge, which for 1e8 (takes about 10 seconds on a browser for mCaptcha and an eternity for Anubis) is about 0.03%. Go-away solver explores the full solution space.
-- The WGSL implementation is not optimized for performance, it has some major problems. However I want to keep this a limitation, I do not intend on writing "attack ready" code with maximum throughput. I agree large scale spam/scraping attack is a real threat and I don't want to make it worse. This is simply demonstrating I don't believe PoW is the right solution by defeating the system with only commodity CPU.
+- AVX-512 build is only available on nightly Rust because avx512 intrinsics are not stable yet.
+- This is designed for "low", practical-for-a-website difficulty settings, A $1 - P_{geom}(80e7, 1/\text{difficulty})$ chance of failure for any particular challenge, which for 1e8 (takes about 10 seconds on a browser for mCaptcha and an eternity for Anubis) is about 0.03%. Go-away solver explores the full solution space and guarantees a solution if one exists.
+- The WGSL implementation may not be optimized for performance. I am not good at shader programming.
 
 ## Ethical Disclaimer (i.e. the "How Dare you Publish this?" question)
-
-### Why not private disclosure? 
 
 This isn't a vulnerability nor anything previously unknown, it's a structural weakness that needs to be assessed. I didn't "skip" or somehow "simplify" any number of SHA-2 rounds, it is a materialized analysis of performance characteristics of the system.
 
 This is a structural limitation, PoW is supposed for global consensus, not maintaining a meaningful peer-to-peer "fair" hash rate margin, especially not when compared to commodity hardware. Every academic paper will tell you that PoW system loses protection margin using hardware or software optimizations. I implemented it, that's it.
  
 Website operators deploying a PoW system bear the responsibility to understand the performance characteristics and security implications of their chosen PoW parameters, and whether that protects against their identified threat. __The purpose of this research is to provide the statistical analysis and empirical validation data necessary for informed deployment decisions, including optimized CPU only solutions.__ 
-
-### Can't this be used to attack a real website?
-
-Yes and no, yes, if you can reproduce the benchmark you by definition _has_ to have the capacity to hit an these challenges much faster than a browser, but also no, I don't think it's too complicated to do much better than this PoC, for a particular website. This is an academic demo of optimization space for non-batched "universal" CPU and GPU solutions, it is not economical for wielding a true targeted attack.
-
-If you _really_ want to attack a real website with mCaptcha, you should:
-
-1. Get a GPU (or fancy FPGAs).
-2. Download an off the shelf SHA-2 implementation (C++/DPC++/HDL/SPIR-V/...), whatever is fastest for your platform and most specialized for your target configuration.
-3. Tune the batching to minimize device transfer overhead for normal difficulty settings.
-4. Compile/HLS/Synthesize it to your GPU/FPGA.
-5. Profit.
 
 ## Benchmark
 

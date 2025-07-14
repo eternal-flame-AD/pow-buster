@@ -1,6 +1,10 @@
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![doc = include_str!("../README.md")]
-#![cfg_attr(target_arch = "x86_64", feature(stdarch_x86_avx512))]
+#![allow(stable_features, reason = "not on the 'released' stable channel yet")]
+#![cfg_attr(
+    all(target_arch = "x86_64", target_feature = "avx512f"),
+    feature(stdarch_x86_avx512)
+)]
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
@@ -94,7 +98,7 @@ static LANE_ID_LSB_STR: Align16<[u8; 5 * 16]> =
     Align16(*b"01234567890123456789012345678901234567890123456789012345678901234567890123456789");
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 fn load_lane_id_epi32(src: &Align16<[u8; 5 * 16]>, set_idx: usize) -> __m512i {
     debug_assert!(set_idx < 5);
     unsafe { _mm512_cvtepi8_epi32(_mm_load_si128(src.as_ptr().add(set_idx * 16).cast())) }
@@ -707,7 +711,7 @@ impl Solver for SingleBlockSolver16Way {
                         let mut state2 = prepared_state;
                         let mut state3 = prepared_state;
 
-                        sha256::sha_ni::multiway_arx_abef_cdgh::<{ DIGIT_WORD_IDX0_DIV_4 }, _, _>(
+                        sha256::sha_ni::multiway_arx_abef_cdgh::<{ DIGIT_WORD_IDX0_DIV_4 }, 4, _>(
                             [&mut state0, &mut state1, &mut state2, &mut state3],
                             &mut this.message,
                             LaneIdPlucker::<
@@ -1269,7 +1273,7 @@ impl Solver for DoubleBlockSolver16Way {
 
                     // this isn't really SIMD so we can't really amortize the cost of fetching message schedule
                     // so let's compute it with sha-ni
-                    sha256::sha_ni::multiway_arx_abef_cdgh::<0, _, _>(
+                    sha256::sha_ni::multiway_arx_abef_cdgh::<0, 4, _>(
                         [&mut states0, &mut states1, &mut states2, &mut states3],
                         &terminal_message,
                         (),
