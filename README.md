@@ -24,6 +24,8 @@ A fast, adversarially implemented mCaptcha/Anubis/go-away PoW solver, targeting 
 
 The benchmarks demonstrate a significant performance gap between browser-based JavaScript execution and native implementations (both optimized CPU and unoptimized GPU), suggesting fundamental challenges for PoW-based browser CAPTCHA systems.
 
+[Web demo](https://powbuster.yumechi.jp/)
+
 ## Why?
 
 I personally don't like some projects put themselves at the ethical high ground of "protecting the website" when they:
