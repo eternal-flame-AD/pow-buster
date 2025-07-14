@@ -16,7 +16,7 @@
       - [Multi Threaded](#multi-threaded)
   - [Security Implications](#security-implications)
   - [Future Work (i.e. Okay, so what would be a good PoW then?)](#future-work-ie-okay-so-what-would-be-a-good-pow-then)
-  - [Contributing](#contributing)
+  - [Contributing / Wishlist](#contributing--wishlist)
   - [License](#license)
   - [AI Disclaimer](#ai-disclaimer)
 
@@ -200,10 +200,11 @@ These findings suggest that both designing and adopting a PoW-based CAPTCHA syst
 
 [See FUTURE.md](FUTURE.md)
 
-## Contributing
+## Contributing / Wishlist
 
 Contributions are welcome, roughly in priority order we want:
 
+0. A "Solver-as-a-Service" API so I can use it in a UserScript instead of manually "emulating" a solution.
 1. General profiling and further optimization.
 2. Would be nice to have a real WebGPU solution that runs side-by-side with the current real Captcha widget.
 3. An AVX-2 solution and corresponding benchmark. (low priority as this isn't really a "product")
