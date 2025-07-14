@@ -152,11 +152,11 @@ impl AnubisChallengeDescriptor {
         &self.rules
     }
 
-    pub fn solve(&self) -> Option<(u64, [u32; 8], u32)> {
+    pub fn solve(&self) -> (Option<(u64, [u32; 8])>, u32) {
         self.solve_with_limit(u32::MAX)
     }
 
-    pub fn solve_with_limit(&self, limit: u32) -> Option<(u64, [u32; 8], u32)> {
+    pub fn solve_with_limit(&self, limit: u32) -> (Option<(u64, [u32; 8])>, u32) {
         let target = compute_target_anubis(self.rules.difficulty.try_into().unwrap());
         let target_bytes = target.to_be_bytes();
         let target_u32s = core::array::from_fn(|i| {
@@ -171,7 +171,7 @@ impl AnubisChallengeDescriptor {
         solver.set_limit(limit);
         let result = solver.solve::<false>(target_u32s);
         let attempted_nonces = solver.get_attempted_nonces();
-        result.map(|(nonce, result)| (nonce, result, attempted_nonces))
+        (result, attempted_nonces)
     }
 }
 
@@ -227,12 +227,15 @@ pub async fn solve_anubis(
     if !["fast", "slow"].contains(&challenge.rules.algorithm.as_str()) {
         return Err(SolveError::UnknownAlgorithm(challenge.rules.algorithm));
     }
-    let (nonce, result, attempted_nonces) = if really_solve {
+    let (result, attempted_nonces) = if really_solve {
         // AFAIK as of now there is no way to configure Anubis to require the double solver
-        challenge.solve().ok_or(SolveError::SolverFailed)?
+        let (result, attempted_nonces) = challenge.solve();
+        (result, attempted_nonces)
     } else {
-        (0, [0; 8], 0)
+        (Some((0, [0; 8])), 0)
     };
+
+    let (nonce, result) = result.ok_or(SolveError::SolverFailed)?;
 
     // about 100kH/s
     let plausible_time = attempted_nonces / 1024;

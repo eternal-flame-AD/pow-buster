@@ -85,7 +85,7 @@ enum SolveError {
     Json(#[from] serde_json::Error),
 
     #[error("solver failed or server limit reached")]
-    SolverFailed,
+    SolverFailed { limit: u32, attempted: u32 },
 
     #[error("solver fatal error")]
     SolverFatal,
@@ -103,9 +103,12 @@ impl IntoResponse for SolveError {
         }
         let (code, message) = match self {
             SolveError::Json(e) => (StatusCode::BAD_REQUEST, e.to_string()),
-            SolveError::SolverFailed => (
+            SolveError::SolverFailed { limit, attempted } => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "solver failed".to_string(),
+                format!(
+                    "solver failed or server limit reached: limit: {}, attempted: {}",
+                    limit, attempted
+                ),
             ),
             SolveError::SolverFatal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -148,7 +151,7 @@ async fn solve_anubis(
     let rules = descriptor.rules();
     tracing::info!("solving anubis challenge {:?}", rules);
 
-    let (result, elapsed) = {
+    let ((result, attempted_nonces), elapsed) = {
         let _permit = state.semaphore.acquire().await.unwrap();
 
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -162,7 +165,10 @@ async fn solve_anubis(
         rx.await.map_err(|_| SolveError::SolverFatal)?
     };
 
-    let (nonce, result, attempted_nonces) = result.ok_or(SolveError::SolverFailed)?;
+    let (nonce, result) = result.ok_or(SolveError::SolverFailed {
+        limit: state.limit,
+        attempted: attempted_nonces,
+    })?;
 
     let plausible_time = attempted_nonces / 1024;
 
