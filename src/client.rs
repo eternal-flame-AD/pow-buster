@@ -172,7 +172,7 @@ pub async fn solve_anubis(
         .iter()
         .filter(|(k, _)| k.as_str().eq_ignore_ascii_case("set-cookie"))
         .filter_map(|(_, v)| v.to_str().unwrap().split(';').next())
-        .filter(|v| v.contains("-anubis-cookie-verification="))
+        .filter(|v| v.contains("-anubis-") && !v.ends_with("="))
         .next()
         .ok_or(SolveError::CookieNotFound)?
         .to_string();
@@ -232,7 +232,7 @@ pub async fn solve_anubis(
     }
     write!(
         final_url,
-        "/.within.website/x/cmd/anubis/api/pass-challenge?redir=/&elapsedTime={}&response=",
+        "/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime={}&response=",
         plausible_time
     )
     .unwrap();
@@ -240,7 +240,11 @@ pub async fn solve_anubis(
     final_url
         .write_str(&unsafe { std::str::from_utf8_unchecked(&response_hex) })
         .unwrap();
-    write!(final_url, "&nonce={}", nonce).unwrap();
+    write!(final_url, "&nonce={}&redir=", nonce).unwrap();
+    let redir_encoder = url::form_urlencoded::byte_serialize(base_url.as_bytes());
+    redir_encoder.for_each(|b| {
+        final_url.push_str(b);
+    });
 
     let golden_response = client
         .get(final_url)
@@ -264,7 +268,7 @@ pub async fn solve_anubis(
         .iter()
         .filter(|(k, _)| k.as_str().eq_ignore_ascii_case("set-cookie"))
         .filter_map(|(_, v)| v.to_str().unwrap().split(';').next())
-        .filter(|v| v.contains("-anubis-auth=") && !v.ends_with('='))
+        .filter(|v| v.contains("-anubis-auth") && !v.ends_with('='))
         .next()
         .ok_or(SolveError::GoldenTicketNotFound)?
         .to_string();
