@@ -22,6 +22,9 @@ extern crate alloc;
 /// Web client for solving mCaptcha PoW
 pub mod client;
 
+#[cfg(feature = "server")]
+pub mod server;
+
 #[cfg(feature = "wasm-bindgen")]
 mod wasm_ffi;
 
@@ -217,6 +220,20 @@ pub struct SingleBlockSolver16Way {
     pub(crate) digit_index: usize,
 
     pub(crate) nonce_addend: u64,
+
+    attempted_nonces: u32,
+
+    limit: u32,
+}
+
+impl SingleBlockSolver16Way {
+    pub fn set_limit(&mut self, limit: u32) {
+        self.limit = limit;
+    }
+
+    pub fn get_attempted_nonces(&self) -> u32 {
+        self.attempted_nonces
+    }
 }
 
 impl Solver for SingleBlockSolver16Way {
@@ -324,6 +341,8 @@ impl Solver for SingleBlockSolver16Way {
             prefix_state,
             digit_index,
             nonce_addend,
+            attempted_nonces: 0,
+            limit: u32::MAX,
         })
     }
 
@@ -474,6 +493,11 @@ impl Solver for SingleBlockSolver16Way {
 
                             // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
                             return Some(nonce_prefix as u64 * 10u64.pow(7) + inner_key);
+                        }
+
+                        this.attempted_nonces += 16;
+                        if this.attempted_nonces >= this.limit {
+                            return None;
                         }
                     }
                 }
@@ -755,6 +779,11 @@ impl Solver for SingleBlockSolver16Way {
 
                             return Some(nonce_prefix as u64 * 10u64.pow(7) + inner_key);
                         }
+
+                        this.attempted_nonces += 4;
+                        if this.attempted_nonces >= this.limit {
+                            return None;
+                        }
                     }
                 }
             }
@@ -926,6 +955,11 @@ impl Solver for SingleBlockSolver16Way {
                             final_sha_state,
                         ));
                     }
+
+                    this.attempted_nonces += 4;
+                    if this.attempted_nonces >= this.limit {
+                        return None;
+                    }
                 }
             }
         }
@@ -946,10 +980,22 @@ pub struct DoubleBlockSolver16Way {
     pub(crate) message_length: u64,
 
     pub(crate) nonce_addend: u64,
+
+    attempted_nonces: u32,
+
+    limit: u32,
 }
 
 impl DoubleBlockSolver16Way {
     const DIGIT_IDX: u64 = 54;
+
+    pub fn set_limit(&mut self, limit: u32) {
+        self.limit = limit;
+    }
+
+    pub fn get_attempted_nonces(&self) -> u32 {
+        self.attempted_nonces
+    }
 }
 
 impl Solver for DoubleBlockSolver16Way {
@@ -1030,6 +1076,8 @@ impl Solver for DoubleBlockSolver16Way {
             }),
             nonce_addend,
             message_length,
+            attempted_nonces: 0,
+            limit: u32::MAX,
         })
     }
 
@@ -1164,6 +1212,12 @@ impl Solver for DoubleBlockSolver16Way {
 
                         // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
                         return Some((computed_nonce, *final_sha_state));
+                    }
+
+                    self.attempted_nonces += 16;
+
+                    if self.attempted_nonces >= self.limit {
+                        return None;
                     }
                 }
             }
@@ -1322,6 +1376,12 @@ impl Solver for DoubleBlockSolver16Way {
                         // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
                         return Some((computed_nonce, *final_sha_state));
                     }
+
+                    self.attempted_nonces += 4;
+
+                    if self.attempted_nonces >= self.limit {
+                        return None;
+                    }
                 }
             }
         }
@@ -1459,6 +1519,12 @@ impl Solver for DoubleBlockSolver16Way {
 
                         // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
                         return Some((computed_nonce, final_sha_state));
+                    }
+
+                    self.attempted_nonces += 4;
+
+                    if self.attempted_nonces >= self.limit {
+                        return None;
                     }
                 }
             }

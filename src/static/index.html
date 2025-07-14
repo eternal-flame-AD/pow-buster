@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PoW Buster</title>
+</head>
+
+<body>
+    <form action="/solve/anubis" method="post">
+        <label for="challenge"
+            placeholder='{"rules":{"algorithm":"fast/slow","difficulty":4,"report_as":4},"challenge":"xxxxxx"}'>Paste
+            your challenge here (Anubis only for now), characters before the first `{` and after the last `}` are
+            ignored. No JS required.</label>
+        <textarea id="challenge" name="challenge" rows="10" cols="80"></textarea>
+        <button id="solve" type="submit">Solve</button>
+    </form>
+    <p>NOTICE: this is a public service limited to manageable load and limited concurrency, please do not abuse it. Run
+        it on your own server if you need more resources.</p>
+</body>
+
+</html>

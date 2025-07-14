@@ -138,13 +138,45 @@ pub async fn solve_mcaptcha(
 }
 
 #[derive(serde::Deserialize, Debug)]
-struct AnubisChallengeDescriptor {
+pub struct AnubisChallengeDescriptor {
     challenge: String,
     rules: AnubisRules,
 }
 
+impl AnubisChallengeDescriptor {
+    pub fn estimated_workload(&self) -> u64 {
+        16u64.pow(self.rules.difficulty.try_into().unwrap())
+    }
+
+    pub fn rules(&self) -> &AnubisRules {
+        &self.rules
+    }
+
+    pub fn solve(&self) -> Option<(u64, [u32; 8], u32)> {
+        self.solve_with_limit(u32::MAX)
+    }
+
+    pub fn solve_with_limit(&self, limit: u32) -> Option<(u64, [u32; 8], u32)> {
+        let target = compute_target_anubis(self.rules.difficulty.try_into().unwrap());
+        let target_bytes = target.to_be_bytes();
+        let target_u32s = core::array::from_fn(|i| {
+            u32::from_be_bytes([
+                target_bytes[i * 4],
+                target_bytes[i * 4 + 1],
+                target_bytes[i * 4 + 2],
+                target_bytes[i * 4 + 3],
+            ])
+        });
+        let mut solver = crate::SingleBlockSolver16Way::new((), self.challenge.as_bytes()).unwrap();
+        solver.set_limit(limit);
+        let result = solver.solve::<false>(target_u32s);
+        let attempted_nonces = solver.get_attempted_nonces();
+        result.map(|(nonce, result)| (nonce, result, attempted_nonces))
+    }
+}
+
 #[derive(serde::Deserialize, Debug)]
-struct AnubisRules {
+pub struct AnubisRules {
     algorithm: String,
     difficulty: u8,
 }
@@ -195,29 +227,15 @@ pub async fn solve_anubis(
     if !["fast", "slow"].contains(&challenge.rules.algorithm.as_str()) {
         return Err(SolveError::UnknownAlgorithm(challenge.rules.algorithm));
     }
-    let target = compute_target_anubis(challenge.rules.difficulty.try_into().unwrap());
-    let target_bytes = target.to_be_bytes();
-    let target_u32s = core::array::from_fn(|i| {
-        u32::from_be_bytes([
-            target_bytes[i * 4],
-            target_bytes[i * 4 + 1],
-            target_bytes[i * 4 + 2],
-            target_bytes[i * 4 + 3],
-        ])
-    });
-    let estimated_workload = 16u64.pow(challenge.rules.difficulty as u32);
-    let (nonce, result) = if really_solve {
+    let (nonce, result, attempted_nonces) = if really_solve {
         // AFAIK as of now there is no way to configure Anubis to require the double solver
-        let mut solver =
-            crate::SingleBlockSolver16Way::new((), challenge.challenge.as_bytes()).unwrap();
-        let result = solver.solve::<false>(target_u32s);
-        result.ok_or(SolveError::SolverFailed)?
+        challenge.solve().ok_or(SolveError::SolverFailed)?
     } else {
-        (0, [0; 8])
+        (0, [0; 8], 0)
     };
 
     // about 100kH/s
-    let plausible_time = estimated_workload / 1024;
+    let plausible_time = attempted_nonces / 1024;
 
     let mut response_hex = [0u8; 64];
     crate::encode_hex(&mut response_hex, result);

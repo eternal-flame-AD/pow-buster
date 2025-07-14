@@ -24,6 +24,12 @@ criterion = { version = "0.6", features = ["html_reports"], optional = true }
 thiserror = { version = "2", optional = true }
 scraper = { version = "0.23", optional = true }
 url = { version = "2.5", optional = true }
+axum = { version = "0.8", features = ["http2"], optional = true }
+tower-http = { version = "0.6.6", features = ["catch-panic", "timeout", "trace", "limit"], optional = true }
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"], optional = true }
+tracing = { version = "0.1.41", optional = true }
+axum-extra = { version = "0.10.1", features = ["typed-header"], optional = true }
+headers = { version = "0.4.1", optional = true }
 
 [profile.release]
 opt-level = 3
@@ -55,6 +61,8 @@ rayon = ["std", "dep:rayon"]
 criterion = ["std", "dep:criterion"]
 scraper = ["dep:scraper"]
 url = ["dep:url"]
+server = ["client", "dep:axum", "dep:tower-http", "tracing", "dep:tracing-subscriber", "dep:axum-extra", "dep:headers"]
+tracing = ["dep:tracing"]
 
 [[bin]]
 name = "simd-mcaptcha"

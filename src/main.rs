@@ -67,6 +67,20 @@ enum SubCommand {
         #[clap(long, default_value = "http://localhost:8080/")]
         url: String,
     },
+    #[cfg(feature = "server")]
+    Server {
+        #[clap(long, default_value = "127.0.0.1:8080")]
+        addr: String,
+
+        #[clap(short, long, default_value = "200000000")]
+        limit: u32,
+
+        #[clap(short, long, default_value = "2")]
+        n_workers: usize,
+
+        #[clap(long)]
+        check_origin: Option<String>,
+    },
     Profile {
         #[clap(short, long, default_value = "10000000")]
         difficulty: u32,
@@ -228,6 +242,7 @@ fn main() {
                 ])
             });
             let begin = Instant::now();
+            let mut total_nonces = 0;
             for i in 0..40u8 {
                 // mimick an anubis-like situation
                 let mut prefix_bytes = [0; 64];
@@ -242,6 +257,7 @@ fn main() {
                     inner_begin.elapsed().as_secs_f32(),
                     nonce,
                 );
+                total_nonces += solver.get_attempted_nonces();
             }
             let elapsed = begin.elapsed();
             println!(
@@ -249,9 +265,10 @@ fn main() {
                 core::any::type_name::<SingleBlockSolver16Way>(),
                 elapsed.as_secs_f32() / 40.0,
                 difficulty,
-                difficulty as f32 / elapsed.as_secs_f32() * 40.0 / 1024.0 / 1024.0
+                total_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0
             );
             let begin = Instant::now();
+            let mut total_nonces = 0;
             let mut prefix = [0u8; 48];
             for i in 0..40u8 {
                 prefix[0] = i;
@@ -264,6 +281,7 @@ fn main() {
                     inner_begin.elapsed().as_secs_f32(),
                     nonce,
                 );
+                total_nonces += solver.get_attempted_nonces();
             }
             let elapsed = begin.elapsed();
             println!(
@@ -271,10 +289,10 @@ fn main() {
                 core::any::type_name::<DoubleBlockSolver16Way>(),
                 elapsed.as_secs_f32() / 40.0,
                 difficulty,
-                difficulty as f32 / elapsed.as_secs_f32() * 40.0 / 1024.0 / 1024.0
+                total_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0
             );
             let begin = Instant::now();
-            let mut total_iters = 0;
+            let mut total_nonces = 0;
             for i in 0..40u8 {
                 let mut prefix = [0u8; 32];
                 prefix[0] = i;
@@ -287,7 +305,7 @@ fn main() {
                     inner_begin.elapsed().as_secs_f32(),
                     nonce
                 );
-                total_iters += nonce;
+                total_nonces += nonce;
             }
             let elapsed = begin.elapsed();
             println!(
@@ -295,7 +313,7 @@ fn main() {
                 core::any::type_name::<GoAwaySolver16Way>(),
                 elapsed.as_secs_f32() / 40.0,
                 difficulty,
-                total_iters as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0
+                total_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0
             );
             #[cfg(feature = "official")]
             if test_official {
@@ -540,6 +558,49 @@ fn main() {
                     last_succeeded = succeeded;
                     last_failed = failed;
                 }
+            });
+        }
+        #[cfg(feature = "server")]
+        SubCommand::Server {
+            addr,
+            limit,
+            n_workers,
+            check_origin,
+        } => {
+            use tracing::level_filters::LevelFilter;
+            use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+            tracing_subscriber::registry()
+                .with(tracing_subscriber::fmt::layer().pretty())
+                .with(
+                    tracing_subscriber::EnvFilter::builder()
+                        .with_default_directive(LevelFilter::INFO.into())
+                        .from_env_lossy(),
+                )
+                .init();
+
+            let app = match check_origin {
+                Some(check_origin) => {
+                    let expected_origin = url::Url::parse(&check_origin).unwrap();
+                    simd_mcaptcha::server::AppState::new(n_workers, limit)
+                        .router_with_origin_check(expected_origin)
+                }
+                None => simd_mcaptcha::server::AppState::new(n_workers, limit).router(),
+            };
+
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+
+            runtime.block_on(async move {
+                let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                )
+                .await
+                .unwrap();
             });
         }
     }
