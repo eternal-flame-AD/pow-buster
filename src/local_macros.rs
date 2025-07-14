@@ -1,4 +1,14 @@
 #[rustfmt::skip]
+macro_rules! repeat16 {
+    ($i:ident, $b:block) => {
+        let $i = 0; $b; let $i = 1; $b; let $i = 2; $b; let $i = 3; $b;
+        let $i = 4; $b; let $i = 5; $b; let $i = 6; $b; let $i = 7; $b;
+        let $i = 8; $b; let $i = 9; $b; let $i = 10; $b; let $i = 11; $b;
+        let $i = 12; $b; let $i = 13; $b; let $i = 14; $b; let $i = 15; $b;
+    };
+}
+
+#[rustfmt::skip]
 macro_rules! repeat64 {
     ($i:ident, $b:block) => {
         let $i = 0; $b; let $i = 1; $b; let $i = 2; $b; let $i = 3; $b;

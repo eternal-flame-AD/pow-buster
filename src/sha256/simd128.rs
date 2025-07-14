@@ -72,19 +72,15 @@ pub(crate) fn multiway_arx<const BEGIN_ROUND: usize>(
     }
 }
 
-pub(crate) fn bcst_multiway_arx<const LEAD_ZEROES: usize>(
-    state: &mut [v128; 8],
-    block: &[u32; 64],
-) {
+pub(crate) fn bcst_multiway_arx<const LEAD_ZEROES: usize>(state: &mut [v128; 8], w_k: &[u32; 64]) {
     unsafe {
         let [a, b, c, d, e, f, g, h] = &mut *state;
 
         repeat64!(i, {
             let w = if i < LEAD_ZEROES {
-                debug_assert_eq!(block[i], 0, "block[{i}] is not zero");
-                u32x4_splat(0)
+                u32x4_splat(K32[i] as _)
             } else {
-                u32x4_splat(block[i] as _)
+                u32x4_splat(w_k[i] as _)
             };
             let s1 = v128_xor(
                 v128_xor(u32x4_ror(*e, 6), u32x4_ror(*e, 11)),
@@ -93,7 +89,6 @@ pub(crate) fn bcst_multiway_arx<const LEAD_ZEROES: usize>(
             let ch = v128_xor(v128_and(*e, *f), v128_andnot(*g, *e));
             let mut t1 = s1;
             t1 = u32x4_add(t1, ch);
-            t1 = u32x4_add(t1, u32x4_splat(K32[i] as _));
             t1 = u32x4_add(t1, w);
             t1 = u32x4_add(t1, *h);
 

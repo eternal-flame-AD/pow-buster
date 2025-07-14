@@ -14,6 +14,8 @@
     - [End to End Benchmark](#end-to-end-benchmark)
       - [CPU only](#cpu-only)
     - [Throughput Sanity Check](#throughput-sanity-check)
+      - [Single Threaded](#single-threaded)
+      - [Multi Threaded](#multi-threaded)
   - [Security Implications](#security-implications)
   - [Future Work (i.e. Okay, so what would be a good PoW then?)](#future-work-ie-okay-so-what-would-be-a-good-pow-then)
   - [Contributing](#contributing)
@@ -37,8 +39,8 @@ I personally don't like some projects put themselves at the ethical high ground 
 
 We assume you have a relatively modern and powerful platform, specifically:
 
-- Requires AVX-512 CPU or simd128 on WASM. The go-away solver has a SHA-NI fallback implementation with comparable latency. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard).
-- For Anubis target, this assumes the server is 64-bit (is able to accept a signed 64-bit nonce).
+- Requires AVX-512 or SHA-NI CPU or simd128 on WASM. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard), please use the vendor provided solutions.
+- For Anubis target, this assumes the server is 64-bit (i.e. is able to accept a signed 64-bit nonce).
 - Only builds on nightly Rust because avx512 intrinsics are not stable yet.
 - This is designed for "low", practical-for-a-website difficulty settings, A $1 - P_{geom}(80e7, 1/\text{difficulty})$ chance of failure for any particular challenge, which for 1e8 (takes about 10 seconds on a browser for mCaptcha and an eternity for Anubis) is about 0.03%. Go-away solver explores the full solution space.
 - The WGSL implementation is not optimized for performance, it has some major problems. However I want to keep this a limitation, I do not intend on writing "attack ready" code with maximum throughput. I agree large scale spam/scraping attack is a real threat and I don't want to make it worse. This is simply demonstrating I don't believe PoW is the right solution by defeating the system with only commodity CPU.
@@ -166,6 +168,10 @@ All 32 cores of a AMD Ryzen 9 7950X are used for the end-to-end benchmark. It se
 
 Just as a sanity check to make sure we are actually performing checks with effective data parallelism and the difference is not just because implementation overhead, here are the numbers from OpenSSL with SHA-NI support:
 
+The program were built with `-Ctarget-feature=+avx512f` and `-Ctarget-feature=+sha,+avx` respectively and ran on 7950X with mitigations enabled.
+
+#### Single Threaded
+
 ```sh
 > openssl speed sha256
 type             16 bytes     64 bytes    256 bytes   1024 bytes   8192 bytes  16384 bytes
@@ -174,13 +180,25 @@ sha256          207107.04k   645724.06k  1507281.95k  2220402.22k  2655970.10k  
 
 The single-threaded throughput for OpenSSL with SHA-NI support is about 12.94 MH/s (828.2MB/s) single block, 42.00 MH/s (2.86 GB/s) continuous.
 
-For us it is about 87.85 MH/s (5.62 GB/s) single-hash, 43.84 MH/s (5.61 GB/s) double-hash at difficulty closest to default highest (4e6). For go-away construct it is 99.49 MH/s (6.37 GB/s). [log](time.txt)
+For us we have single thread:
 
-The peak throughput reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous. The multi-threaded rash rate derived from formal benchmark is 1.290 GH/s (95% conf: 1.286, 1.294, 82.56GB/s derived) at default highest difficulty (5e6) for single-hash, 841.94 MH/s (95% conf: 839.89, 843.91, 107.77 GB/s derived) for double-hash case. We have better luck with the more predicable go-away construct at 1.541 GH/s (95% conf: 1.536, 1.546, 98.62GB/s derived).
+| Workload                         | AVX-512 [log](time.txt) | SHA-NI [log](time_sha-ni.txt) |
+| -------------------------------- | ----------------------- | ----------------------------- |
+| SingleBlock/Anubis               | 76.86 MH/s              | 51.71 MH/s                    |
+| DoubleBlock (mCaptcha edge case) | 44.47 MH/s              | 48.78 MH/s                    |
+| go-away (16 bytes)               | 98.33 MH/s              | 79.46 MH/s                    |
 
-The fallback SHA-NI go-away kernel has 122.23MH/s single-threaded performance (this is probably only on Zen4 due to "double pumping", CPUs with 512-bit units should have AVX-512 faster), but is slower on multi-threaded benchmarks at ~1.206GH/s (95% conf: 1.202, 1.210, 77.184 GB/s derived)
+The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and about 20% of that on Firefox, this is corroborated by Anubis's own accounts in their code comments using 7950X3D empirical testing. Empirical throughput of WASM-based mCaptcha is unreliable due to lack of official benchmark tools, but should be around 2-4 MH/s, corroborated with the author's CACM paper.
 
-The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and about 20% of that on Firefox, this is corroborated by Anubis's own accounts in their code comments using 7950X3D empirical testing. Empirical throughput of mCaptcha is unreliable due to lack of official benchmark tools, but should be around 2MH/s.
+#### Multi Threaded
+
+The peak throughput reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous.
+
+| Workload                         | AVX-512     | SHA-NI      |
+| -------------------------------- | ----------- | ----------- |
+| SingleBlock/Anubis               | 1.290 GH/s  | 1.143 GH/s  |
+| DoubleBlock (mCaptcha edge case) | 841.94 MH/s | 827.74 MH/s |
+| go-away (16 bytes)               | 1.541 GH/s  | 1.291 GH/s  |
 
 ## Security Implications
 

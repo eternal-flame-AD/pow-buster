@@ -3,6 +3,28 @@
 use core::arch::x86_64::*;
 
 use crate::Align16;
+use crate::sha256::K32;
+
+include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/local_macros.rs"));
+
+const K32X4: [[u32; 4]; 16] = [
+    [K32[3], K32[2], K32[1], K32[0]],
+    [K32[7], K32[6], K32[5], K32[4]],
+    [K32[11], K32[10], K32[9], K32[8]],
+    [K32[15], K32[14], K32[13], K32[12]],
+    [K32[19], K32[18], K32[17], K32[16]],
+    [K32[23], K32[22], K32[21], K32[20]],
+    [K32[27], K32[26], K32[25], K32[24]],
+    [K32[31], K32[30], K32[29], K32[28]],
+    [K32[35], K32[34], K32[33], K32[32]],
+    [K32[39], K32[38], K32[37], K32[36]],
+    [K32[43], K32[42], K32[41], K32[40]],
+    [K32[47], K32[46], K32[45], K32[44]],
+    [K32[51], K32[50], K32[49], K32[48]],
+    [K32[55], K32[54], K32[53], K32[52]],
+    [K32[59], K32[58], K32[57], K32[56]],
+    [K32[63], K32[62], K32[61], K32[60]],
+];
 
 #[inline(always)]
 unsafe fn schedule(v0: __m128i, v1: __m128i, v2: __m128i, v3: __m128i) -> __m128i {
@@ -32,10 +54,10 @@ pub(crate) fn prepare_state(state: &Align16<[u32; 8]>) -> [__m128i; 2] {
 
 #[allow(unused_variables)]
 pub trait Plucker {
-    fn pluck_word0(&mut self, lane: usize, w: &mut __m128i) {}
-    fn pluck_word1(&mut self, lane: usize, w: &mut __m128i) {}
-    fn pluck_word2(&mut self, lane: usize, w: &mut __m128i) {}
-    fn pluck_word3(&mut self, lane: usize, w: &mut __m128i) {}
+    fn pluck_qword0(&mut self, lane: usize, w: &mut __m128i) {}
+    fn pluck_qword1(&mut self, lane: usize, w: &mut __m128i) {}
+    fn pluck_qword2(&mut self, lane: usize, w: &mut __m128i) {}
+    fn pluck_qword3(&mut self, lane: usize, w: &mut __m128i) {}
 }
 
 impl Plucker for () {}
@@ -54,7 +76,7 @@ pub(crate) fn multiway_arx_abef_cdgh<
     unsafe {
         macro_rules! rounds4 {
             ($abef:ident, $cdgh:ident, $rest:expr, $i:expr) => {{
-                let k = super::K32X4[$i];
+                let k = K32X4[$i];
                 let kv = _mm_set_epi32(k[0] as i32, k[1] as i32, k[2] as i32, k[3] as i32);
                 let t1: [_; LANES] = core::array::from_fn(|i| _mm_add_epi32($rest[i], kv));
                 $cdgh = core::array::from_fn(|i| _mm_sha256rnds2_epu32($cdgh[i], $abef[i], t1[i]));
@@ -77,29 +99,29 @@ pub(crate) fn multiway_arx_abef_cdgh<
         let mut abef: [_; LANES] = core::array::from_fn(|i| state[i][0]);
         let mut cdgh: [_; LANES] = core::array::from_fn(|i| state[i][1]);
 
-        let w0_t = _mm_load_epi32(block_template.as_ptr().cast::<u32>().add(0).cast());
-        let w1_t = _mm_load_epi32(block_template.as_ptr().cast::<u32>().add(4).cast());
-        let w2_t = _mm_load_epi32(block_template.as_ptr().cast::<u32>().add(8).cast());
-        let w3_t = _mm_load_epi32(block_template.as_ptr().cast::<u32>().add(12).cast());
+        let w0_t = _mm_load_si128(block_template.as_ptr().cast::<u32>().add(0).cast());
+        let w1_t = _mm_load_si128(block_template.as_ptr().cast::<u32>().add(4).cast());
+        let w2_t = _mm_load_si128(block_template.as_ptr().cast::<u32>().add(8).cast());
+        let w3_t = _mm_load_si128(block_template.as_ptr().cast::<u32>().add(12).cast());
 
         let mut w0: [_; LANES] = core::array::from_fn(|i| {
             let mut w = w0_t;
-            plucker.pluck_word0(i, &mut w);
+            plucker.pluck_qword0(i, &mut w);
             w
         });
         let mut w1: [_; LANES] = core::array::from_fn(|i| {
             let mut w = w1_t;
-            plucker.pluck_word1(i, &mut w);
+            plucker.pluck_qword1(i, &mut w);
             w
         });
         let mut w2: [_; LANES] = core::array::from_fn(|i| {
             let mut w = w2_t;
-            plucker.pluck_word2(i, &mut w);
+            plucker.pluck_qword2(i, &mut w);
             w
         });
         let mut w3: [_; LANES] = core::array::from_fn(|i| {
             let mut w = w3_t;
-            plucker.pluck_word3(i, &mut w);
+            plucker.pluck_qword3(i, &mut w);
             w
         });
         let mut w4: [_; LANES] = core::array::from_fn(|i| schedule(w0[i], w1[i], w2[i], w3[i]));
@@ -186,7 +208,6 @@ pub(crate) fn multiway_arx_abef_cdgh<
         });
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,7 +1,7 @@
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 pub mod avx512;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "sha"))]
 pub mod sha_ni;
 
 #[cfg(target_arch = "wasm32")]
@@ -25,25 +25,6 @@ const K32: [u32; 64] = [
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
-const K32X4: [[u32; 4]; 16] = [
-    [K32[3], K32[2], K32[1], K32[0]],
-    [K32[7], K32[6], K32[5], K32[4]],
-    [K32[11], K32[10], K32[9], K32[8]],
-    [K32[15], K32[14], K32[13], K32[12]],
-    [K32[19], K32[18], K32[17], K32[16]],
-    [K32[23], K32[22], K32[21], K32[20]],
-    [K32[27], K32[26], K32[25], K32[24]],
-    [K32[31], K32[30], K32[29], K32[28]],
-    [K32[35], K32[34], K32[33], K32[32]],
-    [K32[39], K32[38], K32[37], K32[36]],
-    [K32[43], K32[42], K32[41], K32[40]],
-    [K32[47], K32[46], K32[45], K32[44]],
-    [K32[51], K32[50], K32[49], K32[48]],
-    [K32[55], K32[54], K32[53], K32[52]],
-    [K32[59], K32[58], K32[57], K32[56]],
-    [K32[63], K32[62], K32[61], K32[60]],
-];
-
 /// pre-compute the message schedule for a single block
 ///
 /// The first 16 words are the input block, the rest are computed from them
@@ -60,6 +41,15 @@ pub(crate) const fn do_message_schedule(w: &mut [u32; 64]) {
             w[i] = w[i].wrapping_add(s1);
             w[i] = w[i].wrapping_add(w[i - 16]);
         }
+    });
+}
+
+/// pre-compute the message schedule for a single block, adding corresponding round constants
+#[inline(always)]
+pub(crate) const fn do_message_schedule_k_w(w: &mut [u32; 64]) {
+    do_message_schedule(w);
+    repeat64!(i, {
+        w[i] = w[i].wrapping_add(K32[i]);
     });
 }
 

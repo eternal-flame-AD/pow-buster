@@ -80,17 +80,16 @@ pub(crate) fn multiway_arx<const BEGIN_ROUND: usize>(
 #[cfg_attr(all(not(debug_assertions), target_feature = "avx512f"), inline(always))]
 pub(crate) fn bcst_multiway_arx<const LEAD_ZEROES: usize>(
     state: &mut [__m512i; 8],
-    block: &[u32; 64],
+    w_k: &[u32; 64],
 ) {
     unsafe {
         let [a, b, c, d, e, f, g, h] = &mut *state;
 
         repeat64!(i, {
             let w = if i < LEAD_ZEROES {
-                debug_assert_eq!(block[i], 0, "block[{i}] is not zero");
-                _mm512_setzero_si512()
+                _mm512_set1_epi32(K32[i] as _)
             } else {
-                _mm512_set1_epi32(block[i] as _)
+                _mm512_set1_epi32(w_k[i] as _)
             };
 
             let s1 = _mm512_xor_si512(
@@ -100,7 +99,6 @@ pub(crate) fn bcst_multiway_arx<const LEAD_ZEROES: usize>(
             let ch = _mm512_xor_si512(_mm512_and_si512(*e, *f), _mm512_andnot_si512(*e, *g));
             let mut t1 = s1;
             t1 = _mm512_add_epi32(t1, ch);
-            t1 = _mm512_add_epi32(t1, _mm512_set1_epi32(K32[i] as _));
             t1 = _mm512_add_epi32(t1, w);
             t1 = _mm512_add_epi32(t1, *h);
 
@@ -294,7 +292,7 @@ mod tests {
         let mut block = [0; 64];
         block[0] = u32::from_be_bytes([0x61, 0x62, 0x63, 0x80]);
         block[15] = u32::from_be_bytes([0x00, 0x00, 0x00, 3 * 8]);
-        do_message_schedule(&mut block);
+        do_message_schedule_k_w(&mut block);
         let mut state_avx512: [__m512i; 8] =
             core::array::from_fn(|i| unsafe { _mm512_set1_epi32(IV[i] as _) });
 
