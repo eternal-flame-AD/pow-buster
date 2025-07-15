@@ -40,7 +40,7 @@ impl FromStr for ApiType {
 
 #[derive(Subcommand)]
 enum SubCommand {
-    #[cfg(feature = "client")]
+    #[cfg(feature = "live-throughput-test")]
     Live {
         #[clap(long, default_value = "mcaptcha")]
         api_type: String,
@@ -378,7 +378,7 @@ fn main() {
                 println!("set-cookie: {}", response);
             });
         }
-        #[cfg(feature = "client")]
+        #[cfg(feature = "live-throughput-test")]
         SubCommand::Live {
             api_type,
             host,

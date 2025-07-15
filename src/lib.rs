@@ -197,6 +197,7 @@ pub trait Solver {
     fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])>;
 
     // A dynamic dispatching wrapper for solve
+    #[inline(never)]
     fn solve_dyn(&mut self, target: [u32; 4], upwards: bool) -> Option<(u64, [u32; 8])> {
         if upwards {
             self.solve::<true>(target)
@@ -347,6 +348,7 @@ impl Solver for SingleBlockSolver16Way {
     }
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    #[inline(never)]
     fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
         // the official default difficulty is 5e6, so we design for 1e8
         // and there should almost always be a valid solution within our supported solution space
@@ -561,6 +563,7 @@ impl Solver for SingleBlockSolver16Way {
         not(target_feature = "avx512f"),
         target_feature = "sha"
     ))]
+    #[inline(never)]
     fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
         let lane_id_0_word_idx = self.digit_index / 4;
         let lane_id_1_word_idx = (self.digit_index + 1) / 4;

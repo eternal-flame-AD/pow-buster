@@ -13,7 +13,10 @@ use axum::{
 use reqwest::StatusCode;
 use tokio::sync::Semaphore;
 
-use crate::client::AnubisChallengeDescriptor;
+use crate::{
+    Align16,
+    client::{AnubisChallengeDescriptor, GoAwayConfig},
+};
 
 async fn index() -> Html<&'static str> {
     Html(include_str!("static/index.html"))
@@ -44,7 +47,7 @@ impl AppState {
     pub fn router(&self) -> Router {
         Router::new()
             .route("/", get(index))
-            .route("/solve/anubis", post(solve_anubis))
+            .route("/solve", post(solve_generic))
             .layer(tower_http::limit::RequestBodyLimitLayer::new(128 << 10))
             .layer(
                 tower_http::trace::TraceLayer::new_for_http()
@@ -75,7 +78,7 @@ impl AppState {
 }
 
 #[derive(serde::Deserialize)]
-struct SolveAnubisForm {
+struct SolveForm {
     challenge: String,
 }
 
@@ -92,6 +95,12 @@ enum SolveError {
 
     #[error("unexpected origin")]
     UnexpectedOrigin,
+
+    #[error("invalid challenge")]
+    InvalidChallenge,
+
+    #[error("unexpected challenge format")]
+    UnexpectedChallengeFormat,
 }
 
 impl IntoResponse for SolveError {
@@ -99,29 +108,46 @@ impl IntoResponse for SolveError {
         #[derive(serde::Serialize)]
         struct Wrapper {
             code: u16,
+            #[serde(rename = "type")]
+            ty: &'static str,
             message: String,
         }
-        let (code, message) = match self {
-            SolveError::Json(e) => (StatusCode::BAD_REQUEST, e.to_string()),
+        let (code, message, ty) = match self {
+            SolveError::Json(e) => (StatusCode::BAD_REQUEST, e.to_string(), "json"),
             SolveError::SolverFailed { limit, attempted } => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!(
                     "solver failed or server limit reached: limit: {}, attempted: {}",
                     limit, attempted
                 ),
+                "solver_failed",
             ),
             SolveError::SolverFatal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "solver fatal error".to_string(),
+                "solver_fatal",
             ),
-            SolveError::UnexpectedOrigin => {
-                (StatusCode::FORBIDDEN, "unexpected origin".to_string())
-            }
+            SolveError::UnexpectedOrigin => (
+                StatusCode::FORBIDDEN,
+                "unexpected origin".to_string(),
+                "unexpected_origin",
+            ),
+            SolveError::InvalidChallenge => (
+                StatusCode::BAD_REQUEST,
+                "invalid challenge".to_string(),
+                "invalid_challenge",
+            ),
+            SolveError::UnexpectedChallengeFormat => (
+                StatusCode::NOT_IMPLEMENTED,
+                "unexpected challenge format".to_string(),
+                "unexpected_challenge_format",
+            ),
         };
         (
             code,
             Json(Wrapper {
                 code: code.as_u16(),
+                ty,
                 message,
             }),
         )
@@ -129,12 +155,11 @@ impl IntoResponse for SolveError {
     }
 }
 
-#[tracing::instrument(skip(state, form), name = "solve_anubis")]
-async fn solve_anubis(
+async fn solve_generic(
     remote_addr: axum::extract::ConnectInfo<std::net::SocketAddr>,
     x_forwarded_for: axum_extra::TypedHeader<XForwardedFor>,
-    State(state): State<AppState>,
-    form: Form<SolveAnubisForm>,
+    state: State<AppState>,
+    form: Form<SolveForm>,
 ) -> Result<String, SolveError> {
     let form = form.0;
 
@@ -146,8 +171,136 @@ async fn solve_anubis(
         .unwrap_or(form.challenge.len());
     let challenge = &form.challenge[left_strip..right_strip];
 
-    let descriptor: AnubisChallengeDescriptor = serde_json::from_str(challenge)?;
+    if let Ok(config) = serde_json::from_str(challenge) {
+        return solve_goaway(remote_addr, x_forwarded_for, state, config).await;
+    }
 
+    if let Ok(config) = serde_json::from_str(challenge) {
+        return solve_anubis(remote_addr, x_forwarded_for, state, config).await;
+    }
+
+    Err(SolveError::InvalidChallenge)
+}
+
+#[tracing::instrument(skip(state, config), name = "solve_goaway")]
+
+async fn solve_goaway(
+    remote_addr: axum::extract::ConnectInfo<std::net::SocketAddr>,
+    x_forwarded_for: axum_extra::TypedHeader<XForwardedFor>,
+    State(state): State<AppState>,
+    config: GoAwayConfig,
+) -> Result<String, SolveError> {
+    tracing::info!("solving goaway challenge {:?}", config);
+
+    if config.challenge().len() != 64 {
+        return Err(SolveError::UnexpectedChallengeFormat);
+    }
+
+    let mut goaway_token = Align16([b'0'; 64 + 8 * 2]);
+    goaway_token[..64].copy_from_slice(config.challenge().as_bytes());
+
+    let (result, elapsed) = {
+        let _permit = state.semaphore.acquire().await.unwrap();
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state.pool.spawn(move || {
+            let start = std::time::Instant::now();
+            let result = config.solve();
+            let elapsed = start.elapsed();
+            tx.send((result, elapsed)).ok();
+        });
+
+        rx.await.map_err(|_| SolveError::SolverFatal)?
+    };
+
+    let (nonce, result) = result.ok_or(SolveError::SolverFailed {
+        limit: state.limit,
+        attempted: u32::MAX,
+    })?;
+
+    let plausible_time = nonce / 1024;
+
+    let nonce_bytes = nonce.to_be_bytes();
+    for i in 0..8 {
+        let high_nibble = nonce_bytes[i] >> 4;
+        let low_nibble = nonce_bytes[i] & 0x0f;
+        goaway_token[64 + i * 2] = if high_nibble < 10 {
+            b'0' + high_nibble
+        } else {
+            b'a' + high_nibble - 10
+        };
+        goaway_token[64 + i * 2 + 1] = if low_nibble < 10 {
+            b'0' + low_nibble
+        } else {
+            b'a' + low_nibble - 10
+        };
+    }
+
+    let mut goaway_id = Align16([0; 32]);
+    // this doesn't do anything, just make something up for the id
+    for i in 0..4 {
+        let result_bytes: [u8; 4] = result[i].to_ne_bytes();
+        for j in 0..4 {
+            let high_nibble = result_bytes[j] >> 4;
+            let low_nibble = result_bytes[j] & 0x0f;
+            goaway_id[(4 * i + j) * 2] = if high_nibble < 10 {
+                b'0' + high_nibble
+            } else {
+                b'a' + high_nibble - 10
+            };
+            goaway_id[(4 * i + j) * 2 + 1] = if low_nibble < 10 {
+                b'0' + low_nibble
+            } else {
+                b'a' + low_nibble - 10
+            };
+        }
+    }
+
+    let mut final_url = "/.well-known/.git.gammaspectra.live/git/go-away/cmd/go-away/challenge/js-pow-sha256/verify-challenge".to_string();
+    write!(
+        final_url,
+        "?__goaway_ElapsedTime={}&__goaway_challenge=js-pow-sha256&__goaway_token={}&__goaway_id={}&__goaway_redirect=",
+        plausible_time,
+        unsafe { std::str::from_utf8_unchecked(&goaway_token[..]) },
+        unsafe { std::str::from_utf8_unchecked(&goaway_id[..]) },
+    )
+    .unwrap();
+
+    let hash_rate_mhs = nonce as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0;
+    let limit_used = nonce as f32 / state.limit as f32 * 100.0;
+
+    tracing::info!(
+        "solver completed in {}ms; nonce: {}; hash rate: {:.2} MH/s; limit used: {:.2}%",
+        elapsed.as_millis(),
+        nonce,
+        hash_rate_mhs,
+        limit_used,
+    );
+
+    let mut output = format!(
+        "# elapsed time: {}ms; attempted nonces: {}; {:.2} MH/s; {:.2}% limit used",
+        elapsed.as_millis(),
+        nonce,
+        hash_rate_mhs,
+        limit_used
+    )
+    .into_bytes();
+
+    output.extend_from_slice(b"\r\nwindow.location.replace(");
+    // This only fails for non trivial types, for string it is infallible
+    serde_json::to_writer(&mut output, &final_url).unwrap();
+    output.extend_from_slice(b" + encodeURIComponent(window.location.href));");
+
+    Ok(String::from_utf8(output).unwrap())
+}
+
+#[tracing::instrument(skip(state, descriptor), name = "solve_anubis")]
+async fn solve_anubis(
+    remote_addr: axum::extract::ConnectInfo<std::net::SocketAddr>,
+    x_forwarded_for: axum_extra::TypedHeader<XForwardedFor>,
+    State(state): State<AppState>,
+    descriptor: AnubisChallengeDescriptor,
+) -> Result<String, SolveError> {
     let rules = descriptor.rules();
     tracing::info!("solving anubis challenge {:?}", rules);
 

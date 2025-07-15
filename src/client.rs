@@ -167,11 +167,19 @@ impl AnubisChallengeDescriptor {
                 target_bytes[i * 4 + 3],
             ])
         });
-        let mut solver = crate::SingleBlockSolver16Way::new((), self.challenge.as_bytes()).unwrap();
-        solver.set_limit(limit);
-        let result = solver.solve::<false>(target_u32s);
-        let attempted_nonces = solver.get_attempted_nonces();
-        (result, attempted_nonces)
+        if let Some(mut solver) = crate::SingleBlockSolver16Way::new((), self.challenge.as_bytes())
+        {
+            solver.set_limit(limit);
+            let result = solver.solve::<false>(target_u32s);
+            let attempted_nonces = solver.get_attempted_nonces();
+            (result, attempted_nonces)
+        } else {
+            let mut solver =
+                crate::DoubleBlockSolver16Way::new((), self.challenge.as_bytes()).unwrap();
+            let result = solver.solve::<false>(target_u32s);
+            let attempted_nonces = solver.get_attempted_nonces();
+            (result, attempted_nonces)
+        }
     }
 }
 
@@ -298,10 +306,35 @@ pub async fn solve_anubis(
 }
 
 #[derive(serde::Deserialize, Debug)]
-struct GoAwayConfig {
+pub struct GoAwayConfig {
     challenge: String,
     // target: String,
     difficulty: NonZeroU8,
+}
+
+impl GoAwayConfig {
+    pub fn challenge(&self) -> &str {
+        &self.challenge
+    }
+
+    pub fn estimated_workload(&self) -> u64 {
+        2u64.pow(self.difficulty.get().try_into().unwrap())
+    }
+
+    pub fn solve(&self) -> Option<(u64, [u32; 8])> {
+        let target = compute_target_goaway(self.difficulty);
+        let target_bytes = target.to_be_bytes();
+        let target_u32s = core::array::from_fn(|i| {
+            u32::from_be_bytes([
+                target_bytes[i * 4],
+                target_bytes[i * 4 + 1],
+                target_bytes[i * 4 + 2],
+                target_bytes[i * 4 + 3],
+            ])
+        });
+        let mut solver = crate::GoAwaySolver16Way::new((), &self.challenge.as_bytes()).unwrap();
+        solver.solve::<false>(target_u32s)
+    }
 }
 
 pub async fn solve_goaway_js_pow_sha256(

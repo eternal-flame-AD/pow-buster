@@ -8,19 +8,43 @@
 </head>
 
 <body>
-    <form action="/solve/anubis" method="post">
-        <label for="challenge">Paste
-            your challenge here (Anubis only for now), characters before the first `{` and after the last `}` are
-            ignored. No JS required. You should find the challenge JSON in `head > script#anubis_challenge` or a network
-            request that ends with `/make-challenge`.</label>
-        <textarea id="challenge" name="challenge" rows="10" cols="80"
-            placeholder='{"rules":{"algorithm":"fast/slow","difficulty":4,"report_as":4},"challenge":"xxxxxx"}'></textarea>
+
+    <h1>How to use</h1>
+    <p>
+        Anubis/Go-away: You should find the challenge JSON in `head > script#anubis_challenge` or a network request
+        that ends with `/make-challenge`. Copy the challenge JSON and paste it into the textarea below.
+        Characters before the first `{` and after the last `}` are ignored.
+        <br>
+        Response will be a single redirect URL provided in JavaScript format mirroring the official solver's behavior
+        after a solution is found.
+    </p>
+
+    <h1>Expected Formats</h1>
+    <ul>
+        <li>
+            Anubis: <code>{"rules":{"algorithm":"fast/slow","difficulty":4,"report_as":4},"challenge":"xxxxxx"}</code>
+        </li>
+        <li>
+            Go-away: <code>{"challenge":"xxxxxx", "target": "000fff", "difficulty": 16}</code>
+        </li>
+    </ul>
+
+    <form action="/solve" method="post">
+        <label for="challenge">
+            Paste your challenge here. This is a pure HTML form, no JS required.
+        </label>
+        <br>
+        <textarea id="challenge" name="challenge" rows="10" cols="80"></textarea>
+        <br>
         <button id="solve" type="submit">Solve</button>
     </form>
-    <p>NOTICE: this is a public service limited to manageable load and limited concurrency, please do not abuse it. Run
-        it on your own server if you need more resources.
-        <a href="https://github.com/eternal-flame-AD/simd-mcaptcha">Source Code</a>
-    </p>
+
+    <footer>
+        <p>NOTICE: this is a public service limited to manageable load and limited concurrency, please do not abuse it.
+            Run it on your own server if you need more resources.
+            <a href="https://github.com/eternal-flame-AD/simd-mcaptcha">Source Code</a>
+        </p>
+    </footer>
 </body>
 
 </html>
