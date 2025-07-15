@@ -9,11 +9,12 @@
 
 <body>
     <form action="/solve/anubis" method="post">
-        <label for="challenge"
-            placeholder='{"rules":{"algorithm":"fast/slow","difficulty":4,"report_as":4},"challenge":"xxxxxx"}'>Paste
+        <label for="challenge">Paste
             your challenge here (Anubis only for now), characters before the first `{` and after the last `}` are
-            ignored. No JS required.</label>
-        <textarea id="challenge" name="challenge" rows="10" cols="80"></textarea>
+            ignored. No JS required. You should find the challenge JSON in `head > script#anubis_challenge` or a network
+            request that ends with `/make-challenge`.</label>
+        <textarea id="challenge" name="challenge" rows="10" cols="80"
+            placeholder='{"rules":{"algorithm":"fast/slow","difficulty":4,"report_as":4},"challenge":"xxxxxx"}'></textarea>
         <button id="solve" type="submit">Solve</button>
     </form>
     <p>NOTICE: this is a public service limited to manageable load and limited concurrency, please do not abuse it. Run
