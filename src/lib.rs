@@ -959,8 +959,8 @@ impl Solver for SingleBlockSolver16Way {
                         ));
                     }
 
-                    this.attempted_nonces += 4;
-                    if this.attempted_nonces >= this.limit {
+                    self.attempted_nonces += 4;
+                    if self.attempted_nonces >= self.limit {
                         return None;
                     }
                 }
@@ -1396,6 +1396,11 @@ impl Solver for DoubleBlockSolver16Way {
         let mut partial_state = Align64(self.prefix_state);
         sha256::sha2_arx::<0, 13>(&mut partial_state, self.message[..13].try_into().unwrap());
 
+        let mut terminal_message_schedule = Align16([0; 64]);
+        terminal_message_schedule[14] = ((self.message_length as u64 * 8) >> 32) as u32;
+        terminal_message_schedule[15] = (self.message_length as u64 * 8) as u32;
+        sha256::do_message_schedule_k_w(&mut terminal_message_schedule);
+
         for prefix_set_index in 0..((100 - 10) / 4) {
             unsafe {
                 let lane_id_0_or_value =
@@ -1461,7 +1466,7 @@ impl Solver for DoubleBlockSolver16Way {
 
                     sha256::simd128::bcst_multiway_arx::<14>(
                         &mut state,
-                        &self.terminal_message_schedule,
+                        &terminal_message_schedule,
                     );
 
                     let result_a = u32x4_add(state[0], save_a);
@@ -1504,7 +1509,7 @@ impl Solver for DoubleBlockSolver16Way {
                         sha256::digest_block(&mut final_sha_state, &self.message);
                         sha256::digest_block(
                             &mut final_sha_state,
-                            self.terminal_message_schedule[0..16].try_into().unwrap(),
+                            terminal_message_schedule[0..16].try_into().unwrap(),
                         );
 
                         // reverse the byte order
@@ -1521,7 +1526,7 @@ impl Solver for DoubleBlockSolver16Way {
                             + self.nonce_addend;
 
                         // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
-                        return Some((computed_nonce, final_sha_state));
+                        return Some((computed_nonce, *final_sha_state));
                     }
 
                     self.attempted_nonces += 4;
@@ -1597,6 +1602,7 @@ impl Solver for GoAwaySolver16Way {
     }
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    #[inline(never)]
     fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
         unsafe {
             let lane_id_v = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
@@ -1670,6 +1676,7 @@ impl Solver for GoAwaySolver16Way {
         not(target_feature = "avx512f"),
         target_feature = "sha"
     ))]
+    #[line(never)]
     fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
         unsafe {
             use core::arch::x86_64::*;
