@@ -307,65 +307,6 @@ pub fn bench_proof(c: &mut Criterion) {
                 })
             },
         );
-        #[cfg(feature = "wgpu")]
-        {
-            use simd_mcaptcha::wgpu::VulkanDeviceContext;
-            let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-                backends: wgpu::Backends::VULKAN,
-                ..Default::default()
-            });
-            let adapter =
-                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-                    power_preference: wgpu::PowerPreference::HighPerformance,
-                    compatible_surface: None,
-                    force_fallback_adapter: false,
-                }))
-                .unwrap();
-            let mut features = wgpu::Features::empty();
-            features.insert(wgpu::Features::MAPPABLE_PRIMARY_BUFFERS);
-            let (device, queue) =
-                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-                    label: None,
-                    required_features: features,
-                    required_limits: wgpu::Limits::default(),
-                    memory_hints: wgpu::MemoryHints::Performance,
-                    trace: wgpu::Trace::Off,
-                }))
-                .unwrap();
-
-            group.bench_with_input(
-                BenchmarkId::new(
-                    "proof",
-                    ProofKey {
-                        difficulty,
-                        solver_type: "wgpu",
-                    },
-                ),
-                &difficulty,
-                |b, &_difficulty| {
-                    use simd_mcaptcha::wgpu::VulkanSingleBlockSolver;
-                    use typenum::U256;
-                    b.iter_custom(|iters| {
-                        let mut ctx = VulkanDeviceContext::new(device.clone(), queue.clone());
-
-                        let start = std::time::Instant::now();
-                        for i in 0..iters {
-                            for j in 0..10 {
-                                let mut solver = VulkanSingleBlockSolver::<U256>::new(
-                                    &mut ctx,
-                                    &(i * 10 + j).to_ne_bytes(),
-                                )
-                                .unwrap();
-                                core::hint::black_box(
-                                    solver.solve::<true>(target_u32s).expect("solver failed"),
-                                );
-                            }
-                        }
-                        start.elapsed() / 10
-                    })
-                },
-            );
-        }
     }
 }
 

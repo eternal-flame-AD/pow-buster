@@ -30,10 +30,6 @@ mod sha256;
 /// Implementations considered "safe" for production use
 pub mod safe;
 
-#[cfg(feature = "wgpu")]
-/// wgpu implementations
-pub mod wgpu;
-
 #[cfg(all(
     not(doc),
     target_arch = "x86_64",

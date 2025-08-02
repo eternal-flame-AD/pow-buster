@@ -20,7 +20,7 @@
   - [License](#license)
   - [AI Disclaimer](#ai-disclaimer)
 
-A fast, adversarially implemented mCaptcha/Anubis/go-away PoW solver, targeting AVX-512/SHA-NI/simd128 with an experimental shader in WGSL. Can be used for computing solutions to these systems without disabling privacy-enhancing features without wasting energy in the browser.
+A fast, adversarially implemented mCaptcha/Anubis/go-away PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features without wasting energy in the browser.
 
 The benchmarks demonstrate a significant performance gap between browser-based JavaScript execution and native implementations (both optimized CPU and unoptimized GPU), suggesting fundamental challenges for PoW-based browser CAPTCHA systems.
 
@@ -43,7 +43,6 @@ We assume you have a relatively modern and powerful platform, specifically:
 - For Anubis target, this assumes the server is 64-bit (i.e. is able to accept a signed 64-bit nonce).
 - AVX-512 build requires Rust 1.89 or later.
 - This is designed for "low", practical-for-a-website difficulty settings, A $1 - P_{geom}(80e7, 1/\text{difficulty})$ chance of failure for any particular challenge, which for 1e8 (takes about 10 seconds on a browser for mCaptcha and an eternity for Anubis) is about 0.03%. Go-away solver explores the full solution space and guarantees a solution if one exists.
-- The WGSL implementation may not be optimized for performance. I am not good at shader programming.
 
 ## Ethical Disclaimer (i.e. the "How Dare you Publish this?" question)
 
@@ -70,21 +69,20 @@ Speedup against official solution, reported by Criterion.rs, single-threaded:
 Results on AMD Ryzen 9 7950X, 32 cores, when supported, single-hash number comes first (there is 90% chance your deployment is single-hash, this vagueness is IMO design oversight by the mCaptcha team), double-hash number comes second, all numbers are in milliseconds, compiled with `-Ctarget-cpu=native` unless otherwise specified.
 
 
-| DFactor    | AVX-512       | Safe Optimized (+) [^1] | Official (+*) | Official Generic x64 (+*) | wgpu (Vulkan) [^2] | User Survey extrapolated  [^3] |
-| ---------- | ------------- | ----------------------- | ------------- | ------------------------- | ------------------ | ------------------------------ |
-| 50_000     | 0.612/0.953   | 1.565                   | 2.851/4.009   | 5.600/9.537               | 0.097              | 14.556                         |
-| 100_000    | 1.200/1.903   | 3.172                   | 5.698/7.817   | 11.152/18.575             | 0.126              | 29.11176                       |
-| 1_000_000  | 11.708/18.515 | 31.622                  | 54.931/80.029 | 117.34/188.41             | 0.489              | 291.118                        |
-| 4_000_000  | 45.330/75.630 | 125.06                  | 222.93/323.70 | 432.81/777.88             | 1.844              | 1164.471                       |
-| 10_000_000 | 123.78/186.01 | 323.06                  | 564.41/805.02 | DNS                       | 4.201              | 2911.18                        |
+| DFactor    | AVX-512       | Safe Optimized (+) [^1] | Official (+*) | Official Generic x64 (+*) | User Survey extrapolated  [^2] |
+| ---------- | ------------- | ----------------------- | ------------- | ------------------------- | ------------------------------ |
+| 50_000     | 0.612/0.953   | 1.565                   | 2.851/4.009   | 5.600/9.537               | 14.556                         |
+| 100_000    | 1.200/1.903   | 3.172                   | 5.698/7.817   | 11.152/18.575             | 29.11176                       |
+| 1_000_000  | 11.708/18.515 | 31.622                  | 54.931/80.029 | 117.34/188.41             | 291.118                        |
+| 4_000_000  | 45.330/75.630 | 125.06                  | 222.93/323.70 | 432.81/777.88             | 1164.471                       |
+| 10_000_000 | 123.78/186.01 | 323.06                  | 564.41/805.02 | DNS                       | 2911.18                        |
 
 (*) = Since official solution allocated a variable length string per iteration, it is pretty difficult to get it to perform it stably both in terms of how many blocks to hash and how long the allocation takes, serious non-linear performance degradation seems to be observed and it is likely attributed to re-allocation overhead.
 (?) = not implemented, but I expect close to a clean double
 (+) = SNA-NI and a standard SHA-256 implementation is used.
 
 [^1]: Represents a custom implementation using safe, externally-validated cryptographic abstractions only and no platform-specific optimizations.
-[^2]: NVIDIA RTX 4070 is used
-[^3]: Manivannan, A.; Sethuraman, S. C.; Vimala Sudhakaran, D. P. MCaptcha: Replacing Captchas with Rate Limiters to Improve Security and Accessibility. Communications of the ACM 2024, 67 (10), 70–80. https://doi.org/10.1145/3660628.
+[^2]: Manivannan, A.; Sethuraman, S. C.; Vimala Sudhakaran, D. P. MCaptcha: Replacing Captchas with Rate Limiters to Improve Security and Accessibility. Communications of the ACM 2024, 67 (10), 70–80. https://doi.org/10.1145/3660628.
 
 ### End to End Benchmark
 
@@ -188,13 +186,9 @@ The peak throughput reported by `openssl speed -multi 32 sha256` is 239.76 MH/s 
 
 ## Security Implications
 
-The performance benchmarks demonstrate a fundamental challenge for browser-based PoW CAPTCHA systems:
-
-1. The performance gap between optimized native code and browser JavaScript (>100x) makes it impractical to set difficulty levels that are both:
+The performance gap between optimized native code and browser JavaScript (>100x) makes it impractical to set difficulty levels that are both:
    - High enough to prevent automated solving on native hardware
    - Low enough to be solvable in browsers within reasonable timeouts
-
-2. The GPU implementation, even unoptimized, shows that commodity hardware can solve high-difficulty challenges orders of magnitude faster than browsers.
 
 These findings suggest that both designing and adopting a PoW-based CAPTCHA systems may need additional verification mechanisms beyond empirical testing.
 

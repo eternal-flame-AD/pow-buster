@@ -3,6 +3,6 @@
         "client",
         "cli",
         "official",
-        "wgpu"
+        "rayon"
     ]
 }
