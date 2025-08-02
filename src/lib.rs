@@ -1,10 +1,6 @@
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![doc = include_str!("../README.md")]
 #![allow(stable_features, reason = "not on the 'released' stable channel yet")]
-#![cfg_attr(
-    all(target_arch = "x86_64", target_feature = "avx512f"),
-    feature(stdarch_x86_avx512)
-)]
 
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
