@@ -1992,6 +1992,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "bincode",
+ "cfg-if",
  "clap",
  "criterion",
  "headers",

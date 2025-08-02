@@ -29,10 +29,10 @@ pub fn solve_anubis(input: String, difficulty_factor: u8) -> Option<AnubisRespon
         (target >> 32) as u32,
         target as u32,
     ];
-    let (nonce, result) = match crate::SingleBlockSolver16Way::new((), input.as_bytes()) {
+    let (nonce, result) = match crate::SingleBlockSolver::new((), input.as_bytes()) {
         Some(mut solver) => solver.solve::<true>(target_u32s)?,
         None => {
-            let mut solver = crate::DoubleBlockSolver16Way::new((), input.as_bytes()).unwrap();
+            let mut solver = crate::DoubleBlockSolver::new((), input.as_bytes()).unwrap();
             solver.solve::<true>(target_u32s)?
         }
     };

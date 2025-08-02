@@ -11,7 +11,7 @@ use std::{
 use clap::{Parser, Subcommand};
 
 use simd_mcaptcha::{
-    DoubleBlockSolver16Way, GoAwaySolver16Way, SingleBlockSolver16Way, Solver, compute_target,
+    DoubleBlockSolver, GoAwaySolver, SingleBlockSolver, Solver, compute_target,
     compute_target_anubis,
 };
 
@@ -120,8 +120,7 @@ fn main() {
                 // mimick an anubis-like situation
                 let mut prefix_bytes = [0; 64];
                 prefix_bytes[..8].copy_from_slice(&prefix.to_ne_bytes());
-                let mut solver =
-                    SingleBlockSolver16Way::new((), &prefix_bytes).expect("solver is None");
+                let mut solver = SingleBlockSolver::new((), &prefix_bytes).expect("solver is None");
                 let target = compute_target(difficulty);
                 let target_bytes = target.to_be_bytes();
                 let target_u32s = core::array::from_fn(|i| {
@@ -165,8 +164,8 @@ fn main() {
                         for prefix in 0..u64::MAX {
                             let mut prefix_bytes = [0u8; 48];
                             prefix_bytes[..8].copy_from_slice(&prefix.to_ne_bytes());
-                            let mut solver = DoubleBlockSolver16Way::new((), &prefix_bytes)
-                                .expect("solver is None");
+                            let mut solver =
+                                DoubleBlockSolver::new((), &prefix_bytes).expect("solver is None");
                             let target_bytes = target.to_be_bytes();
                             let target_u32s = core::array::from_fn(|i| {
                                 u32::from_be_bytes([
@@ -185,8 +184,8 @@ fn main() {
                             // mimick an anubis-like situation
                             let mut prefix_bytes = [0; 64];
                             prefix_bytes[..8].copy_from_slice(&prefix.to_ne_bytes());
-                            let mut solver = SingleBlockSolver16Way::new((), &prefix_bytes)
-                                .expect("solver is None");
+                            let mut solver =
+                                SingleBlockSolver::new((), &prefix_bytes).expect("solver is None");
 
                             let target_bytes = target.to_be_bytes();
                             let target_u32s = core::array::from_fn(|i| {
@@ -247,13 +246,12 @@ fn main() {
                 // mimick an anubis-like situation
                 let mut prefix_bytes = [0; 64];
                 prefix_bytes[0] = i;
-                let mut solver =
-                    SingleBlockSolver16Way::new((), &prefix_bytes).expect("solver is None");
+                let mut solver = SingleBlockSolver::new((), &prefix_bytes).expect("solver is None");
                 let inner_begin = Instant::now();
                 let (nonce, _) = solver.solve::<true>(target_u32s).expect("solver failed");
                 eprintln!(
                     "[{}]: in {:.3} seconds ({})",
-                    core::any::type_name::<SingleBlockSolver16Way>(),
+                    core::any::type_name::<SingleBlockSolver>(),
                     inner_begin.elapsed().as_secs_f32(),
                     nonce,
                 );
@@ -262,7 +260,7 @@ fn main() {
             let elapsed = begin.elapsed();
             println!(
                 "[{}]: {} seconds at difficulty {} ({:.2} MH/s)",
-                core::any::type_name::<SingleBlockSolver16Way>(),
+                core::any::type_name::<SingleBlockSolver>(),
                 elapsed.as_secs_f32() / 40.0,
                 difficulty,
                 total_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0
@@ -272,12 +270,12 @@ fn main() {
             let mut prefix = [0u8; 48];
             for i in 0..40u8 {
                 prefix[0] = i;
-                let mut solver = DoubleBlockSolver16Way::new((), &prefix).expect("solver is None");
+                let mut solver = DoubleBlockSolver::new((), &prefix).expect("solver is None");
                 let inner_begin = Instant::now();
                 let (nonce, _) = solver.solve::<true>(target_u32s).expect("solver failed");
                 eprintln!(
                     "[{}]: in {:.3} seconds ({})",
-                    core::any::type_name::<DoubleBlockSolver16Way>(),
+                    core::any::type_name::<DoubleBlockSolver>(),
                     inner_begin.elapsed().as_secs_f32(),
                     nonce,
                 );
@@ -286,7 +284,7 @@ fn main() {
             let elapsed = begin.elapsed();
             println!(
                 "[{}]: {} seconds at difficulty {} ({:.2} MH/s)",
-                core::any::type_name::<DoubleBlockSolver16Way>(),
+                core::any::type_name::<DoubleBlockSolver>(),
                 elapsed.as_secs_f32() / 40.0,
                 difficulty,
                 total_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0
@@ -296,12 +294,12 @@ fn main() {
             for i in 0..40u8 {
                 let mut prefix = [0u8; 32];
                 prefix[0] = i;
-                let mut solver = GoAwaySolver16Way::new((), &prefix).expect("solver is None");
+                let mut solver = GoAwaySolver::new((), &prefix).expect("solver is None");
                 let inner_begin = Instant::now();
                 let (nonce, _) = solver.solve::<true>(target_u32s).expect("solver failed");
                 eprintln!(
                     "[{}]: in {:.3} seconds ({})",
-                    core::any::type_name::<GoAwaySolver16Way>(),
+                    core::any::type_name::<GoAwaySolver>(),
                     inner_begin.elapsed().as_secs_f32(),
                     nonce
                 );
@@ -310,7 +308,7 @@ fn main() {
             let elapsed = begin.elapsed();
             println!(
                 "[{}]: {} seconds at difficulty {} ({:.2} MH/s)",
-                core::any::type_name::<GoAwaySolver16Way>(),
+                core::any::type_name::<GoAwaySolver>(),
                 elapsed.as_secs_f32() / 40.0,
                 difficulty,
                 total_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0

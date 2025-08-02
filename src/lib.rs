@@ -8,7 +8,6 @@ use core::arch::x86_64::*;
 #[cfg(target_arch = "wasm32")]
 use core::arch::wasm32::*;
 
-use core::hint::unreachable_unchecked;
 use core::num::NonZeroU8;
 
 #[cfg(feature = "alloc")]
@@ -29,16 +28,6 @@ mod sha256;
 
 /// Implementations considered "safe" for production use
 pub mod safe;
-
-#[cfg(all(
-    not(doc),
-    target_arch = "x86_64",
-    not(target_feature = "avx512f"),
-    not(target_feature = "sha")
-))]
-compile_error!(
-    "AVX512F or SHA extensions required. Compile with -Ctarget-feature=+avx512f or -Ctarget-feature=+sha"
-);
 
 #[cfg(all(not(doc), not(target_arch = "x86_64"), not(target_arch = "wasm32")))]
 compile_error!("Only x86_64 and wasm32 are supported");
@@ -203,7 +192,7 @@ pub trait Solver {
 //
 // There is currently no AVX2 fallback for more common hardware
 #[derive(Debug, Clone)]
-pub struct SingleBlockSolver16Way {
+pub struct SingleBlockSolver {
     // the message template for the final block
     pub(crate) message: Align16<[u32; 16]>,
 
@@ -219,7 +208,7 @@ pub struct SingleBlockSolver16Way {
     limit: u32,
 }
 
-impl SingleBlockSolver16Way {
+impl SingleBlockSolver {
     pub fn set_limit(&mut self, limit: u32) {
         self.limit = limit;
     }
@@ -229,7 +218,7 @@ impl SingleBlockSolver16Way {
     }
 }
 
-impl Solver for SingleBlockSolver16Way {
+impl Solver for SingleBlockSolver {
     type Ctx = ();
 
     fn new(_ctx: Self::Ctx, mut prefix: &[u8]) -> Option<Self> {
@@ -339,633 +328,659 @@ impl Solver for SingleBlockSolver16Way {
         })
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    #[inline(never)]
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
-        // the official default difficulty is 5e6, so we design for 1e8
-        // and there should almost always be a valid solution within our supported solution space
-        // pgeom(5 * 16e7, 1/5e7, lower=F) = 0.03%
-        // pgeom(16e7, 1/5e7, lower=F) = 20%, which is too much so we need the prefix to change as well
+    cfg_if::cfg_if! {
+        if #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))] {
+            #[inline(never)]
+            fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                // the official default difficulty is 5e6, so we design for 1e8
+                // and there should almost always be a valid solution within our supported solution space
+                // pgeom(5 * 16e7, 1/5e7, lower=F) = 0.03%
+                // pgeom(16e7, 1/5e7, lower=F) = 20%, which is too much so we need the prefix to change as well
 
-        // pre-compute an OR to apply to the message to add the lane ID
-        let lane_id_0_word_idx = self.digit_index / 4;
-        let lane_id_1_word_idx = (self.digit_index + 1) / 4;
+                // pre-compute an OR to apply to the message to add the lane ID
+                let lane_id_0_word_idx = self.digit_index / 4;
+                let lane_id_1_word_idx = (self.digit_index + 1) / 4;
 
-        // make sure there are no runtime "register indexing" logic
-        fn solve_inner<
-            const DIGIT_WORD_IDX0: usize,
-            const DIGIT_WORD_IDX1: usize,
-            const UPWARDS: bool,
-        >(
-            this: &mut SingleBlockSolver16Way,
-            target: u32,
-        ) -> Option<u64> {
-            let mut partial_state = this.prefix_state;
-            sha256::ingest_message_prefix::<DIGIT_WORD_IDX0>(
-                &mut partial_state,
-                core::array::from_fn(|i| this.message[i]),
-            );
-
-            let lane_id_0_byte_idx = this.digit_index % 4;
-            let lane_id_1_byte_idx = (this.digit_index + 1) % 4;
-            for prefix_set_index in 0..5 {
-                unsafe {
-                    let lane_id_0_or_value = _mm512_sll_epi32(
-                        load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index),
-                        _mm_set1_epi64x(((3 - lane_id_0_byte_idx) * 8) as _),
-                    );
-                    let lane_id_1_or_value = _mm512_sll_epi32(
-                        load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index),
-                        _mm_set1_epi64x(((3 - lane_id_1_byte_idx) * 8) as _),
+                // make sure there are no runtime "register indexing" logic
+                fn solve_inner<
+                    const DIGIT_WORD_IDX0: usize,
+                    const DIGIT_WORD_IDX1: usize,
+                    const UPWARDS: bool,
+                >(
+                    this: &mut SingleBlockSolver,
+                    target: u32,
+                ) -> Option<u64> {
+                    let mut partial_state = this.prefix_state;
+                    sha256::ingest_message_prefix::<DIGIT_WORD_IDX0>(
+                        &mut partial_state,
+                        core::array::from_fn(|i| this.message[i]),
                     );
 
-                    let lane_id_0_or_value_v = if DIGIT_WORD_IDX0 == DIGIT_WORD_IDX1 {
-                        _mm512_or_epi32(lane_id_0_or_value, lane_id_1_or_value)
-                    } else {
-                        lane_id_0_or_value
-                    };
-                    macro_rules! fetch_msg {
-                        ($idx:expr) => {
-                            if $idx == DIGIT_WORD_IDX0 {
-                                _mm512_or_epi32(
-                                    _mm512_set1_epi32(this.message[$idx] as _),
-                                    lane_id_0_or_value_v,
-                                )
-                            } else if $idx == DIGIT_WORD_IDX1 {
-                                _mm512_or_epi32(
-                                    _mm512_set1_epi32(this.message[$idx] as _),
-                                    lane_id_1_or_value,
-                                )
+                    let lane_id_0_byte_idx = this.digit_index % 4;
+                    let lane_id_1_byte_idx = (this.digit_index + 1) % 4;
+                    for prefix_set_index in 0..5 {
+                        unsafe {
+                            let lane_id_0_or_value = _mm512_sll_epi32(
+                                load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index),
+                                _mm_set1_epi64x(((3 - lane_id_0_byte_idx) * 8) as _),
+                            );
+                            let lane_id_1_or_value = _mm512_sll_epi32(
+                                load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index),
+                                _mm_set1_epi64x(((3 - lane_id_1_byte_idx) * 8) as _),
+                            );
+
+                            let lane_id_0_or_value_v = if DIGIT_WORD_IDX0 == DIGIT_WORD_IDX1 {
+                                _mm512_or_epi32(lane_id_0_or_value, lane_id_1_or_value)
                             } else {
-                                _mm512_set1_epi32(this.message[$idx] as _)
-                            }
-                        };
-                    }
-
-                    for inner_key in 0..10_000_000 {
-                        let mut key_copy = inner_key;
-                        {
-                            let message_bytes = decompose_blocks_mut(&mut this.message);
-
-                            for i in (0..7).rev() {
-                                let output = key_copy % 10;
-                                key_copy /= 10;
-                                *message_bytes.get_unchecked_mut(
-                                    *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + i + 2),
-                                ) = output as u8 + b'0';
-                            }
-                        }
-
-                        // hint at LLVM that the modulo ends in 0
-                        if key_copy != 0 {
-                            debug_assert_eq!(key_copy, 0);
-                            unreachable_unchecked();
-                        }
-
-                        let mut blocks = [
-                            fetch_msg!(0),
-                            fetch_msg!(1),
-                            fetch_msg!(2),
-                            fetch_msg!(3),
-                            fetch_msg!(4),
-                            fetch_msg!(5),
-                            fetch_msg!(6),
-                            fetch_msg!(7),
-                            fetch_msg!(8),
-                            fetch_msg!(9),
-                            fetch_msg!(10),
-                            fetch_msg!(11),
-                            fetch_msg!(12),
-                            fetch_msg!(13),
-                            fetch_msg!(14),
-                            fetch_msg!(15),
-                        ];
-
-                        let mut state =
-                            core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
-
-                        // do 16-way SHA-256 without feedback so as not to force the compiler to save 8 registers
-                        // we already have them in scalar form, this allows more registers to be reused in the next iteration
-                        sha256::avx512::multiway_arx::<DIGIT_WORD_IDX0>(&mut state, &mut blocks);
-
-                        // the target is big endian interpretation of the first 16 bytes of the hash (A-D) >= target
-                        // however, the largest 32-bit digits is unlikely to be all ones (otherwise a legitimate challenger needs on average >2^32 attempts)
-                        // so we can reduce this into simply testing H[0]
-                        // the number of acceptable u32 values (for us) is u32::MAX / difficulty
-                        // so the "inefficiency" this creates is about (u32::MAX / difficulty) * (1 / 2), because for approx. half of the "edge case" do we actually have an acceptable solution,
-                        // which for 1e8 is about 1%, but we get to save the one broadcast add,
-                        // a vectorized comparison, and a scalar logic evaluation
-                        // which I feel is about 1% of the instructions needed per iteration anyways just more registers used so let's not bother
-
-                        let result_a = _mm512_add_epi32(
-                            state[0],
-                            _mm512_set1_epi32(this.prefix_state[0] as _),
-                        );
-
-                        let cmp_fn = if UPWARDS {
-                            _mm512_cmpgt_epu32_mask
-                        } else {
-                            _mm512_cmplt_epu32_mask
-                        };
-
-                        let a_met_target = cmp_fn(result_a, _mm512_set1_epi32(target as _));
-
-                        if a_met_target != 0 {
-                            let success_lane_idx = _tzcnt_u16(a_met_target) as usize;
-                            let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
-
-                            // stamp the lane ID back onto the message
-                            {
-                                let message_bytes = decompose_blocks_mut(&mut this.message);
-                                *message_bytes.get_unchecked_mut(
-                                    *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index),
-                                ) = (nonce_prefix / 10) as u8 + b'0';
-                                *message_bytes.get_unchecked_mut(
-                                    *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + 1),
-                                ) = (nonce_prefix % 10) as u8 + b'0';
+                                lane_id_0_or_value
+                            };
+                            macro_rules! fetch_msg {
+                                ($idx:expr) => {
+                                    if $idx == DIGIT_WORD_IDX0 {
+                                        _mm512_or_epi32(
+                                            _mm512_set1_epi32(this.message[$idx] as _),
+                                            lane_id_0_or_value_v,
+                                        )
+                                    } else if $idx == DIGIT_WORD_IDX1 {
+                                        _mm512_or_epi32(
+                                            _mm512_set1_epi32(this.message[$idx] as _),
+                                            lane_id_1_or_value,
+                                        )
+                                    } else {
+                                        _mm512_set1_epi32(this.message[$idx] as _)
+                                    }
+                                };
                             }
 
-                            // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
-                            return Some(nonce_prefix as u64 * 10u64.pow(7) + inner_key);
-                        }
+                            for inner_key in 0..10_000_000 {
+                                let mut key_copy = inner_key;
+                                {
+                                    let message_bytes = decompose_blocks_mut(&mut this.message);
 
-                        this.attempted_nonces += 16;
-                        if this.attempted_nonces >= this.limit {
-                            return None;
-                        }
-                    }
-                }
-            }
-            None
-        }
-
-        macro_rules! dispatch {
-            ($idx0:literal) => {
-                match lane_id_1_word_idx {
-                    0 => solve_inner::<$idx0, 0, UPWARDS>(self, target[0]),
-                    1 => solve_inner::<$idx0, 1, UPWARDS>(self, target[0]),
-                    2 => solve_inner::<$idx0, 2, UPWARDS>(self, target[0]),
-                    3 => solve_inner::<$idx0, 3, UPWARDS>(self, target[0]),
-                    4 => solve_inner::<$idx0, 4, UPWARDS>(self, target[0]),
-                    5 => solve_inner::<$idx0, 5, UPWARDS>(self, target[0]),
-                    6 => solve_inner::<$idx0, 6, UPWARDS>(self, target[0]),
-                    7 => solve_inner::<$idx0, 7, UPWARDS>(self, target[0]),
-                    8 => solve_inner::<$idx0, 8, UPWARDS>(self, target[0]),
-                    9 => solve_inner::<$idx0, 9, UPWARDS>(self, target[0]),
-                    10 => solve_inner::<$idx0, 10, UPWARDS>(self, target[0]),
-                    11 => solve_inner::<$idx0, 11, UPWARDS>(self, target[0]),
-                    12 => solve_inner::<$idx0, 12, UPWARDS>(self, target[0]),
-                    13 => solve_inner::<$idx0, 13, UPWARDS>(self, target[0]),
-                    // there is no possible way lane ID lands on position 14 or 15, because the padding is 9 bytes and nonce tail is 7 bytes
-                    _ => unreachable_unchecked(),
-                }
-            };
-        }
-
-        let nonce = unsafe {
-            match lane_id_0_word_idx {
-                0 => dispatch!(0),
-                1 => dispatch!(1),
-                2 => dispatch!(2),
-                3 => dispatch!(3),
-                4 => dispatch!(4),
-                5 => dispatch!(5),
-                6 => dispatch!(6),
-                7 => dispatch!(7),
-                8 => dispatch!(8),
-                9 => dispatch!(9),
-                10 => dispatch!(10),
-                11 => dispatch!(11),
-                12 => dispatch!(12),
-                13 => dispatch!(13),
-                _ => unreachable_unchecked(),
-            }
-        }?;
-
-        // recompute the hash from the beginning
-        // this prevents the compiler from having to compute the final B-H registers alive in tight loops
-        let mut final_sha_state = self.prefix_state;
-        sha256::digest_block(&mut final_sha_state, &self.message);
-
-        Some((nonce + self.nonce_addend, final_sha_state))
-    }
-
-    #[cfg(all(
-        target_arch = "x86_64",
-        not(target_feature = "avx512f"),
-        target_feature = "sha"
-    ))]
-    #[inline(never)]
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
-        let lane_id_0_word_idx = self.digit_index / 4;
-        let lane_id_1_word_idx = (self.digit_index + 1) / 4;
-
-        fn solve_inner<
-            const DIGIT_WORD_IDX0_DIV_4_TIMES_4: usize,
-            const DIGIT_WORD_IDX0_DIV_4: usize,
-            const DIGIT_WORD_IDX0_MOD_4: usize,
-            const DIGIT_WORD_IDX1: usize,
-            const UPWARDS: bool,
-        >(
-            this: &mut SingleBlockSolver16Way,
-            target: u32,
-        ) -> Option<u64> {
-            let mut partial_state = Align16(this.prefix_state);
-            sha256::ingest_message_prefix::<{ DIGIT_WORD_IDX0_DIV_4_TIMES_4 }>(
-                &mut partial_state,
-                core::array::from_fn(|i| this.message[i]),
-            );
-            let prepared_state = sha256::sha_ni::prepare_state(&partial_state);
-            let lane_id_0_byte_idx = this.digit_index % 4;
-            let lane_id_1_byte_idx = (this.digit_index + 1) % 4;
-
-            for nonce_prefix_start in (10u32..=96).step_by(4) {
-                unsafe {
-                    const fn to_ascii_u32(input: u32) -> u32 {
-                        let high_digit = input / 10;
-                        let low_digit = input % 10;
-                        u32::from_be_bytes([0, 0, high_digit as u8 + b'0', low_digit as u8 + b'0'])
-                    }
-                    let lane_index_values = [
-                        to_ascii_u32(nonce_prefix_start),
-                        to_ascii_u32(nonce_prefix_start + 1),
-                        to_ascii_u32(nonce_prefix_start + 2),
-                        to_ascii_u32(nonce_prefix_start + 3),
-                    ];
-
-                    let lane_id_1_or_value = core::array::from_fn(|i| {
-                        (lane_index_values[i] & 0xff) << ((3 - lane_id_1_byte_idx) * 8)
-                    });
-
-                    let lane_id_0_or_value = core::array::from_fn(|i| {
-                        let mut r = (lane_index_values[i] >> 8) << ((3 - lane_id_0_byte_idx) * 8);
-                        if DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 == DIGIT_WORD_IDX1 {
-                            r |= lane_id_1_or_value[i]
-                        }
-                        r
-                    });
-
-                    struct LaneIdPlucker<
-                        'a,
-                        const DIGIT_WORD_IDX0_DIV_4: usize,
-                        const DIGIT_WORD_IDX0_MOD_4: usize,
-                        const DIGIT_WORD_IDX1: usize,
-                    > {
-                        lane_0_or_value: &'a [u32; 4],
-                        lane_1_or_value: &'a [u32; 4],
-                    }
-
-                    impl<
-                        'a,
-                        const DIGIT_WORD_IDX0_DIV_4: usize,
-                        const DIGIT_WORD_IDX0_MOD_4: usize,
-                        const DIGIT_WORD_IDX1: usize,
-                    >
-                        LaneIdPlucker<
-                            'a,
-                            DIGIT_WORD_IDX0_DIV_4,
-                            DIGIT_WORD_IDX0_MOD_4,
-                            DIGIT_WORD_IDX1,
-                        >
-                    {
-                        #[inline(always)]
-                        fn fetch_msg_or(&self, idx: usize, lane: usize) -> u32 {
-                            if idx == DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 {
-                                self.lane_0_or_value[lane]
-                            } else if idx == DIGIT_WORD_IDX1 {
-                                self.lane_1_or_value[lane]
-                            } else {
-                                0
-                            }
-                        }
-                    }
-
-                    impl<
-                        'a,
-                        const DIGIT_WORD_IDX0_DIV_4: usize,
-                        const DIGIT_WORD_IDX0_MOD_4: usize,
-                        const DIGIT_WORD_IDX1: usize,
-                    > sha256::sha_ni::Plucker
-                        for LaneIdPlucker<
-                            'a,
-                            DIGIT_WORD_IDX0_DIV_4,
-                            DIGIT_WORD_IDX0_MOD_4,
-                            DIGIT_WORD_IDX1,
-                        >
-                    {
-                        #[inline(always)]
-                        fn pluck_qword0(&mut self, lane: usize, w: &mut __m128i) {
-                            unsafe {
-                                *w = _mm_or_si128(
-                                    *w,
-                                    _mm_setr_epi32(
-                                        self.fetch_msg_or(0, lane) as _,
-                                        self.fetch_msg_or(1, lane) as _,
-                                        self.fetch_msg_or(2, lane) as _,
-                                        self.fetch_msg_or(3, lane) as _,
-                                    ),
-                                );
-                            }
-                        }
-                        #[inline(always)]
-                        fn pluck_qword1(&mut self, lane: usize, w: &mut __m128i) {
-                            unsafe {
-                                *w = _mm_or_si128(
-                                    *w,
-                                    _mm_setr_epi32(
-                                        self.fetch_msg_or(4, lane) as _,
-                                        self.fetch_msg_or(5, lane) as _,
-                                        self.fetch_msg_or(6, lane) as _,
-                                        self.fetch_msg_or(7, lane) as _,
-                                    ),
-                                );
-                            }
-                        }
-                        #[inline(always)]
-                        fn pluck_qword2(&mut self, lane: usize, w: &mut __m128i) {
-                            unsafe {
-                                *w = _mm_or_si128(
-                                    *w,
-                                    _mm_setr_epi32(
-                                        self.fetch_msg_or(8, lane) as _,
-                                        self.fetch_msg_or(9, lane) as _,
-                                        self.fetch_msg_or(10, lane) as _,
-                                        self.fetch_msg_or(11, lane) as _,
-                                    ),
-                                );
-                            }
-                        }
-                        #[inline(always)]
-                        fn pluck_qword3(&mut self, lane: usize, w: &mut __m128i) {
-                            unsafe {
-                                *w = _mm_or_si128(
-                                    *w,
-                                    _mm_setr_epi32(
-                                        self.fetch_msg_or(12, lane) as _,
-                                        self.fetch_msg_or(13, lane) as _,
-                                        self.fetch_msg_or(14, lane) as _,
-                                        self.fetch_msg_or(15, lane) as _,
-                                    ),
-                                );
-                            }
-                        }
-                    }
-
-                    for inner_key in 0..10_000_000 {
-                        let mut key_copy = inner_key;
-                        {
-                            let message_bytes = decompose_blocks_mut(&mut this.message);
-
-                            for i in (0..7).rev() {
-                                let output = key_copy % 10;
-                                key_copy /= 10;
-                                *message_bytes.get_unchecked_mut(
-                                    *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + i + 2),
-                                ) = output as u8 + b'0';
-                            }
-                        }
-
-                        let mut state0 = prepared_state;
-                        let mut state1 = prepared_state;
-                        let mut state2 = prepared_state;
-                        let mut state3 = prepared_state;
-
-                        sha256::sha_ni::multiway_arx_abef_cdgh::<{ DIGIT_WORD_IDX0_DIV_4 }, 4, _>(
-                            [&mut state0, &mut state1, &mut state2, &mut state3],
-                            &mut this.message,
-                            LaneIdPlucker::<
-                                DIGIT_WORD_IDX0_DIV_4,
-                                DIGIT_WORD_IDX0_MOD_4,
-                                DIGIT_WORD_IDX1,
-                            > {
-                                lane_0_or_value: &lane_id_0_or_value,
-                                lane_1_or_value: &lane_id_1_or_value,
-                            },
-                        );
-
-                        let result_as = [
-                            (_mm_extract_epi32(state0[0], 3) as u32)
-                                .wrapping_add(this.prefix_state[0]),
-                            (_mm_extract_epi32(state1[0], 3) as u32)
-                                .wrapping_add(this.prefix_state[0]),
-                            (_mm_extract_epi32(state2[0], 3) as u32)
-                                .wrapping_add(this.prefix_state[0]),
-                            (_mm_extract_epi32(state3[0], 3) as u32)
-                                .wrapping_add(this.prefix_state[0]),
-                        ];
-
-                        let success_lane_idx = result_as
-                            .iter()
-                            .position(|x| if UPWARDS { *x > target } else { *x < target });
-
-                        if let Some(success_lane_idx) = success_lane_idx {
-                            let nonce_prefix = nonce_prefix_start + success_lane_idx as u32;
-
-                            // stamp the lane ID back onto the message
-                            {
-                                let message_bytes = decompose_blocks_mut(&mut this.message);
-                                *message_bytes.get_unchecked_mut(
-                                    *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index),
-                                ) = (nonce_prefix / 10) as u8 + b'0';
-                                *message_bytes.get_unchecked_mut(
-                                    *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + 1),
-                                ) = (nonce_prefix % 10) as u8 + b'0';
-                            }
-
-                            return Some(nonce_prefix as u64 * 10u64.pow(7) + inner_key);
-                        }
-
-                        this.attempted_nonces += 4;
-                        if this.attempted_nonces >= this.limit {
-                            return None;
-                        }
-                    }
-                }
-            }
-            None
-        }
-
-        macro_rules! dispatch {
-            ($idx0_0:literal, $idx0_1:literal, $idx0_2:literal) => {
-                match lane_id_1_word_idx {
-                    0 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 0, UPWARDS>(
-                        self, target[0],
-                    ),
-                    1 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 1, UPWARDS>(
-                        self, target[0],
-                    ),
-                    2 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 2, UPWARDS>(
-                        self, target[0],
-                    ),
-                    3 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 3, UPWARDS>(
-                        self, target[0],
-                    ),
-                    4 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 4, UPWARDS>(
-                        self, target[0],
-                    ),
-                    5 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 5, UPWARDS>(
-                        self, target[0],
-                    ),
-                    6 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 6, UPWARDS>(
-                        self, target[0],
-                    ),
-                    7 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 7, UPWARDS>(
-                        self, target[0],
-                    ),
-                    8 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 8, UPWARDS>(
-                        self, target[0],
-                    ),
-                    9 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 9, UPWARDS>(
-                        self, target[0],
-                    ),
-                    10 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 10, UPWARDS>(
-                        self, target[0],
-                    ),
-                    11 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 11, UPWARDS>(
-                        self, target[0],
-                    ),
-                    12 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 12, UPWARDS>(
-                        self, target[0],
-                    ),
-                    13 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 13, UPWARDS>(
-                        self, target[0],
-                    ),
-                    _ => unreachable_unchecked(),
-                }
-            };
-        }
-
-        let nonce = unsafe {
-            match lane_id_0_word_idx {
-                0 => dispatch!(0, 0, 0),
-                1 => dispatch!(0, 0, 1),
-                2 => dispatch!(0, 0, 2),
-                3 => dispatch!(0, 0, 3),
-                4 => dispatch!(4, 1, 0),
-                5 => dispatch!(4, 1, 1),
-                6 => dispatch!(4, 1, 2),
-                7 => dispatch!(4, 1, 3),
-                8 => dispatch!(8, 2, 0),
-                9 => dispatch!(8, 2, 1),
-                10 => dispatch!(8, 2, 2),
-                11 => dispatch!(8, 2, 3),
-                12 => dispatch!(12, 3, 0),
-                13 => dispatch!(12, 3, 1),
-                _ => unreachable_unchecked(),
-            }
-        }?;
-
-        let mut final_sha_state = self.prefix_state;
-        sha256::digest_block(&mut final_sha_state, &self.message);
-
-        Some((nonce + self.nonce_addend, final_sha_state))
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
-        // wasm don't have registers, so we there is no need for code bloat
-        // todo: do the hotstart
-
-        let lane_id_0_word_idx = self.digit_index / 4;
-        let lane_id_1_word_idx = (self.digit_index + 1) / 4;
-        let lane_id_0_byte_idx = self.digit_index % 4;
-        let lane_id_1_byte_idx = (self.digit_index + 1) % 4;
-        unsafe {
-            for prefix_set_index in 0..((100 - 10) / 4) {
-                let lane_id_0_or_value = u32x4_shl(
-                    load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index),
-                    ((3 - lane_id_0_byte_idx) * 8) as _,
-                );
-                let lane_id_1_or_value = u32x4_shl(
-                    load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index),
-                    ((3 - lane_id_1_byte_idx) * 8) as _,
-                );
-                for inner_key in 0..10_000_000 {
-                    {
-                        let message_bytes = decompose_blocks_mut(&mut self.message);
-                        let mut key_copy = inner_key;
-                        for i in (0..7).rev() {
-                            let output = key_copy % 10;
-                            key_copy /= 10;
-                            *message_bytes.get_unchecked_mut(
-                                *SWAP_DWORD_BYTE_ORDER.get_unchecked(self.digit_index + i + 2),
-                            ) = output as u8 + b'0';
-                        }
-
-                        if key_copy != 0 {
-                            debug_assert_eq!(key_copy, 0);
-                            unreachable_unchecked();
-                        }
-                    }
-
-                    let mut blocks = core::array::from_fn(|i| u32x4_splat(self.message[i]));
-                    blocks[lane_id_0_word_idx] =
-                        v128_or(blocks[lane_id_0_word_idx], lane_id_0_or_value);
-                    blocks[lane_id_1_word_idx] =
-                        v128_or(blocks[lane_id_1_word_idx], lane_id_1_or_value);
-
-                    let mut state = core::array::from_fn(|i| u32x4_splat(self.prefix_state[i]));
-                    sha256::simd128::multiway_arx::<0>(&mut state, &mut blocks);
-
-                    let result_a = u32x4_add(state[0], u32x4_splat(self.prefix_state[0]));
-
-                    let cmp_fn = if UPWARDS { u32x4_le } else { u32x4_ge };
-
-                    let a_not_met_target = cmp_fn(result_a, u32x4_splat(target[0]));
-
-                    if !u32x4_all_true(a_not_met_target) {
-                        let mut extract = [0u32; 4];
-                        v128_store(extract.as_mut_ptr().cast(), result_a);
-                        let success_lane_idx = extract
-                            .iter()
-                            .position(|x| {
-                                if UPWARDS {
-                                    *x > target[0]
-                                } else {
-                                    *x < target[0]
+                                    for i in (0..7).rev() {
+                                        let output = key_copy % 10;
+                                        key_copy /= 10;
+                                        *message_bytes.get_unchecked_mut(
+                                            *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + i + 2),
+                                        ) = output as u8 + b'0';
+                                    }
                                 }
-                            })
-                            .unwrap();
-                        let nonce_prefix = 10 + 4 * prefix_set_index + success_lane_idx;
 
-                        // stamp the lane ID back onto the message
-                        {
-                            let message_bytes = decompose_blocks_mut(&mut self.message);
-                            *message_bytes.get_unchecked_mut(
-                                *SWAP_DWORD_BYTE_ORDER.get_unchecked(self.digit_index),
-                            ) = (nonce_prefix / 10) as u8 + b'0';
-                            *message_bytes.get_unchecked_mut(
-                                *SWAP_DWORD_BYTE_ORDER.get_unchecked(self.digit_index + 1),
-                            ) = (nonce_prefix % 10) as u8 + b'0';
+                                // hint at LLVM that the modulo ends in 0
+                                if key_copy != 0 {
+                                    debug_assert_eq!(key_copy, 0);
+                                    core::hint::unreachable_unchecked();
+                                }
+
+                                let mut blocks = [
+                                    fetch_msg!(0),
+                                    fetch_msg!(1),
+                                    fetch_msg!(2),
+                                    fetch_msg!(3),
+                                    fetch_msg!(4),
+                                    fetch_msg!(5),
+                                    fetch_msg!(6),
+                                    fetch_msg!(7),
+                                    fetch_msg!(8),
+                                    fetch_msg!(9),
+                                    fetch_msg!(10),
+                                    fetch_msg!(11),
+                                    fetch_msg!(12),
+                                    fetch_msg!(13),
+                                    fetch_msg!(14),
+                                    fetch_msg!(15),
+                                ];
+
+                                let mut state =
+                                    core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
+
+                                // do 16-way SHA-256 without feedback so as not to force the compiler to save 8 registers
+                                // we already have them in scalar form, this allows more registers to be reused in the next iteration
+                                sha256::avx512::multiway_arx::<DIGIT_WORD_IDX0>(&mut state, &mut blocks);
+
+                                // the target is big endian interpretation of the first 16 bytes of the hash (A-D) >= target
+                                // however, the largest 32-bit digits is unlikely to be all ones (otherwise a legitimate challenger needs on average >2^32 attempts)
+                                // so we can reduce this into simply testing H[0]
+                                // the number of acceptable u32 values (for us) is u32::MAX / difficulty
+                                // so the "inefficiency" this creates is about (u32::MAX / difficulty) * (1 / 2), because for approx. half of the "edge case" do we actually have an acceptable solution,
+                                // which for 1e8 is about 1%, but we get to save the one broadcast add,
+                                // a vectorized comparison, and a scalar logic evaluation
+                                // which I feel is about 1% of the instructions needed per iteration anyways just more registers used so let's not bother
+
+                                let result_a = _mm512_add_epi32(
+                                    state[0],
+                                    _mm512_set1_epi32(this.prefix_state[0] as _),
+                                );
+
+                                let cmp_fn = if UPWARDS {
+                                    _mm512_cmpgt_epu32_mask
+                                } else {
+                                    _mm512_cmplt_epu32_mask
+                                };
+
+                                let a_met_target = cmp_fn(result_a, _mm512_set1_epi32(target as _));
+
+                                if a_met_target != 0 {
+                                    let success_lane_idx = _tzcnt_u16(a_met_target) as usize;
+                                    let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
+
+                                    // stamp the lane ID back onto the message
+                                    {
+                                        let message_bytes = decompose_blocks_mut(&mut this.message);
+                                        *message_bytes.get_unchecked_mut(
+                                            *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index),
+                                        ) = (nonce_prefix / 10) as u8 + b'0';
+                                        *message_bytes.get_unchecked_mut(
+                                            *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + 1),
+                                        ) = (nonce_prefix % 10) as u8 + b'0';
+                                    }
+
+                                    // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
+                                    return Some(nonce_prefix as u64 * 10u64.pow(7) + inner_key);
+                                }
+
+                                this.attempted_nonces += 16;
+                                if this.attempted_nonces >= this.limit {
+                                    return None;
+                                }
+                            }
                         }
-
-                        // recompute the hash from the beginning
-                        // this prevents the compiler from having to compute the final B-H registers alive in tight loops
-                        let mut final_sha_state = self.prefix_state;
-                        sha256::digest_block(&mut final_sha_state, &self.message);
-
-                        // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
-                        return Some((
-                            nonce_prefix as u64 * 10u64.pow(7) + inner_key + self.nonce_addend,
-                            final_sha_state,
-                        ));
                     }
+                    None
+                }
 
-                    self.attempted_nonces += 4;
-                    if self.attempted_nonces >= self.limit {
-                        return None;
+                macro_rules! dispatch {
+                    ($idx0:literal) => {
+                        match lane_id_1_word_idx {
+                            0 => solve_inner::<$idx0, 0, UPWARDS>(self, target[0]),
+                            1 => solve_inner::<$idx0, 1, UPWARDS>(self, target[0]),
+                            2 => solve_inner::<$idx0, 2, UPWARDS>(self, target[0]),
+                            3 => solve_inner::<$idx0, 3, UPWARDS>(self, target[0]),
+                            4 => solve_inner::<$idx0, 4, UPWARDS>(self, target[0]),
+                            5 => solve_inner::<$idx0, 5, UPWARDS>(self, target[0]),
+                            6 => solve_inner::<$idx0, 6, UPWARDS>(self, target[0]),
+                            7 => solve_inner::<$idx0, 7, UPWARDS>(self, target[0]),
+                            8 => solve_inner::<$idx0, 8, UPWARDS>(self, target[0]),
+                            9 => solve_inner::<$idx0, 9, UPWARDS>(self, target[0]),
+                            10 => solve_inner::<$idx0, 10, UPWARDS>(self, target[0]),
+                            11 => solve_inner::<$idx0, 11, UPWARDS>(self, target[0]),
+                            12 => solve_inner::<$idx0, 12, UPWARDS>(self, target[0]),
+                            13 => solve_inner::<$idx0, 13, UPWARDS>(self, target[0]),
+                            // there is no possible way lane ID lands on position 14 or 15, because the padding is 9 bytes and nonce tail is 7 bytes
+                            _ => core::hint::unreachable_unchecked(),
+                        }
+                    };
+                }
+
+                let nonce = unsafe {
+                    match lane_id_0_word_idx {
+                        0 => dispatch!(0),
+                        1 => dispatch!(1),
+                        2 => dispatch!(2),
+                        3 => dispatch!(3),
+                        4 => dispatch!(4),
+                        5 => dispatch!(5),
+                        6 => dispatch!(6),
+                        7 => dispatch!(7),
+                        8 => dispatch!(8),
+                        9 => dispatch!(9),
+                        10 => dispatch!(10),
+                        11 => dispatch!(11),
+                        12 => dispatch!(12),
+                        13 => dispatch!(13),
+                        _ => core::hint::unreachable_unchecked(),
+                    }
+                }?;
+
+                // recompute the hash from the beginning
+                // this prevents the compiler from having to compute the final B-H registers alive in tight loops
+                let mut final_sha_state = self.prefix_state;
+                sha256::digest_block(&mut final_sha_state, &self.message);
+
+                Some((nonce + self.nonce_addend, final_sha_state))
+            }
+        } else if #[cfg(all(target_arch = "x86_64", target_feature = "sha"))] {
+            #[inline(never)]
+            fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                let lane_id_0_word_idx = self.digit_index / 4;
+                let lane_id_1_word_idx = (self.digit_index + 1) / 4;
+
+                fn solve_inner<
+                    const DIGIT_WORD_IDX0_DIV_4_TIMES_4: usize,
+                    const DIGIT_WORD_IDX0_DIV_4: usize,
+                    const DIGIT_WORD_IDX0_MOD_4: usize,
+                    const DIGIT_WORD_IDX1: usize,
+                    const UPWARDS: bool,
+                >(
+                    this: &mut SingleBlockSolver,
+                    target: u32,
+                ) -> Option<u64> {
+                    let mut partial_state = Align16(this.prefix_state);
+                    sha256::ingest_message_prefix::<{ DIGIT_WORD_IDX0_DIV_4_TIMES_4 }>(
+                        &mut partial_state,
+                        core::array::from_fn(|i| this.message[i]),
+                    );
+                    let prepared_state = sha256::sha_ni::prepare_state(&partial_state);
+                    let lane_id_0_byte_idx = this.digit_index % 4;
+                    let lane_id_1_byte_idx = (this.digit_index + 1) % 4;
+
+                    for nonce_prefix_start in (10u32..=96).step_by(4) {
+                        unsafe {
+                            const fn to_ascii_u32(input: u32) -> u32 {
+                                let high_digit = input / 10;
+                                let low_digit = input % 10;
+                                u32::from_be_bytes([0, 0, high_digit as u8 + b'0', low_digit as u8 + b'0'])
+                            }
+                            let lane_index_values = [
+                                to_ascii_u32(nonce_prefix_start),
+                                to_ascii_u32(nonce_prefix_start + 1),
+                                to_ascii_u32(nonce_prefix_start + 2),
+                                to_ascii_u32(nonce_prefix_start + 3),
+                            ];
+
+                            let lane_id_1_or_value = core::array::from_fn(|i| {
+                                (lane_index_values[i] & 0xff) << ((3 - lane_id_1_byte_idx) * 8)
+                            });
+
+                            let lane_id_0_or_value = core::array::from_fn(|i| {
+                                let mut r = (lane_index_values[i] >> 8) << ((3 - lane_id_0_byte_idx) * 8);
+                                if DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 == DIGIT_WORD_IDX1 {
+                                    r |= lane_id_1_or_value[i]
+                                }
+                                r
+                            });
+
+                            struct LaneIdPlucker<
+                                'a,
+                                const DIGIT_WORD_IDX0_DIV_4: usize,
+                                const DIGIT_WORD_IDX0_MOD_4: usize,
+                                const DIGIT_WORD_IDX1: usize,
+                            > {
+                                lane_0_or_value: &'a [u32; 4],
+                                lane_1_or_value: &'a [u32; 4],
+                            }
+
+                            impl<
+                                'a,
+                                const DIGIT_WORD_IDX0_DIV_4: usize,
+                                const DIGIT_WORD_IDX0_MOD_4: usize,
+                                const DIGIT_WORD_IDX1: usize,
+                            >
+                                LaneIdPlucker<
+                                    'a,
+                                    DIGIT_WORD_IDX0_DIV_4,
+                                    DIGIT_WORD_IDX0_MOD_4,
+                                    DIGIT_WORD_IDX1,
+                                >
+                            {
+                                #[inline(always)]
+                                fn fetch_msg_or(&self, idx: usize, lane: usize) -> u32 {
+                                    if idx == DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 {
+                                        self.lane_0_or_value[lane]
+                                    } else if idx == DIGIT_WORD_IDX1 {
+                                        self.lane_1_or_value[lane]
+                                    } else {
+                                        0
+                                    }
+                                }
+                            }
+
+                            impl<
+                                'a,
+                                const DIGIT_WORD_IDX0_DIV_4: usize,
+                                const DIGIT_WORD_IDX0_MOD_4: usize,
+                                const DIGIT_WORD_IDX1: usize,
+                            > sha256::sha_ni::Plucker
+                                for LaneIdPlucker<
+                                    'a,
+                                    DIGIT_WORD_IDX0_DIV_4,
+                                    DIGIT_WORD_IDX0_MOD_4,
+                                    DIGIT_WORD_IDX1,
+                                >
+                            {
+                                #[inline(always)]
+                                fn pluck_qword0(&mut self, lane: usize, w: &mut __m128i) {
+                                    unsafe {
+                                        *w = _mm_or_si128(
+                                            *w,
+                                            _mm_setr_epi32(
+                                                self.fetch_msg_or(0, lane) as _,
+                                                self.fetch_msg_or(1, lane) as _,
+                                                self.fetch_msg_or(2, lane) as _,
+                                                self.fetch_msg_or(3, lane) as _,
+                                            ),
+                                        );
+                                    }
+                                }
+                                #[inline(always)]
+                                fn pluck_qword1(&mut self, lane: usize, w: &mut __m128i) {
+                                    unsafe {
+                                        *w = _mm_or_si128(
+                                            *w,
+                                            _mm_setr_epi32(
+                                                self.fetch_msg_or(4, lane) as _,
+                                                self.fetch_msg_or(5, lane) as _,
+                                                self.fetch_msg_or(6, lane) as _,
+                                                self.fetch_msg_or(7, lane) as _,
+                                            ),
+                                        );
+                                    }
+                                }
+                                #[inline(always)]
+                                fn pluck_qword2(&mut self, lane: usize, w: &mut __m128i) {
+                                    unsafe {
+                                        *w = _mm_or_si128(
+                                            *w,
+                                            _mm_setr_epi32(
+                                                self.fetch_msg_or(8, lane) as _,
+                                                self.fetch_msg_or(9, lane) as _,
+                                                self.fetch_msg_or(10, lane) as _,
+                                                self.fetch_msg_or(11, lane) as _,
+                                            ),
+                                        );
+                                    }
+                                }
+                                #[inline(always)]
+                                fn pluck_qword3(&mut self, lane: usize, w: &mut __m128i) {
+                                    unsafe {
+                                        *w = _mm_or_si128(
+                                            *w,
+                                            _mm_setr_epi32(
+                                                self.fetch_msg_or(12, lane) as _,
+                                                self.fetch_msg_or(13, lane) as _,
+                                                self.fetch_msg_or(14, lane) as _,
+                                                self.fetch_msg_or(15, lane) as _,
+                                            ),
+                                        );
+                                    }
+                                }
+                            }
+
+                            for inner_key in 0..10_000_000 {
+                                let mut key_copy = inner_key;
+                                {
+                                    let message_bytes = decompose_blocks_mut(&mut this.message);
+
+                                    for i in (0..7).rev() {
+                                        let output = key_copy % 10;
+                                        key_copy /= 10;
+                                        *message_bytes.get_unchecked_mut(
+                                            *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + i + 2),
+                                        ) = output as u8 + b'0';
+                                    }
+                                }
+
+                                let mut state0 = prepared_state;
+                                let mut state1 = prepared_state;
+                                let mut state2 = prepared_state;
+                                let mut state3 = prepared_state;
+
+                                sha256::sha_ni::multiway_arx_abef_cdgh::<{ DIGIT_WORD_IDX0_DIV_4 }, 4, _>(
+                                    [&mut state0, &mut state1, &mut state2, &mut state3],
+                                    &mut this.message,
+                                    LaneIdPlucker::<
+                                        DIGIT_WORD_IDX0_DIV_4,
+                                        DIGIT_WORD_IDX0_MOD_4,
+                                        DIGIT_WORD_IDX1,
+                                    > {
+                                        lane_0_or_value: &lane_id_0_or_value,
+                                        lane_1_or_value: &lane_id_1_or_value,
+                                    },
+                                );
+
+                                let result_as = [
+                                    (_mm_extract_epi32(state0[0], 3) as u32)
+                                        .wrapping_add(this.prefix_state[0]),
+                                    (_mm_extract_epi32(state1[0], 3) as u32)
+                                        .wrapping_add(this.prefix_state[0]),
+                                    (_mm_extract_epi32(state2[0], 3) as u32)
+                                        .wrapping_add(this.prefix_state[0]),
+                                    (_mm_extract_epi32(state3[0], 3) as u32)
+                                        .wrapping_add(this.prefix_state[0]),
+                                ];
+
+                                let success_lane_idx = result_as
+                                    .iter()
+                                    .position(|x| if UPWARDS { *x > target } else { *x < target });
+
+                                if let Some(success_lane_idx) = success_lane_idx {
+                                    let nonce_prefix = nonce_prefix_start + success_lane_idx as u32;
+
+                                    // stamp the lane ID back onto the message
+                                    {
+                                        let message_bytes = decompose_blocks_mut(&mut this.message);
+                                        *message_bytes.get_unchecked_mut(
+                                            *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index),
+                                        ) = (nonce_prefix / 10) as u8 + b'0';
+                                        *message_bytes.get_unchecked_mut(
+                                            *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + 1),
+                                        ) = (nonce_prefix % 10) as u8 + b'0';
+                                    }
+
+                                    return Some(nonce_prefix as u64 * 10u64.pow(7) + inner_key);
+                                }
+
+                                this.attempted_nonces += 4;
+                                if this.attempted_nonces >= this.limit {
+                                    return None;
+                                }
+                            }
+                        }
+                    }
+                    None
+                }
+
+                macro_rules! dispatch {
+                    ($idx0_0:literal, $idx0_1:literal, $idx0_2:literal) => {
+                        match lane_id_1_word_idx {
+                            0 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 0, UPWARDS>(
+                                self, target[0],
+                            ),
+                            1 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 1, UPWARDS>(
+                                self, target[0],
+                            ),
+                            2 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 2, UPWARDS>(
+                                self, target[0],
+                            ),
+                            3 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 3, UPWARDS>(
+                                self, target[0],
+                            ),
+                            4 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 4, UPWARDS>(
+                                self, target[0],
+                            ),
+                            5 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 5, UPWARDS>(
+                                self, target[0],
+                            ),
+                            6 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 6, UPWARDS>(
+                                self, target[0],
+                            ),
+                            7 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 7, UPWARDS>(
+                                self, target[0],
+                            ),
+                            8 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 8, UPWARDS>(
+                                self, target[0],
+                            ),
+                            9 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 9, UPWARDS>(
+                                self, target[0],
+                            ),
+                            10 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 10, UPWARDS>(
+                                self, target[0],
+                            ),
+                            11 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 11, UPWARDS>(
+                                self, target[0],
+                            ),
+                            12 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 12, UPWARDS>(
+                                self, target[0],
+                            ),
+                            13 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 13, UPWARDS>(
+                                self, target[0],
+                            ),
+                            _ => core::hint::unreachable_unchecked(),
+                        }
+                    };
+                }
+
+                let nonce = unsafe {
+                    match lane_id_0_word_idx {
+                        0 => dispatch!(0, 0, 0),
+                        1 => dispatch!(0, 0, 1),
+                        2 => dispatch!(0, 0, 2),
+                        3 => dispatch!(0, 0, 3),
+                        4 => dispatch!(4, 1, 0),
+                        5 => dispatch!(4, 1, 1),
+                        6 => dispatch!(4, 1, 2),
+                        7 => dispatch!(4, 1, 3),
+                        8 => dispatch!(8, 2, 0),
+                        9 => dispatch!(8, 2, 1),
+                        10 => dispatch!(8, 2, 2),
+                        11 => dispatch!(8, 2, 3),
+                        12 => dispatch!(12, 3, 0),
+                        13 => dispatch!(12, 3, 1),
+                        _ => core::hint::unreachable_unchecked(),
+                    }
+                }?;
+
+                let mut final_sha_state = self.prefix_state;
+                sha256::digest_block(&mut final_sha_state, &self.message);
+
+                Some((nonce + self.nonce_addend, final_sha_state))
+            }
+        } else if #[cfg(target_arch = "wasm32")] {
+            #[inline(never)]
+            fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                // wasm don't have registers, so we there is no need for code bloat
+                // todo: do the hotstart
+
+                let lane_id_0_word_idx = self.digit_index / 4;
+                let lane_id_1_word_idx = (self.digit_index + 1) / 4;
+                let lane_id_0_byte_idx = self.digit_index % 4;
+                let lane_id_1_byte_idx = (self.digit_index + 1) % 4;
+                unsafe {
+                    for prefix_set_index in 0..((100 - 10) / 4) {
+                        let lane_id_0_or_value = u32x4_shl(
+                            load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index),
+                            ((3 - lane_id_0_byte_idx) * 8) as _,
+                        );
+                        let lane_id_1_or_value = u32x4_shl(
+                            load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index),
+                            ((3 - lane_id_1_byte_idx) * 8) as _,
+                        );
+                        for inner_key in 0..10_000_000 {
+                            {
+                                let message_bytes = decompose_blocks_mut(&mut self.message);
+                                let mut key_copy = inner_key;
+                                for i in (0..7).rev() {
+                                    let output = key_copy % 10;
+                                    key_copy /= 10;
+                                    *message_bytes.get_unchecked_mut(
+                                        *SWAP_DWORD_BYTE_ORDER.get_unchecked(self.digit_index + i + 2),
+                                    ) = output as u8 + b'0';
+                                }
+
+                                if key_copy != 0 {
+                                    debug_assert_eq!(key_copy, 0);
+                                    core::hint::unreachable_unchecked();
+                                }
+                            }
+
+                            let mut blocks = core::array::from_fn(|i| u32x4_splat(self.message[i]));
+                            blocks[lane_id_0_word_idx] =
+                                v128_or(blocks[lane_id_0_word_idx], lane_id_0_or_value);
+                            blocks[lane_id_1_word_idx] =
+                                v128_or(blocks[lane_id_1_word_idx], lane_id_1_or_value);
+
+                            let mut state = core::array::from_fn(|i| u32x4_splat(self.prefix_state[i]));
+                            sha256::simd128::multiway_arx::<0>(&mut state, &mut blocks);
+
+                            let result_a = u32x4_add(state[0], u32x4_splat(self.prefix_state[0]));
+
+                            let cmp_fn = if UPWARDS { u32x4_le } else { u32x4_ge };
+
+                            let a_not_met_target = cmp_fn(result_a, u32x4_splat(target[0]));
+
+                            if !u32x4_all_true(a_not_met_target) {
+                                let mut extract = [0u32; 4];
+                                v128_store(extract.as_mut_ptr().cast(), result_a);
+                                let success_lane_idx = extract
+                                    .iter()
+                                    .position(|x| {
+                                        if UPWARDS {
+                                            *x > target[0]
+                                        } else {
+                                            *x < target[0]
+                                        }
+                                    })
+                                    .unwrap();
+                                let nonce_prefix = 10 + 4 * prefix_set_index + success_lane_idx;
+
+                                // stamp the lane ID back onto the message
+                                {
+                                    let message_bytes = decompose_blocks_mut(&mut self.message);
+                                    *message_bytes.get_unchecked_mut(
+                                        *SWAP_DWORD_BYTE_ORDER.get_unchecked(self.digit_index),
+                                    ) = (nonce_prefix / 10) as u8 + b'0';
+                                    *message_bytes.get_unchecked_mut(
+                                        *SWAP_DWORD_BYTE_ORDER.get_unchecked(self.digit_index + 1),
+                                    ) = (nonce_prefix % 10) as u8 + b'0';
+                                }
+
+                                // recompute the hash from the beginning
+                                // this prevents the compiler from having to compute the final B-H registers alive in tight loops
+                                let mut final_sha_state = self.prefix_state;
+                                sha256::digest_block(&mut final_sha_state, &self.message);
+
+                                // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
+                                return Some((
+                                    nonce_prefix as u64 * 10u64.pow(7) + inner_key + self.nonce_addend,
+                                    final_sha_state,
+                                ));
+                            }
+
+                            self.attempted_nonces += 4;
+                            if self.attempted_nonces >= self.limit {
+                                return None;
+                            }
+                        }
                     }
                 }
+                None
+            }
+        } else {
+            #[inline(never)]
+            fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+
+                let mut buffer : sha2::digest::crypto_common::Block<sha2::Sha256> = Default::default();
+                for i in 0..16 {
+                    buffer[i*4..i*4+4].copy_from_slice(&self.message[i].to_be_bytes());
+                }
+
+                for key in 100_000_000..1_000_000_000 {
+                    let mut key_copy = key;
+                    for j in (0..9).rev() {
+                        buffer[self.digit_index + j] = (key_copy % 10) as u8 + b'0';
+                        key_copy /= 10;
+                    }
+
+                    let mut state = self.prefix_state;
+                    sha2::compress256(&mut state, &[buffer]);
+
+                    let cmp_fn = if UPWARDS { u32::gt } else { u32::lt };
+
+                    if cmp_fn(&state[0], &target[0]) {
+                        return Some((key + self.nonce_addend, state));
+                    }
+                }
+
+                None
             }
         }
-        None
     }
 }
 
 /// Solver for double SHA-256 cases
 ///
 /// It has slightly better than half throughput than the single block solver, but you should use the single block solver if possible
-pub struct DoubleBlockSolver16Way {
+pub struct DoubleBlockSolver {
     // the SHA-256 state A-H for all prefix bytes
     pub(crate) prefix_state: Align16<[u32; 8]>,
 
@@ -981,7 +996,7 @@ pub struct DoubleBlockSolver16Way {
     limit: u32,
 }
 
-impl DoubleBlockSolver16Way {
+impl DoubleBlockSolver {
     const DIGIT_IDX: u64 = 54;
 
     pub fn set_limit(&mut self, limit: u32) {
@@ -993,7 +1008,7 @@ impl DoubleBlockSolver16Way {
     }
 }
 
-impl Solver for DoubleBlockSolver16Way {
+impl Solver for DoubleBlockSolver {
     type Ctx = ();
 
     fn new(_ctx: Self::Ctx, mut prefix: &[u8]) -> Option<Self>
@@ -1076,461 +1091,501 @@ impl Solver for DoubleBlockSolver16Way {
         })
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
-        let mut partial_state = self.prefix_state;
-        sha256::sha2_arx::<0, 13>(&mut partial_state, self.message[..13].try_into().unwrap());
+    cfg_if::cfg_if! {
+        if #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))] {
+            fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                let mut partial_state = self.prefix_state;
+                sha256::sha2_arx::<0, 13>(&mut partial_state, self.message[..13].try_into().unwrap());
 
-        let mut terminal_message_schedule = Align16([0; 64]);
-        terminal_message_schedule[14] = ((self.message_length as u64 * 8) >> 32) as u32;
-        terminal_message_schedule[15] = (self.message_length as u64 * 8) as u32;
-        sha256::do_message_schedule_k_w(&mut terminal_message_schedule);
+                let mut terminal_message_schedule = Align16([0; 64]);
+                terminal_message_schedule[14] = ((self.message_length as u64 * 8) >> 32) as u32;
+                terminal_message_schedule[15] = (self.message_length as u64 * 8) as u32;
+                sha256::do_message_schedule_k_w(&mut terminal_message_schedule);
 
-        for prefix_set_index in 0..5 {
-            unsafe {
-                let lane_id_0_or_value =
-                    _mm512_slli_epi32(load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index), 8);
-                let lane_id_1_or_value = load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index);
+                for prefix_set_index in 0..5 {
+                    unsafe {
+                        let lane_id_0_or_value =
+                            _mm512_slli_epi32(load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index), 8);
+                        let lane_id_1_or_value = load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index);
 
-                let lane_index_value_v = _mm512_or_epi32(
-                    _mm512_set1_epi32(self.message[13] as _),
-                    _mm512_or_epi32(lane_id_0_or_value, lane_id_1_or_value),
-                );
+                        let lane_index_value_v = _mm512_or_epi32(
+                            _mm512_set1_epi32(self.message[13] as _),
+                            _mm512_or_epi32(lane_id_0_or_value, lane_id_1_or_value),
+                        );
 
-                for inner_key in 0..10_000_000 {
-                    let mut key_copy = inner_key;
-                    let mut cum0 = 0;
-                    for _ in 0..4 {
-                        cum0 <<= 8;
-                        cum0 |= key_copy % 10;
-                        key_copy /= 10;
-                    }
-                    cum0 |= u32::from_be_bytes(*b"0000");
-                    let mut cum1 = 0;
-                    for _ in 0..3 {
-                        cum1 += key_copy % 10;
-                        cum1 <<= 8;
-                        key_copy /= 10;
-                    }
-                    cum1 |= u32::from_be_bytes(*b"000\x80");
+                        for inner_key in 0..10_000_000 {
+                            let mut key_copy = inner_key;
+                            let mut cum0 = 0;
+                            for _ in 0..4 {
+                                cum0 <<= 8;
+                                cum0 |= key_copy % 10;
+                                key_copy /= 10;
+                            }
+                            cum0 |= u32::from_be_bytes(*b"0000");
+                            let mut cum1 = 0;
+                            for _ in 0..3 {
+                                cum1 += key_copy % 10;
+                                cum1 <<= 8;
+                                key_copy /= 10;
+                            }
+                            cum1 |= u32::from_be_bytes(*b"000\x80");
 
-                    if key_copy != 0 {
-                        debug_assert_eq!(key_copy, 0);
-                        unreachable_unchecked();
-                    }
+                            if key_copy != 0 {
+                                debug_assert_eq!(key_copy, 0);
+                                core::hint::unreachable_unchecked();
+                            }
 
-                    let mut blocks = [
-                        _mm512_set1_epi32(self.message[0] as _),
-                        _mm512_set1_epi32(self.message[1] as _),
-                        _mm512_set1_epi32(self.message[2] as _),
-                        _mm512_set1_epi32(self.message[3] as _),
-                        _mm512_set1_epi32(self.message[4] as _),
-                        _mm512_set1_epi32(self.message[5] as _),
-                        _mm512_set1_epi32(self.message[6] as _),
-                        _mm512_set1_epi32(self.message[7] as _),
-                        _mm512_set1_epi32(self.message[8] as _),
-                        _mm512_set1_epi32(self.message[9] as _),
-                        _mm512_set1_epi32(self.message[10] as _),
-                        _mm512_set1_epi32(self.message[11] as _),
-                        _mm512_set1_epi32(self.message[12] as _),
-                        lane_index_value_v,
-                        _mm512_set1_epi32(cum0 as _),
-                        _mm512_set1_epi32(cum1 as _),
-                    ];
+                            let mut blocks = [
+                                _mm512_set1_epi32(self.message[0] as _),
+                                _mm512_set1_epi32(self.message[1] as _),
+                                _mm512_set1_epi32(self.message[2] as _),
+                                _mm512_set1_epi32(self.message[3] as _),
+                                _mm512_set1_epi32(self.message[4] as _),
+                                _mm512_set1_epi32(self.message[5] as _),
+                                _mm512_set1_epi32(self.message[6] as _),
+                                _mm512_set1_epi32(self.message[7] as _),
+                                _mm512_set1_epi32(self.message[8] as _),
+                                _mm512_set1_epi32(self.message[9] as _),
+                                _mm512_set1_epi32(self.message[10] as _),
+                                _mm512_set1_epi32(self.message[11] as _),
+                                _mm512_set1_epi32(self.message[12] as _),
+                                lane_index_value_v,
+                                _mm512_set1_epi32(cum0 as _),
+                                _mm512_set1_epi32(cum1 as _),
+                            ];
 
-                    let mut state =
-                        core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
+                            let mut state =
+                                core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
 
-                    sha256::avx512::multiway_arx::<13>(&mut state, &mut blocks);
+                            sha256::avx512::multiway_arx::<13>(&mut state, &mut blocks);
 
-                    // we have to do feedback now
-                    state.iter_mut().zip(self.prefix_state.iter()).for_each(
-                        |(state, prefix_state)| {
-                            *state =
-                                _mm512_add_epi32(*state, _mm512_set1_epi32(*prefix_state as _));
-                        },
-                    );
+                            // we have to do feedback now
+                            state.iter_mut().zip(self.prefix_state.iter()).for_each(
+                                |(state, prefix_state)| {
+                                    *state =
+                                        _mm512_add_epi32(*state, _mm512_set1_epi32(*prefix_state as _));
+                                },
+                            );
 
-                    // save only A register for comparison
-                    let save_a = state[0];
+                            // save only A register for comparison
+                            let save_a = state[0];
 
-                    sha256::avx512::bcst_multiway_arx::<14>(&mut state, &terminal_message_schedule);
+                            sha256::avx512::bcst_multiway_arx::<14>(&mut state, &terminal_message_schedule);
 
-                    let cmp_fn = if UPWARDS {
-                        _mm512_cmpgt_epu32_mask
-                    } else {
-                        _mm512_cmplt_epu32_mask
-                    };
-
-                    let a_met_target = (cmp_fn)(
-                        _mm512_add_epi32(state[0], save_a),
-                        _mm512_set1_epi32(target[0] as _),
-                    );
-
-                    if a_met_target != 0 {
-                        let success_lane_idx = _tzcnt_u16(a_met_target) as usize;
-                        let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
-
-                        self.message[14] = cum0;
-                        self.message[15] = cum1;
-                        {
-                            let message_bytes = decompose_blocks_mut(&mut self.message);
-                            *message_bytes.get_unchecked_mut(
-                                *SWAP_DWORD_BYTE_ORDER.get_unchecked(Self::DIGIT_IDX as usize),
-                            ) = (nonce_prefix / 10) as u8 + b'0';
-                            *message_bytes.get_unchecked_mut(
-                                *SWAP_DWORD_BYTE_ORDER.get_unchecked(Self::DIGIT_IDX as usize + 1),
-                            ) = (nonce_prefix % 10) as u8 + b'0';
-                        }
-
-                        // recompute the hash from the beginning
-                        // this prevents the compiler from having to compute the final B-H registers alive in tight loops
-                        let mut final_sha_state = self.prefix_state;
-                        sha256::digest_block(&mut final_sha_state, &self.message);
-                        let mut terminal_message = [0; 16];
-                        terminal_message[14] = ((self.message_length * 8) >> 32) as u32;
-                        terminal_message[15] = (self.message_length * 8) as u32;
-                        sha256::digest_block(&mut final_sha_state, &terminal_message);
-
-                        // reverse the byte order
-                        let mut nonce_suffix = 0;
-                        let mut key_copy = inner_key;
-                        for _ in 0..7 {
-                            nonce_suffix *= 10;
-                            nonce_suffix += key_copy % 10;
-                            key_copy /= 10;
-                        }
-
-                        let computed_nonce = nonce_prefix as u64 * 10u64.pow(7)
-                            + nonce_suffix as u64
-                            + self.nonce_addend;
-
-                        // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
-                        return Some((computed_nonce, *final_sha_state));
-                    }
-
-                    self.attempted_nonces += 16;
-
-                    if self.attempted_nonces >= self.limit {
-                        return None;
-                    }
-                }
-            }
-        }
-
-        None
-    }
-
-    #[cfg(all(
-        target_arch = "x86_64",
-        not(target_feature = "avx512f"),
-        target_feature = "sha"
-    ))]
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
-        let iv_state = sha256::sha_ni::prepare_state(&self.prefix_state);
-        let mut prefix_state = Align16(self.prefix_state);
-        sha256::sha2_arx::<0, 12>(&mut prefix_state, self.message[..12].try_into().unwrap());
-        let prepared_state = sha256::sha_ni::prepare_state(&prefix_state);
-
-        let mut terminal_message = Align16([0; 16]);
-        terminal_message[14] = ((self.message_length * 8) >> 32) as u32;
-        terminal_message[15] = (self.message_length * 8) as u32;
-
-        for nonce_prefix_start in (10u32..=96).step_by(4) {
-            unsafe {
-                const fn to_ascii_u32(input: u32) -> u32 {
-                    let high_digit = input / 10;
-                    let low_digit = input % 10;
-                    u32::from_be_bytes([0, 0, high_digit as u8 + b'0', low_digit as u8 + b'0'])
-                }
-                let lane_index_value_v = [
-                    to_ascii_u32(nonce_prefix_start) | self.message[13],
-                    to_ascii_u32(nonce_prefix_start + 1) | self.message[13],
-                    to_ascii_u32(nonce_prefix_start + 2) | self.message[13],
-                    to_ascii_u32(nonce_prefix_start + 3) | self.message[13],
-                ];
-
-                for inner_key in 0..10_000_000 {
-                    let mut states0 = prepared_state;
-                    let mut states1 = prepared_state;
-                    let mut states2 = prepared_state;
-                    let mut states3 = prepared_state;
-
-                    let mut key_copy = inner_key;
-                    let mut cum0 = 0;
-                    for _ in 0..4 {
-                        cum0 <<= 8;
-                        cum0 |= key_copy % 10;
-                        key_copy /= 10;
-                    }
-                    cum0 |= u32::from_be_bytes(*b"0000");
-                    let mut cum1 = 0;
-                    for _ in 0..3 {
-                        cum1 += key_copy % 10;
-                        cum1 <<= 8;
-                        key_copy /= 10;
-                    }
-                    cum1 |= u32::from_be_bytes(*b"000\x80");
-
-                    if key_copy != 0 {
-                        debug_assert_eq!(key_copy, 0);
-                        unreachable_unchecked();
-                    }
-
-                    let mut msg0 = Align16([0; 16]);
-                    msg0[..13].copy_from_slice(self.message[..13].try_into().unwrap());
-                    msg0[14] = cum0;
-                    msg0[15] = cum1;
-
-                    struct LaneIdPlucker<'a> {
-                        lane_index_value_v: &'a [u32; 4],
-                    }
-                    impl<'a> sha256::sha_ni::Plucker for LaneIdPlucker<'a> {
-                        #[inline(always)]
-                        fn pluck_qword3(&mut self, lane: usize, w: &mut __m128i) {
-                            *w = unsafe {
-                                _mm_or_si128(
-                                    *w,
-                                    _mm_setr_epi32(0, self.lane_index_value_v[lane] as _, 0, 0),
-                                )
+                            let cmp_fn = if UPWARDS {
+                                _mm512_cmpgt_epu32_mask
+                            } else {
+                                _mm512_cmplt_epu32_mask
                             };
+
+                            let a_met_target = (cmp_fn)(
+                                _mm512_add_epi32(state[0], save_a),
+                                _mm512_set1_epi32(target[0] as _),
+                            );
+
+                            if a_met_target != 0 {
+                                let success_lane_idx = _tzcnt_u16(a_met_target) as usize;
+                                let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
+
+                                self.message[14] = cum0;
+                                self.message[15] = cum1;
+                                {
+                                    let message_bytes = decompose_blocks_mut(&mut self.message);
+                                    *message_bytes.get_unchecked_mut(
+                                        *SWAP_DWORD_BYTE_ORDER.get_unchecked(Self::DIGIT_IDX as usize),
+                                    ) = (nonce_prefix / 10) as u8 + b'0';
+                                    *message_bytes.get_unchecked_mut(
+                                        *SWAP_DWORD_BYTE_ORDER.get_unchecked(Self::DIGIT_IDX as usize + 1),
+                                    ) = (nonce_prefix % 10) as u8 + b'0';
+                                }
+
+                                // recompute the hash from the beginning
+                                // this prevents the compiler from having to compute the final B-H registers alive in tight loops
+                                let mut final_sha_state = self.prefix_state;
+                                sha256::digest_block(&mut final_sha_state, &self.message);
+                                let mut terminal_message = [0; 16];
+                                terminal_message[14] = ((self.message_length * 8) >> 32) as u32;
+                                terminal_message[15] = (self.message_length * 8) as u32;
+                                sha256::digest_block(&mut final_sha_state, &terminal_message);
+
+                                // reverse the byte order
+                                let mut nonce_suffix = 0;
+                                let mut key_copy = inner_key;
+                                for _ in 0..7 {
+                                    nonce_suffix *= 10;
+                                    nonce_suffix += key_copy % 10;
+                                    key_copy /= 10;
+                                }
+
+                                let computed_nonce = nonce_prefix as u64 * 10u64.pow(7)
+                                    + nonce_suffix as u64
+                                    + self.nonce_addend;
+
+                                // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
+                                return Some((computed_nonce, *final_sha_state));
+                            }
+
+                            self.attempted_nonces += 16;
+
+                            if self.attempted_nonces >= self.limit {
+                                return None;
+                            }
                         }
-                    }
-
-                    sha256::sha_ni::multiway_arx_abef_cdgh::<3, 4, LaneIdPlucker>(
-                        [&mut states0, &mut states1, &mut states2, &mut states3],
-                        &msg0,
-                        LaneIdPlucker {
-                            lane_index_value_v: &lane_index_value_v,
-                        },
-                    );
-
-                    for s in [&mut states0, &mut states1, &mut states2, &mut states3] {
-                        s.iter_mut()
-                            .zip(iv_state.iter())
-                            .for_each(|(state, iv_state)| {
-                                *state = _mm_add_epi32(*state, *iv_state);
-                            });
-                    }
-
-                    let save_as = [
-                        _mm_extract_epi32(states0[0], 3) as u32,
-                        _mm_extract_epi32(states1[0], 3) as u32,
-                        _mm_extract_epi32(states2[0], 3) as u32,
-                        _mm_extract_epi32(states3[0], 3) as u32,
-                    ];
-
-                    // this isn't really SIMD so we can't really amortize the cost of fetching message schedule
-                    // so let's compute it with sha-ni
-                    sha256::sha_ni::multiway_arx_abef_cdgh::<0, 4, _>(
-                        [&mut states0, &mut states1, &mut states2, &mut states3],
-                        &terminal_message,
-                        (),
-                    );
-
-                    let final_as = [
-                        (_mm_extract_epi32(states0[0], 3) as u32).wrapping_add(save_as[0]),
-                        (_mm_extract_epi32(states1[0], 3) as u32).wrapping_add(save_as[1]),
-                        (_mm_extract_epi32(states2[0], 3) as u32).wrapping_add(save_as[2]),
-                        (_mm_extract_epi32(states3[0], 3) as u32).wrapping_add(save_as[3]),
-                    ];
-
-                    let success_lane_idx = final_as.iter().position(|x| {
-                        if UPWARDS {
-                            *x > target[0]
-                        } else {
-                            *x < target[0]
-                        }
-                    });
-
-                    if let Some(success_lane_idx) = success_lane_idx {
-                        let nonce_prefix = nonce_prefix_start + success_lane_idx as u32;
-                        self.message[13] = lane_index_value_v[success_lane_idx];
-                        self.message[14] = cum0;
-                        self.message[15] = cum1;
-
-                        // recompute the hash from the beginning
-                        // this prevents the compiler from having to compute the final B-H registers alive in tight loops
-                        let mut final_sha_state = self.prefix_state;
-                        sha256::digest_block(&mut final_sha_state, &self.message);
-                        sha256::digest_block(&mut final_sha_state, &terminal_message);
-
-                        // reverse the byte order
-                        let mut nonce_suffix = 0;
-                        let mut key_copy = inner_key;
-                        for _ in 0..7 {
-                            nonce_suffix *= 10;
-                            nonce_suffix += key_copy % 10;
-                            key_copy /= 10;
-                        }
-
-                        let computed_nonce = nonce_prefix as u64 * 10u64.pow(7)
-                            + nonce_suffix as u64
-                            + self.nonce_addend;
-
-                        // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
-                        return Some((computed_nonce, *final_sha_state));
-                    }
-
-                    self.attempted_nonces += 4;
-
-                    if self.attempted_nonces >= self.limit {
-                        return None;
                     }
                 }
+
+                None
             }
-        }
-        None
-    }
+        } else if #[cfg(all(target_arch = "x86_64", target_feature = "sha"))] {
+            fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                let iv_state = sha256::sha_ni::prepare_state(&self.prefix_state);
+                let mut prefix_state = Align16(self.prefix_state);
+                sha256::sha2_arx::<0, 12>(&mut prefix_state, self.message[..12].try_into().unwrap());
+                let prepared_state = sha256::sha_ni::prepare_state(&prefix_state);
 
-    #[cfg(target_arch = "wasm32")]
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
-        let mut partial_state = Align64(self.prefix_state);
-        sha256::sha2_arx::<0, 13>(&mut partial_state, self.message[..13].try_into().unwrap());
+                let mut terminal_message = Align16([0; 16]);
+                terminal_message[14] = ((self.message_length * 8) >> 32) as u32;
+                terminal_message[15] = (self.message_length * 8) as u32;
 
-        let mut terminal_message_schedule = Align16([0; 64]);
-        terminal_message_schedule[14] = ((self.message_length as u64 * 8) >> 32) as u32;
-        terminal_message_schedule[15] = (self.message_length as u64 * 8) as u32;
-        sha256::do_message_schedule_k_w(&mut terminal_message_schedule);
+                for nonce_prefix_start in (10u32..=96).step_by(4) {
+                    unsafe {
+                        const fn to_ascii_u32(input: u32) -> u32 {
+                            let high_digit = input / 10;
+                            let low_digit = input % 10;
+                            u32::from_be_bytes([0, 0, high_digit as u8 + b'0', low_digit as u8 + b'0'])
+                        }
+                        let lane_index_value_v = [
+                            to_ascii_u32(nonce_prefix_start) | self.message[13],
+                            to_ascii_u32(nonce_prefix_start + 1) | self.message[13],
+                            to_ascii_u32(nonce_prefix_start + 2) | self.message[13],
+                            to_ascii_u32(nonce_prefix_start + 3) | self.message[13],
+                        ];
 
-        for prefix_set_index in 0..((100 - 10) / 4) {
-            unsafe {
-                let lane_id_0_or_value =
-                    u32x4_shl(load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index), 8);
-                let lane_id_1_or_value = load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index);
+                        for inner_key in 0..10_000_000 {
+                            let mut states0 = prepared_state;
+                            let mut states1 = prepared_state;
+                            let mut states2 = prepared_state;
+                            let mut states3 = prepared_state;
 
-                let lane_index_value_v = v128_or(
-                    u32x4_splat(self.message[13] as _),
-                    v128_or(lane_id_0_or_value, lane_id_1_or_value),
-                );
+                            let mut key_copy = inner_key;
+                            let mut cum0 = 0;
+                            for _ in 0..4 {
+                                cum0 <<= 8;
+                                cum0 |= key_copy % 10;
+                                key_copy /= 10;
+                            }
+                            cum0 |= u32::from_be_bytes(*b"0000");
+                            let mut cum1 = 0;
+                            for _ in 0..3 {
+                                cum1 += key_copy % 10;
+                                cum1 <<= 8;
+                                key_copy /= 10;
+                            }
+                            cum1 |= u32::from_be_bytes(*b"000\x80");
 
-                for inner_key in 0..10_000_000 {
-                    let mut key_copy = inner_key;
-                    let mut cum0 = 0;
-                    for _ in 0..4 {
-                        cum0 <<= 8;
-                        cum0 |= key_copy % 10;
-                        key_copy /= 10;
-                    }
-                    cum0 |= u32::from_be_bytes(*b"0000");
-                    let mut cum1 = 0;
-                    for _ in 0..3 {
-                        cum1 += key_copy % 10;
-                        cum1 <<= 8;
-                        key_copy /= 10;
-                    }
-                    cum1 |= u32::from_be_bytes(*b"000\x80");
+                            if key_copy != 0 {
+                                debug_assert_eq!(key_copy, 0);
+                                core::hint::unreachable_unchecked();
+                            }
 
-                    if key_copy != 0 {
-                        debug_assert_eq!(key_copy, 0);
-                        unreachable_unchecked();
-                    }
+                            let mut msg0 = Align16([0; 16]);
+                            msg0[..13].copy_from_slice(self.message[..13].try_into().unwrap());
+                            msg0[14] = cum0;
+                            msg0[15] = cum1;
 
-                    let mut blocks = [
-                        u32x4_splat(self.message[0] as _),
-                        u32x4_splat(self.message[1] as _),
-                        u32x4_splat(self.message[2] as _),
-                        u32x4_splat(self.message[3] as _),
-                        u32x4_splat(self.message[4] as _),
-                        u32x4_splat(self.message[5] as _),
-                        u32x4_splat(self.message[6] as _),
-                        u32x4_splat(self.message[7] as _),
-                        u32x4_splat(self.message[8] as _),
-                        u32x4_splat(self.message[9] as _),
-                        u32x4_splat(self.message[10] as _),
-                        u32x4_splat(self.message[11] as _),
-                        u32x4_splat(self.message[12] as _),
-                        lane_index_value_v,
-                        u32x4_splat(cum0 as _),
-                        u32x4_splat(cum1 as _),
-                    ];
+                            struct LaneIdPlucker<'a> {
+                                lane_index_value_v: &'a [u32; 4],
+                            }
+                            impl<'a> sha256::sha_ni::Plucker for LaneIdPlucker<'a> {
+                                #[inline(always)]
+                                fn pluck_qword3(&mut self, lane: usize, w: &mut __m128i) {
+                                    *w = unsafe {
+                                        _mm_or_si128(
+                                            *w,
+                                            _mm_setr_epi32(0, self.lane_index_value_v[lane] as _, 0, 0),
+                                        )
+                                    };
+                                }
+                            }
 
-                    let mut state = core::array::from_fn(|i| u32x4_splat(partial_state[i]));
-                    sha256::simd128::multiway_arx::<13>(&mut state, &mut blocks);
+                            sha256::sha_ni::multiway_arx_abef_cdgh::<3, 4, LaneIdPlucker>(
+                                [&mut states0, &mut states1, &mut states2, &mut states3],
+                                &msg0,
+                                LaneIdPlucker {
+                                    lane_index_value_v: &lane_index_value_v,
+                                },
+                            );
 
-                    state.iter_mut().zip(self.prefix_state.iter()).for_each(
-                        |(state, prefix_state)| {
-                            *state = u32x4_add(*state, u32x4_splat(*prefix_state as _));
-                        },
-                    );
+                            for s in [&mut states0, &mut states1, &mut states2, &mut states3] {
+                                s.iter_mut()
+                                    .zip(iv_state.iter())
+                                    .for_each(|(state, iv_state)| {
+                                        *state = _mm_add_epi32(*state, *iv_state);
+                                    });
+                            }
 
-                    let save_a = state[0];
+                            let save_as = [
+                                _mm_extract_epi32(states0[0], 3) as u32,
+                                _mm_extract_epi32(states1[0], 3) as u32,
+                                _mm_extract_epi32(states2[0], 3) as u32,
+                                _mm_extract_epi32(states3[0], 3) as u32,
+                            ];
 
-                    sha256::simd128::bcst_multiway_arx::<14>(
-                        &mut state,
-                        &terminal_message_schedule,
-                    );
+                            // this isn't really SIMD so we can't really amortize the cost of fetching message schedule
+                            // so let's compute it with sha-ni
+                            sha256::sha_ni::multiway_arx_abef_cdgh::<0, 4, _>(
+                                [&mut states0, &mut states1, &mut states2, &mut states3],
+                                &terminal_message,
+                                (),
+                            );
 
-                    let result_a = u32x4_add(state[0], save_a);
+                            let final_as = [
+                                (_mm_extract_epi32(states0[0], 3) as u32).wrapping_add(save_as[0]),
+                                (_mm_extract_epi32(states1[0], 3) as u32).wrapping_add(save_as[1]),
+                                (_mm_extract_epi32(states2[0], 3) as u32).wrapping_add(save_as[2]),
+                                (_mm_extract_epi32(states3[0], 3) as u32).wrapping_add(save_as[3]),
+                            ];
 
-                    let cmp_fn = if UPWARDS { u32x4_le } else { u32x4_ge };
-
-                    let a_not_met_target = cmp_fn(result_a, u32x4_splat(target[0]));
-
-                    if !u32x4_all_true(a_not_met_target) {
-                        let mut extract = [0u32; 4];
-                        v128_store(extract.as_mut_ptr().cast(), result_a);
-                        let success_lane_idx = extract
-                            .iter()
-                            .position(|x| {
+                            let success_lane_idx = final_as.iter().position(|x| {
                                 if UPWARDS {
                                     *x > target[0]
                                 } else {
                                     *x < target[0]
                                 }
-                            })
-                            .unwrap();
-                        let nonce_prefix = 10 + 4 * prefix_set_index + success_lane_idx;
+                            });
 
-                        self.message[14] = cum0;
-                        self.message[15] = cum1;
-                        // stamp the lane ID back onto the message
-                        {
-                            let message_bytes = decompose_blocks_mut(&mut self.message);
-                            *message_bytes.get_unchecked_mut(
-                                *SWAP_DWORD_BYTE_ORDER.get_unchecked(Self::DIGIT_IDX as usize),
-                            ) = (nonce_prefix / 10) as u8 + b'0';
-                            *message_bytes.get_unchecked_mut(
-                                *SWAP_DWORD_BYTE_ORDER.get_unchecked(Self::DIGIT_IDX as usize + 1),
-                            ) = (nonce_prefix % 10) as u8 + b'0';
+                            if let Some(success_lane_idx) = success_lane_idx {
+                                let nonce_prefix = nonce_prefix_start + success_lane_idx as u32;
+                                self.message[13] = lane_index_value_v[success_lane_idx];
+                                self.message[14] = cum0;
+                                self.message[15] = cum1;
+
+                                // recompute the hash from the beginning
+                                // this prevents the compiler from having to compute the final B-H registers alive in tight loops
+                                let mut final_sha_state = self.prefix_state;
+                                sha256::digest_block(&mut final_sha_state, &self.message);
+                                sha256::digest_block(&mut final_sha_state, &terminal_message);
+
+                                // reverse the byte order
+                                let mut nonce_suffix = 0;
+                                let mut key_copy = inner_key;
+                                for _ in 0..7 {
+                                    nonce_suffix *= 10;
+                                    nonce_suffix += key_copy % 10;
+                                    key_copy /= 10;
+                                }
+
+                                let computed_nonce = nonce_prefix as u64 * 10u64.pow(7)
+                                    + nonce_suffix as u64
+                                    + self.nonce_addend;
+
+                                // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
+                                return Some((computed_nonce, *final_sha_state));
+                            }
+
+                            self.attempted_nonces += 4;
+
+                            if self.attempted_nonces >= self.limit {
+                                return None;
+                            }
                         }
-
-                        // recompute the hash from the beginning
-                        // this prevents the compiler from having to compute the final B-H registers alive in tight loops
-                        let mut final_sha_state = self.prefix_state;
-                        sha256::digest_block(&mut final_sha_state, &self.message);
-                        sha256::digest_block(
-                            &mut final_sha_state,
-                            terminal_message_schedule[0..16].try_into().unwrap(),
-                        );
-
-                        // reverse the byte order
-                        let mut nonce_suffix = 0;
-                        let mut key_copy = inner_key;
-                        for _ in 0..7 {
-                            nonce_suffix *= 10;
-                            nonce_suffix += key_copy % 10;
-                            key_copy /= 10;
-                        }
-
-                        let computed_nonce = nonce_prefix as u64 * 10u64.pow(7)
-                            + nonce_suffix as u64
-                            + self.nonce_addend;
-
-                        // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
-                        return Some((computed_nonce, *final_sha_state));
-                    }
-
-                    self.attempted_nonces += 4;
-
-                    if self.attempted_nonces >= self.limit {
-                        return None;
                     }
                 }
+                None
+            }
+        } else if #[cfg(target_arch = "wasm32")] {
+            fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                let mut partial_state = Align64(self.prefix_state);
+                sha256::sha2_arx::<0, 13>(&mut partial_state, self.message[..13].try_into().unwrap());
+
+                let mut terminal_message_schedule = Align16([0; 64]);
+                terminal_message_schedule[14] = ((self.message_length as u64 * 8) >> 32) as u32;
+                terminal_message_schedule[15] = (self.message_length as u64 * 8) as u32;
+                sha256::do_message_schedule_k_w(&mut terminal_message_schedule);
+
+                for prefix_set_index in 0..((100 - 10) / 4) {
+                    unsafe {
+                        let lane_id_0_or_value =
+                            u32x4_shl(load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index), 8);
+                        let lane_id_1_or_value = load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index);
+
+                        let lane_index_value_v = v128_or(
+                            u32x4_splat(self.message[13] as _),
+                            v128_or(lane_id_0_or_value, lane_id_1_or_value),
+                        );
+
+                        for inner_key in 0..10_000_000 {
+                            let mut key_copy = inner_key;
+                            let mut cum0 = 0;
+                            for _ in 0..4 {
+                                cum0 <<= 8;
+                                cum0 |= key_copy % 10;
+                                key_copy /= 10;
+                            }
+                            cum0 |= u32::from_be_bytes(*b"0000");
+                            let mut cum1 = 0;
+                            for _ in 0..3 {
+                                cum1 += key_copy % 10;
+                                cum1 <<= 8;
+                                key_copy /= 10;
+                            }
+                            cum1 |= u32::from_be_bytes(*b"000\x80");
+
+                            if key_copy != 0 {
+                                debug_assert_eq!(key_copy, 0);
+                                core::hint::unreachable_unchecked();
+                            }
+
+                            let mut blocks = [
+                                u32x4_splat(self.message[0] as _),
+                                u32x4_splat(self.message[1] as _),
+                                u32x4_splat(self.message[2] as _),
+                                u32x4_splat(self.message[3] as _),
+                                u32x4_splat(self.message[4] as _),
+                                u32x4_splat(self.message[5] as _),
+                                u32x4_splat(self.message[6] as _),
+                                u32x4_splat(self.message[7] as _),
+                                u32x4_splat(self.message[8] as _),
+                                u32x4_splat(self.message[9] as _),
+                                u32x4_splat(self.message[10] as _),
+                                u32x4_splat(self.message[11] as _),
+                                u32x4_splat(self.message[12] as _),
+                                lane_index_value_v,
+                                u32x4_splat(cum0 as _),
+                                u32x4_splat(cum1 as _),
+                            ];
+
+                            let mut state = core::array::from_fn(|i| u32x4_splat(partial_state[i]));
+                            sha256::simd128::multiway_arx::<13>(&mut state, &mut blocks);
+
+                            state.iter_mut().zip(self.prefix_state.iter()).for_each(
+                                |(state, prefix_state)| {
+                                    *state = u32x4_add(*state, u32x4_splat(*prefix_state as _));
+                                },
+                            );
+
+                            let save_a = state[0];
+
+                            sha256::simd128::bcst_multiway_arx::<14>(
+                                &mut state,
+                                &terminal_message_schedule,
+                            );
+
+                            let result_a = u32x4_add(state[0], save_a);
+
+                            let cmp_fn = if UPWARDS { u32x4_le } else { u32x4_ge };
+
+                            let a_not_met_target = cmp_fn(result_a, u32x4_splat(target[0]));
+
+                            if !u32x4_all_true(a_not_met_target) {
+                                let mut extract = [0u32; 4];
+                                v128_store(extract.as_mut_ptr().cast(), result_a);
+                                let success_lane_idx = extract
+                                    .iter()
+                                    .position(|x| {
+                                        if UPWARDS {
+                                            *x > target[0]
+                                        } else {
+                                            *x < target[0]
+                                        }
+                                    })
+                                    .unwrap();
+                                let nonce_prefix = 10 + 4 * prefix_set_index + success_lane_idx;
+
+                                self.message[14] = cum0;
+                                self.message[15] = cum1;
+                                // stamp the lane ID back onto the message
+                                {
+                                    let message_bytes = decompose_blocks_mut(&mut self.message);
+                                    *message_bytes.get_unchecked_mut(
+                                        *SWAP_DWORD_BYTE_ORDER.get_unchecked(Self::DIGIT_IDX as usize),
+                                    ) = (nonce_prefix / 10) as u8 + b'0';
+                                    *message_bytes.get_unchecked_mut(
+                                        *SWAP_DWORD_BYTE_ORDER.get_unchecked(Self::DIGIT_IDX as usize + 1),
+                                    ) = (nonce_prefix % 10) as u8 + b'0';
+                                }
+
+                                // recompute the hash from the beginning
+                                // this prevents the compiler from having to compute the final B-H registers alive in tight loops
+                                let mut final_sha_state = self.prefix_state;
+                                sha256::digest_block(&mut final_sha_state, &self.message);
+                                sha256::digest_block(
+                                    &mut final_sha_state,
+                                    terminal_message_schedule[0..16].try_into().unwrap(),
+                                );
+
+                                // reverse the byte order
+                                let mut nonce_suffix = 0;
+                                let mut key_copy = inner_key;
+                                for _ in 0..7 {
+                                    nonce_suffix *= 10;
+                                    nonce_suffix += key_copy % 10;
+                                    key_copy /= 10;
+                                }
+
+                                let computed_nonce = nonce_prefix as u64 * 10u64.pow(7)
+                                    + nonce_suffix as u64
+                                    + self.nonce_addend;
+
+                                // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
+                                return Some((computed_nonce, *final_sha_state));
+                            }
+
+                            self.attempted_nonces += 4;
+
+                            if self.attempted_nonces >= self.limit {
+                                return None;
+                            }
+                        }
+                    }
+                }
+
+                None
+            }
+        } else {
+            #[inline(never)]
+            fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                let mut buffer : sha2::digest::crypto_common::Block<sha2::Sha256> = Default::default();
+                for i in 0..16 {
+                    buffer[i*4..i*4+4].copy_from_slice(&self.message[i].to_be_bytes());
+                }
+
+                let mut buffer2 : sha2::digest::crypto_common::Block<sha2::Sha256> = Default::default();
+                buffer2[56..].copy_from_slice(&((self.message_length as u64 * 8)).to_be_bytes());
+
+                let mut terminal_message_schedule = [0; 64];
+                terminal_message_schedule[14] = ((self.message_length as u64 * 8) >> 32) as u32;
+                terminal_message_schedule[15] = (self.message_length as u64 * 8) as u32;
+                sha256::do_message_schedule_k_w(&mut terminal_message_schedule);
+
+
+                for key in 100_000_000..1_000_000_000 {
+                    let mut key_copy = key;
+
+                    for j in (0..9).rev() {
+                        let digit = key_copy % 10;
+                        key_copy /= 10;
+                        buffer[DoubleBlockSolver::DIGIT_IDX as usize + j] = digit as u8 + b'0';
+                    }
+
+                    let mut state = self.prefix_state;
+                    sha2::compress256(&mut state, &[buffer]);
+
+                    let save_a = state[0];
+
+                    sha256::sha2_arx_without_constants::<0, 64>(&mut state, terminal_message_schedule);
+
+                    let cmp_fn = if UPWARDS { u32::gt } else { u32::lt };
+                    if cmp_fn(&state[0].wrapping_add(save_a), &target[0]) {
+                        let mut state = self.prefix_state;
+                        sha2::compress256(&mut state, &[buffer, buffer2]);
+                        return Some((key as u64 + self.nonce_addend, *state));
+                    }
+                }
+
+                None
             }
         }
-
-        None
     }
 }
 
@@ -1541,15 +1596,15 @@ impl Solver for DoubleBlockSolver16Way {
 /// challenge := SHA256 (difficulty || secret)
 /// criteria := SHA256 (challenge || nonce) where nonce is 8 bytes, which gives us 9 rounds of hot start and a fully explorable nonce space
 /// proof := challenge || nonce
-pub struct GoAwaySolver16Way {
+pub struct GoAwaySolver {
     challenge: [u32; 8],
 }
 
-impl GoAwaySolver16Way {
+impl GoAwaySolver {
     const MSG_LEN: u32 = 10 * 4 * 8;
 }
 
-impl Solver for GoAwaySolver16Way {
+impl Solver for GoAwaySolver {
     type Ctx = ();
 
     fn new(_ctx: Self::Ctx, prefix: &[u8]) -> Option<Self> {
@@ -1593,230 +1648,254 @@ impl Solver for GoAwaySolver16Way {
         })
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    #[inline(never)]
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
-        unsafe {
-            let lane_id_v = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+    cfg_if::cfg_if! {
+        if #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))] {
+            #[inline(never)]
+            fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                unsafe {
+                    let lane_id_v = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
 
-            let mut prefix_state = sha256::IV;
-            sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
+                    let mut prefix_state = sha256::IV;
+                    sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
 
-            for high_word in 0..u32::MAX {
-                let mut partial_state = Align64(prefix_state);
-                sha256::sha2_arx::<8, _>(&mut partial_state, [high_word]);
+                    for high_word in 0..u32::MAX {
+                        let mut partial_state = Align64(prefix_state);
+                        sha256::sha2_arx::<8, _>(&mut partial_state, [high_word]);
 
-                for low_word in (0..u32::MAX).step_by(16) {
-                    let mut state =
-                        core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
+                        for low_word in (0..u32::MAX).step_by(16) {
+                            let mut state =
+                                core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
 
-                    let mut msg = [
-                        _mm512_set1_epi32(self.challenge[0] as _),
-                        _mm512_set1_epi32(self.challenge[1] as _),
-                        _mm512_set1_epi32(self.challenge[2] as _),
-                        _mm512_set1_epi32(self.challenge[3] as _),
-                        _mm512_set1_epi32(self.challenge[4] as _),
-                        _mm512_set1_epi32(self.challenge[5] as _),
-                        _mm512_set1_epi32(self.challenge[6] as _),
-                        _mm512_set1_epi32(self.challenge[7] as _),
-                        _mm512_set1_epi32(high_word as _),
-                        _mm512_or_epi32(_mm512_set1_epi32(low_word as _), lane_id_v),
-                        _mm512_set1_epi32(u32::from_be_bytes([0x80, 0, 0, 0]) as _),
-                        _mm512_setzero_epi32(),
-                        _mm512_setzero_epi32(),
-                        _mm512_setzero_epi32(),
-                        _mm512_setzero_epi32(),
-                        _mm512_set1_epi32(Self::MSG_LEN as _),
-                    ];
-                    sha256::avx512::multiway_arx::<9>(&mut state, &mut msg);
-                    let result_a =
-                        _mm512_add_epi32(state[0], _mm512_set1_epi32(sha256::IV[0] as _));
+                            let mut msg = [
+                                _mm512_set1_epi32(self.challenge[0] as _),
+                                _mm512_set1_epi32(self.challenge[1] as _),
+                                _mm512_set1_epi32(self.challenge[2] as _),
+                                _mm512_set1_epi32(self.challenge[3] as _),
+                                _mm512_set1_epi32(self.challenge[4] as _),
+                                _mm512_set1_epi32(self.challenge[5] as _),
+                                _mm512_set1_epi32(self.challenge[6] as _),
+                                _mm512_set1_epi32(self.challenge[7] as _),
+                                _mm512_set1_epi32(high_word as _),
+                                _mm512_or_epi32(_mm512_set1_epi32(low_word as _), lane_id_v),
+                                _mm512_set1_epi32(u32::from_be_bytes([0x80, 0, 0, 0]) as _),
+                                _mm512_setzero_epi32(),
+                                _mm512_setzero_epi32(),
+                                _mm512_setzero_epi32(),
+                                _mm512_setzero_epi32(),
+                                _mm512_set1_epi32(Self::MSG_LEN as _),
+                            ];
+                            sha256::avx512::multiway_arx::<9>(&mut state, &mut msg);
+                            let result_a =
+                                _mm512_add_epi32(state[0], _mm512_set1_epi32(sha256::IV[0] as _));
 
-                    let cmp_fn = if UPWARDS {
-                        _mm512_cmpgt_epu32_mask
-                    } else {
-                        _mm512_cmplt_epu32_mask
-                    };
-                    let a_met_target = cmp_fn(result_a, _mm512_set1_epi32(target[0] as _));
-                    if a_met_target != 0 {
-                        let success_lane_idx = _tzcnt_u16(a_met_target);
-                        let mut output_msg: [u32; 16] = [0; 16];
+                            let cmp_fn = if UPWARDS {
+                                _mm512_cmpgt_epu32_mask
+                            } else {
+                                _mm512_cmplt_epu32_mask
+                            };
+                            let a_met_target = cmp_fn(result_a, _mm512_set1_epi32(target[0] as _));
+                            if a_met_target != 0 {
+                                let success_lane_idx = _tzcnt_u16(a_met_target);
+                                let mut output_msg: [u32; 16] = [0; 16];
 
-                        let final_low_word = low_word | (success_lane_idx as u32);
-                        output_msg[..8].copy_from_slice(&self.challenge);
-                        output_msg[8] = high_word;
-                        output_msg[9] = final_low_word;
-                        output_msg[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
-                        output_msg[15] = Self::MSG_LEN as _;
+                                let final_low_word = low_word | (success_lane_idx as u32);
+                                output_msg[..8].copy_from_slice(&self.challenge);
+                                output_msg[8] = high_word;
+                                output_msg[9] = final_low_word;
+                                output_msg[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
+                                output_msg[15] = Self::MSG_LEN as _;
 
-                        let mut final_sha_state = sha256::IV;
-                        sha256::digest_block(&mut final_sha_state, &output_msg);
+                                let mut final_sha_state = sha256::IV;
+                                sha256::digest_block(&mut final_sha_state, &output_msg);
 
-                        return Some((
-                            (high_word as u64) << 32 | final_low_word as u64,
-                            final_sha_state,
-                        ));
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    #[cfg(all(
-        target_arch = "x86_64",
-        not(target_feature = "avx512f"),
-        target_feature = "sha"
-    ))]
-    #[line(never)]
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
-        unsafe {
-            use core::arch::x86_64::*;
-
-            let mut prefix_state = Align16(sha256::IV);
-            sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
-            let prepared_state = sha256::sha_ni::prepare_state(&prefix_state);
-
-            for high_word in 0..u32::MAX {
-                for low_word in (0..u32::MAX).step_by(4) {
-                    let mut states0 = prepared_state;
-                    let mut states1 = prepared_state;
-                    let mut states2 = prepared_state;
-                    let mut states3 = prepared_state;
-
-                    let mut msg0 = Align16([0; 16]);
-                    msg0[0..8].copy_from_slice(&self.challenge);
-                    msg0[8] = high_word;
-                    msg0[9] = low_word;
-                    msg0[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
-                    msg0[15] = Self::MSG_LEN as _;
-
-                    struct LaneIdPlucker;
-                    impl sha256::sha_ni::Plucker for LaneIdPlucker {
-                        #[inline(always)]
-                        fn pluck_qword2(&mut self, lane: usize, w: &mut __m128i) {
-                            *w = unsafe { _mm_or_si128(*w, _mm_setr_epi32(0, lane as _, 0, 0)) };
+                                return Some((
+                                    (high_word as u64) << 32 | final_low_word as u64,
+                                    final_sha_state,
+                                ));
+                            }
                         }
                     }
-
-                    sha256::sha_ni::multiway_arx_abef_cdgh::<2, 4, _>(
-                        [&mut states0, &mut states1, &mut states2, &mut states3],
-                        &msg0,
-                        LaneIdPlucker,
-                    );
-
-                    let result_as = [
-                        (_mm_extract_epi32(states0[0], 3) as u32).wrapping_add(sha256::IV[0]),
-                        (_mm_extract_epi32(states1[0], 3) as u32).wrapping_add(sha256::IV[0]),
-                        (_mm_extract_epi32(states2[0], 3) as u32).wrapping_add(sha256::IV[0]),
-                        (_mm_extract_epi32(states3[0], 3) as u32).wrapping_add(sha256::IV[0]),
-                    ];
-
-                    let success_lane_idx = result_as.iter().position(|x| {
-                        if UPWARDS {
-                            *x > target[0]
-                        } else {
-                            *x < target[0]
-                        }
-                    });
-
-                    if let Some(success_lane_idx) = success_lane_idx {
-                        let mut output_msg: [u32; 16] = [0; 16];
-
-                        let final_low_word = low_word | (success_lane_idx as u32);
-                        output_msg[..8].copy_from_slice(&self.challenge);
-                        output_msg[8] = high_word;
-                        output_msg[9] = final_low_word;
-                        output_msg[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
-                        output_msg[15] = Self::MSG_LEN as _;
-
-                        let mut final_sha_state = sha256::IV;
-                        sha256::digest_block(&mut final_sha_state, &output_msg);
-
-                        return Some((
-                            (high_word as u64) << 32 | final_low_word as u64,
-                            final_sha_state,
-                        ));
-                    }
                 }
+                None
             }
-        }
-        None
-    }
+        } else if #[cfg(all(target_arch = "x86_64", target_feature = "sha"))] {
+            #[inline(never)]
+            fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                unsafe {
+                    use core::arch::x86_64::*;
 
-    #[cfg(target_arch = "wasm32")]
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
-        unsafe {
-            let lane_id_v = u32x4(0, 1, 2, 3);
+                    let mut prefix_state = Align16(sha256::IV);
+                    sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
+                    let prepared_state = sha256::sha_ni::prepare_state(&prefix_state);
 
-            let mut prefix_state = sha256::IV;
-            sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
+                    for high_word in 0..u32::MAX {
+                        for low_word in (0..u32::MAX).step_by(4) {
+                            let mut states0 = prepared_state;
+                            let mut states1 = prepared_state;
+                            let mut states2 = prepared_state;
+                            let mut states3 = prepared_state;
 
-            for high_word in 0..u32::MAX {
-                let mut partial_state = prefix_state;
-                sha256::sha2_arx::<8, _>(&mut partial_state, [high_word]);
+                            let mut msg0 = Align16([0; 16]);
+                            msg0[0..8].copy_from_slice(&self.challenge);
+                            msg0[8] = high_word;
+                            msg0[9] = low_word;
+                            msg0[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
+                            msg0[15] = Self::MSG_LEN as _;
 
-                for low_word in (0..u32::MAX).step_by(4) {
-                    let mut state = core::array::from_fn(|i| u32x4_splat(partial_state[i]));
+                            struct LaneIdPlucker;
+                            impl sha256::sha_ni::Plucker for LaneIdPlucker {
+                                #[inline(always)]
+                                fn pluck_qword2(&mut self, lane: usize, w: &mut __m128i) {
+                                    *w = unsafe { _mm_or_si128(*w, _mm_setr_epi32(0, lane as _, 0, 0)) };
+                                }
+                            }
 
-                    let mut msg = [
-                        u32x4_splat(self.challenge[0]),
-                        u32x4_splat(self.challenge[1]),
-                        u32x4_splat(self.challenge[2]),
-                        u32x4_splat(self.challenge[3]),
-                        u32x4_splat(self.challenge[4]),
-                        u32x4_splat(self.challenge[5]),
-                        u32x4_splat(self.challenge[6]),
-                        u32x4_splat(self.challenge[7]),
-                        u32x4_splat(high_word),
-                        v128_or(u32x4_splat(low_word), lane_id_v),
-                        u32x4_splat(u32::from_be_bytes([0x80, 0, 0, 0])),
-                        u32x4_splat(0),
-                        u32x4_splat(0),
-                        u32x4_splat(0),
-                        u32x4_splat(0),
-                        u32x4_splat(Self::MSG_LEN as _),
-                    ];
+                            sha256::sha_ni::multiway_arx_abef_cdgh::<2, 4, _>(
+                                [&mut states0, &mut states1, &mut states2, &mut states3],
+                                &msg0,
+                                LaneIdPlucker,
+                            );
 
-                    sha256::simd128::multiway_arx::<9>(&mut state, &mut msg);
-                    let result_a = u32x4_add(state[0], u32x4_splat(sha256::IV[0]));
-                    let cmp_fn = if UPWARDS { u32x4_le } else { u32x4_ge };
+                            let result_as = [
+                                (_mm_extract_epi32(states0[0], 3) as u32).wrapping_add(sha256::IV[0]),
+                                (_mm_extract_epi32(states1[0], 3) as u32).wrapping_add(sha256::IV[0]),
+                                (_mm_extract_epi32(states2[0], 3) as u32).wrapping_add(sha256::IV[0]),
+                                (_mm_extract_epi32(states3[0], 3) as u32).wrapping_add(sha256::IV[0]),
+                            ];
 
-                    let a_not_met_target = cmp_fn(result_a, u32x4_splat(target[0]));
-
-                    if !u32x4_all_true(a_not_met_target) {
-                        let mut extract = [0u32; 4];
-                        v128_store(extract.as_mut_ptr().cast(), result_a);
-                        let success_lane_idx = extract
-                            .iter()
-                            .position(|x| {
+                            let success_lane_idx = result_as.iter().position(|x| {
                                 if UPWARDS {
                                     *x > target[0]
                                 } else {
                                     *x < target[0]
                                 }
-                            })
-                            .unwrap();
-                        let final_low_word = low_word | (success_lane_idx as u32);
-                        let mut output_msg: [u32; 16] = [0; 16];
-                        output_msg[..8].copy_from_slice(&self.challenge);
-                        output_msg[8] = high_word;
-                        output_msg[9] = final_low_word;
-                        output_msg[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
-                        output_msg[15] = Self::MSG_LEN as _;
+                            });
 
-                        let mut final_sha_state = sha256::IV;
-                        sha256::digest_block(&mut final_sha_state, &output_msg);
+                            if let Some(success_lane_idx) = success_lane_idx {
+                                let mut output_msg: [u32; 16] = [0; 16];
 
-                        return Some((
-                            (high_word as u64) << 32 | final_low_word as u64,
-                            final_sha_state,
-                        ));
+                                let final_low_word = low_word | (success_lane_idx as u32);
+                                output_msg[..8].copy_from_slice(&self.challenge);
+                                output_msg[8] = high_word;
+                                output_msg[9] = final_low_word;
+                                output_msg[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
+                                output_msg[15] = Self::MSG_LEN as _;
+
+                                let mut final_sha_state = sha256::IV;
+                                sha256::digest_block(&mut final_sha_state, &output_msg);
+
+                                return Some((
+                                    (high_word as u64) << 32 | final_low_word as u64,
+                                    final_sha_state,
+                                ));
+                            }
+                        }
                     }
                 }
+                None
+            }
+        } else if #[cfg(target_arch = "wasm32")] {
+            #[inline(never)]
+            fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                unsafe {
+                    let lane_id_v = u32x4(0, 1, 2, 3);
+
+                    let mut prefix_state = sha256::IV;
+                    sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
+
+                    for high_word in 0..u32::MAX {
+                        let mut partial_state = prefix_state;
+                        sha256::sha2_arx::<8, _>(&mut partial_state, [high_word]);
+
+                        for low_word in (0..u32::MAX).step_by(4) {
+                            let mut state = core::array::from_fn(|i| u32x4_splat(partial_state[i]));
+
+                            let mut msg = [
+                                u32x4_splat(self.challenge[0]),
+                                u32x4_splat(self.challenge[1]),
+                                u32x4_splat(self.challenge[2]),
+                                u32x4_splat(self.challenge[3]),
+                                u32x4_splat(self.challenge[4]),
+                                u32x4_splat(self.challenge[5]),
+                                u32x4_splat(self.challenge[6]),
+                                u32x4_splat(self.challenge[7]),
+                                u32x4_splat(high_word),
+                                v128_or(u32x4_splat(low_word), lane_id_v),
+                                u32x4_splat(u32::from_be_bytes([0x80, 0, 0, 0])),
+                                u32x4_splat(0),
+                                u32x4_splat(0),
+                                u32x4_splat(0),
+                                u32x4_splat(0),
+                                u32x4_splat(Self::MSG_LEN as _),
+                            ];
+
+                            sha256::simd128::multiway_arx::<9>(&mut state, &mut msg);
+                            let result_a = u32x4_add(state[0], u32x4_splat(sha256::IV[0]));
+                            let cmp_fn = if UPWARDS { u32x4_le } else { u32x4_ge };
+
+                            let a_not_met_target = cmp_fn(result_a, u32x4_splat(target[0]));
+
+                            if !u32x4_all_true(a_not_met_target) {
+                                let mut extract = [0u32; 4];
+                                v128_store(extract.as_mut_ptr().cast(), result_a);
+                                let success_lane_idx = extract
+                                    .iter()
+                                    .position(|x| {
+                                        if UPWARDS {
+                                            *x > target[0]
+                                        } else {
+                                            *x < target[0]
+                                        }
+                                    })
+                                    .unwrap();
+                                let final_low_word = low_word | (success_lane_idx as u32);
+                                let mut output_msg: [u32; 16] = [0; 16];
+                                output_msg[..8].copy_from_slice(&self.challenge);
+                                output_msg[8] = high_word;
+                                output_msg[9] = final_low_word;
+                                output_msg[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
+                                output_msg[15] = Self::MSG_LEN as _;
+
+                                let mut final_sha_state = sha256::IV;
+                                sha256::digest_block(&mut final_sha_state, &output_msg);
+
+                                return Some((
+                                    (high_word as u64) << 32 | final_low_word as u64,
+                                    final_sha_state,
+                                ));
+                            }
+                        }
+                    }
+                }
+                None
+            }
+        } else {
+            #[inline(never)]
+            fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                let mut buffer = Align16([sha2::digest::crypto_common::Block::<sha2::Sha256>::default(); 16]);
+                for i in 0..8 {
+                    buffer[0][i*4..i*4+4].copy_from_slice(&self.challenge[i].to_be_bytes());
+                }
+                buffer[0][40] = 0x80;
+                buffer[0][60..64].copy_from_slice(&(Self::MSG_LEN as u32).to_be_bytes());
+
+                for key in 0..u64::MAX {
+                    unsafe {
+                        *buffer[0].as_mut_ptr().add(32).cast::<u64>() = u64::from_ne_bytes(key.to_be_bytes());
+                    }
+
+                    let mut state = sha256::IV;
+                    sha2::compress256(&mut state, &*buffer);
+
+                    let cmp_fn = if UPWARDS { u32::gt } else { u32::lt };
+                    if cmp_fn(&state[0], &target[0]) {
+                            return Some((key, state));
+                    }
+                }
+
+                None
             }
         }
-        None
     }
 }
 
@@ -2027,8 +2106,8 @@ mod tests {
     #[test]
     #[cfg_attr(feature = "wasm-bindgen", wasm_bindgen_test::wasm_bindgen_test)]
     fn test_solve_16way() {
-        let solved_single_block = test_solve::<SingleBlockSolver16Way>();
-        let solved_double_block = test_solve::<DoubleBlockSolver16Way>();
+        let solved_single_block = test_solve::<SingleBlockSolver>();
+        let solved_double_block = test_solve::<DoubleBlockSolver>();
         let mut total_solved = solved_single_block
             .union(&solved_double_block)
             .collect::<Vec<_>>();
@@ -2059,8 +2138,7 @@ mod tests {
         let mut test_prefix: Output<Sha256> = Default::default();
         test_prefix[..3].copy_from_slice(b"abc");
 
-        let mut solver =
-            GoAwaySolver16Way::new(Default::default(), &test_prefix.as_slice()).unwrap();
+        let mut solver = GoAwaySolver::new(Default::default(), &test_prefix.as_slice()).unwrap();
         let (nonce, result) = solver.solve::<false>(target_u32s).expect("solver failed");
         assert!(result[0].leading_zeros() >= DIFFICULTY.get() as u32);
 

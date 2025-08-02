@@ -91,13 +91,13 @@ pub async fn solve_mcaptcha(
         // these length needs to be double-hashed
         if (47..=52).contains(&prefix.len()) {
             pool.spawn(move || {
-                let mut solver = crate::DoubleBlockSolver16Way::new((), &prefix).unwrap();
+                let mut solver = crate::DoubleBlockSolver::new((), &prefix).unwrap();
                 let result = solver.solve::<true>(target_u32s);
                 tx.send(result).ok();
             });
         } else {
             pool.spawn(move || {
-                let mut solver = crate::SingleBlockSolver16Way::new((), &prefix).unwrap();
+                let mut solver = crate::SingleBlockSolver::new((), &prefix).unwrap();
                 let result = solver.solve::<true>(target_u32s);
                 tx.send(result).ok();
             });
@@ -167,15 +167,13 @@ impl AnubisChallengeDescriptor {
                 target_bytes[i * 4 + 3],
             ])
         });
-        if let Some(mut solver) = crate::SingleBlockSolver16Way::new((), self.challenge.as_bytes())
-        {
+        if let Some(mut solver) = crate::SingleBlockSolver::new((), self.challenge.as_bytes()) {
             solver.set_limit(limit);
             let result = solver.solve::<false>(target_u32s);
             let attempted_nonces = solver.get_attempted_nonces();
             (result, attempted_nonces)
         } else {
-            let mut solver =
-                crate::DoubleBlockSolver16Way::new((), self.challenge.as_bytes()).unwrap();
+            let mut solver = crate::DoubleBlockSolver::new((), self.challenge.as_bytes()).unwrap();
             let result = solver.solve::<false>(target_u32s);
             let attempted_nonces = solver.get_attempted_nonces();
             (result, attempted_nonces)
@@ -332,7 +330,7 @@ impl GoAwayConfig {
                 target_bytes[i * 4 + 3],
             ])
         });
-        let mut solver = crate::GoAwaySolver16Way::new((), &self.challenge.as_bytes()).unwrap();
+        let mut solver = crate::GoAwaySolver::new((), &self.challenge.as_bytes()).unwrap();
         solver.solve::<false>(target_u32s)
     }
 }
@@ -361,7 +359,7 @@ pub async fn solve_goaway_js_pow_sha256(
     }
     let config: GoAwayConfig = res.json().await?;
 
-    let mut solver = crate::GoAwaySolver16Way::new((), &config.challenge.as_bytes()).unwrap();
+    let mut solver = crate::GoAwaySolver::new((), &config.challenge.as_bytes()).unwrap();
     let target_bytes = compute_target_goaway(config.difficulty).to_be_bytes();
     let target_u32s = core::array::from_fn(|i| {
         let i = i * 4;

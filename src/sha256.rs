@@ -96,3 +96,30 @@ pub(crate) fn sha2_arx<const START: usize, const LEN: usize>(state: &mut [u32; 8
         *a = t1.wrapping_add(t2);
     }
 }
+
+/// scalar sha2 rounds for hotstart taken verbatim from sha2 crate, but without constants
+#[inline(always)]
+pub(crate) fn sha2_arx_without_constants<const START: usize, const LEN: usize>(
+    state: &mut [u32; 8],
+    w: [u32; LEN],
+) {
+    let [a, b, c, d, e, f, g, h] = &mut *state;
+
+    for i in 0..LEN {
+        let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+        let ch = (*e & *f) ^ ((!*e) & *g);
+        let t1 = s1.wrapping_add(ch).wrapping_add(w[i]).wrapping_add(*h);
+        let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+        let maj = (*a & *b) ^ (*a & *c) ^ (*b & *c);
+        let t2 = s0.wrapping_add(maj);
+
+        *h = *g;
+        *g = *f;
+        *f = *e;
+        *e = d.wrapping_add(t1);
+        *d = *c;
+        *c = *b;
+        *b = *a;
+        *a = t1.wrapping_add(t2);
+    }
+}

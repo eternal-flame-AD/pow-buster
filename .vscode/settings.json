@@ -4,5 +4,10 @@
         "cli",
         "official",
         "rayon"
+    ],
+    "rust-analyzer.cargo.cfgs": [
+        "debug_assertions",
+        "miri",
+        "target_feature=avx2"
     ]
 }
