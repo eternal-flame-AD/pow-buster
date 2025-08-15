@@ -61,8 +61,7 @@ pub fn bench_sha2_crate_single(c: &mut Criterion) {
     group.bench_function("sha2_crate_reset_after_each_with_prefix", |b| {
         b.iter_custom(|iters| {
             let start = std::time::Instant::now();
-            let mut hasher_base = sha2::Sha256::new();
-            hasher_base.update(u64::to_ne_bytes(std::random::random()));
+            let hasher_base = sha2::Sha256::new();
             for i in 0..iters {
                 let mut hasher = hasher_base.clone();
                 hasher.update(&i.to_ne_bytes());
@@ -125,11 +124,11 @@ pub fn bench_sha2_crate_bulk(c: &mut Criterion) {
 
 pub fn bench_proof(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_proof");
-    group.sample_size(100);
+    group.sample_size(50);
     group.warm_up_time(Duration::from_secs(8));
     group.measurement_time(Duration::from_secs(30));
-    group.throughput(Throughput::Elements(1));
     for difficulty in [50_000, 100_000, 1_000_000, 4_000_000, 10_000_000] {
+        group.throughput(Throughput::Elements(difficulty as u64));
         let target = compute_target(difficulty);
         let target_bytes = target.to_be_bytes();
         let target_u32s = core::array::from_fn(|i| {
@@ -241,7 +240,7 @@ pub fn bench_proof(c: &mut Criterion) {
                 "proof",
                 ProofKey {
                     difficulty,
-                    solver_type: "official",
+                    solver_type: "mCaptcha",
                 },
             ),
             &difficulty,
@@ -274,7 +273,7 @@ pub fn bench_proof(c: &mut Criterion) {
                 "proof (double block)",
                 ProofKey {
                     difficulty,
-                    solver_type: "official",
+                    solver_type: "mCaptcha",
                 },
             ),
             &difficulty,

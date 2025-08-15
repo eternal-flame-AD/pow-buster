@@ -1,8 +1,10 @@
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![doc = include_str!("../README.md")]
-#![allow(stable_features, reason = "not on the 'released' stable channel yet")]
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(
+    target_arch = "x86_64",
+    any(target_feature = "avx512", target_feature = "sha")
+))]
 use core::arch::x86_64::*;
 
 #[cfg(target_arch = "wasm32")]
@@ -188,7 +190,9 @@ pub trait Solver {
     }
 }
 
-// Solves an mCaptcha SHA256 PoW where the SHA-256 message is a single block (512 bytes minus padding).
+// Solves an mCaptcha/Anubis SHA256 PoW where the SHA-256 message is a single block (512 bytes minus padding).
+//
+// Construct: Proof := (prefix || ASCII_DECIMAL(nonce))
 //
 // There is currently no AVX2 fallback for more common hardware
 #[derive(Debug, Clone)]
@@ -243,7 +247,7 @@ impl Solver for SingleBlockSolver {
             prefix = &prefix[64..];
             complete_blocks_before += 1;
         }
-        // if there is not enough room for 9 bytes of padding, '1's and then start a new block whenever possible
+        // if there is not enough room for 9 bytes of padding, pad with '1's and then start a new block whenever possible
         // this avoids having to hash 2 blocks per iteration a naive solution would do
         if prefix.len() + 9 + 9 > 64 {
             let mut tmp_block = [0; 64];
