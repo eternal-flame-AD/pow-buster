@@ -1662,11 +1662,11 @@ impl Solver for GoAwaySolver {
                     let mut prefix_state = sha256::IV;
                     sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
 
-                    for high_word in 0..u32::MAX {
+                    for high_word in 0..=u32::MAX {
                         let mut partial_state = Align64(prefix_state);
                         sha256::sha2_arx::<8, _>(&mut partial_state, [high_word]);
 
-                        for low_word in (0..u32::MAX).step_by(16) {
+                        for low_word in (0..=u32::MAX).step_by(16) {
                             let mut state =
                                 core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
 
@@ -1732,8 +1732,8 @@ impl Solver for GoAwaySolver {
                     sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
                     let prepared_state = sha256::sha_ni::prepare_state(&prefix_state);
 
-                    for high_word in 0..u32::MAX {
-                        for low_word in (0..u32::MAX).step_by(4) {
+                    for high_word in 0..=u32::MAX {
+                        for low_word in (0..=u32::MAX).step_by(4) {
                             let mut states0 = prepared_state;
                             let mut states1 = prepared_state;
                             let mut states2 = prepared_state;
@@ -1807,11 +1807,11 @@ impl Solver for GoAwaySolver {
                     let mut prefix_state = sha256::IV;
                     sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
 
-                    for high_word in 0..u32::MAX {
+                    for high_word in 0..=u32::MAX {
                         let mut partial_state = prefix_state;
                         sha256::sha2_arx::<8, _>(&mut partial_state, [high_word]);
 
-                        for low_word in (0..u32::MAX).step_by(4) {
+                        for low_word in (0..=u32::MAX).step_by(4) {
                             let mut state = core::array::from_fn(|i| u32x4_splat(partial_state[i]));
 
                             let mut msg = [
@@ -1883,7 +1883,7 @@ impl Solver for GoAwaySolver {
                 buffer[0][40] = 0x80;
                 buffer[0][60..64].copy_from_slice(&(Self::MSG_LEN as u32).to_be_bytes());
 
-                for key in 0..u64::MAX {
+                for key in 0..=u64::MAX {
                     unsafe {
                         *buffer[0].as_mut_ptr().add(32).cast::<u64>() = u64::from_ne_bytes(key.to_be_bytes());
                     }
