@@ -1,8 +1,8 @@
-# simd-mCaptcha
+# PoW Buster
 
 ## Table of Contents
 
-- [simd-mCaptcha](#simd-mcaptcha)
+- [PoW Buster](#pow-buster)
   - [Table of Contents](#table-of-contents)
   - [Why?](#why)
   - [Limitations](#limitations)
@@ -39,6 +39,7 @@ I personally don't like some projects put themselves at the ethical high ground 
 
 We assume you have a relatively modern and powerful platform, specifically:
 
+- Optimized builds may take up to 5 minutes as this program aggressively generates specialized kernels.
 - Requires AVX-512 or SHA-NI CPU or simd128 on WASM. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard). There is a pure Rust scalar fallback that should make the code compile and work regardless.
 - For Anubis target, this assumes the server is 64-bit (i.e. is able to accept a signed 64-bit nonce).
 - AVX-512 build requires Rust 1.89 or later.
@@ -69,16 +70,14 @@ Speedup against official solution, reported by Criterion.rs, single-threaded:
 Results on AMD Ryzen 9 7950X, 32 cores, when supported, single-hash number comes first (there is 90% chance your deployment is single-hash, this vagueness is IMO design oversight by the mCaptcha team), double-hash number comes second, all numbers are in milliseconds, compiled with `-Ctarget-cpu=native` unless otherwise specified.
 
 
-| DFactor    | AVX-512       | Safe Optimized (+) [^1] | Official (+*) | Official Generic x64 (+*) | User Survey extrapolated  [^2] |
-| ---------- | ------------- | ----------------------- | ------------- | ------------------------- | ------------------------------ |
-| 50_000     | 0.612/0.953   | 1.565                   | 2.851/4.009   | 5.600/9.537               | 14.556                         |
-| 100_000    | 1.200/1.903   | 3.172                   | 5.698/7.817   | 11.152/18.575             | 29.11176                       |
-| 1_000_000  | 11.708/18.515 | 31.622                  | 54.931/80.029 | 117.34/188.41             | 291.118                        |
-| 4_000_000  | 45.330/75.630 | 125.06                  | 222.93/323.70 | 432.81/777.88             | 1164.471                       |
-| 10_000_000 | 123.78/186.01 | 323.06                  | 564.41/805.02 | DNS                       | 2911.18                        |
+| DFactor    | AVX-512       | Safe Optimized (+) [^1] | Official (+)  | Official Generic x64 (+) | User Survey extrapolated [^2] |
+| ---------- | ------------- | ----------------------- | ------------- | ------------------------ | ----------------------------- |
+| 50_000     | 0.554/0.953   | 1.565                   | 2.851/4.009   | 5.600/9.537              | 14.556                        |
+| 100_000    | 1.105/1.903   | 3.172                   | 5.698/7.817   | 11.152/18.575            | 29.11176                      |
+| 1_000_000  | 11.138/18.515 | 31.622                  | 54.931/80.029 | 117.34/188.41            | 291.118                       |
+| 4_000_000  | 46.136/75.630 | 125.06                  | 222.93/323.70 | 432.81/777.88            | 1164.471                      |
+| 10_000_000 | 107.49/186.01 | 323.06                  | 564.41/805.02 | DNS                      | 2911.18                       |
 
-(*) = Since official solution allocated a variable length string per iteration, it is pretty difficult to get it to perform it stably both in terms of how many blocks to hash and how long the allocation takes, serious non-linear performance degradation seems to be observed and it is likely attributed to re-allocation overhead.
-(?) = not implemented, but I expect close to a clean double
 (+) = SNA-NI and a standard SHA-256 implementation is used.
 
 [^1]: Represents a custom implementation using safe, externally-validated cryptographic abstractions only and no platform-specific optimizations.
@@ -168,9 +167,9 @@ For us we have single thread:
 
 | Workload                         | AVX-512 [log](time.txt) | SHA-NI [log](time_sha-ni.txt) |
 | -------------------------------- | ----------------------- | ----------------------------- |
-| SingleBlock/Anubis               | 76.86 MH/s              | 51.71 MH/s                    |
-| DoubleBlock (mCaptcha edge case) | 44.47 MH/s              | 48.78 MH/s                    |
-| go-away (16 bytes)               | 98.33 MH/s              | 79.46 MH/s                    |
+| SingleBlock/Anubis               | 85.75 MH/s              | 51.71 MH/s                    |
+| DoubleBlock (mCaptcha edge case) | 52.30 MH/s              | 48.78 MH/s                    |
+| go-away (16 bytes)               | 97.87 MH/s              | 79.46 MH/s                    |
 
 The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and about 20% of that on Firefox, this is corroborated by Anubis's own accounts in their code comments using 7950X3D empirical testing. Empirical throughput of WASM-based mCaptcha is unreliable due to lack of official benchmark tools, but should be around 2-4 MH/s, corroborated with the author's CACM paper.
 
@@ -180,9 +179,9 @@ The peak throughput reported by `openssl speed -multi 32 sha256` is 239.76 MH/s 
 
 | Workload                         | AVX-512     | SHA-NI      |
 | -------------------------------- | ----------- | ----------- |
-| SingleBlock/Anubis               | 1.290 GH/s  | 1.143 GH/s  |
-| DoubleBlock (mCaptcha edge case) | 841.94 MH/s | 827.74 MH/s |
-| go-away (16 bytes)               | 1.541 GH/s  | 1.291 GH/s  |
+| SingleBlock/Anubis               | 1.485 GH/s  | 1.143 GH/s  |
+| DoubleBlock (mCaptcha edge case) | 850.75 MH/s | 827.74 MH/s |
+| go-away (16 bytes)               | 1.525 GH/s  | 1.291 GH/s  |
 
 ## Security Implications
 

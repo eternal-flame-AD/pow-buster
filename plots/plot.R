@@ -5,7 +5,7 @@ library(patchwork)
 library(cowplot)
 library(scales)
 
-simd.hps <- 4e6 / 0.044254
+simd.hps <- 1e7 / 0.10749
 browser.hps <- 5e6 / mean(c(
         0.105, 1.69, 1.06, 1.89, 1.91, 1.09, 1.80, 0.97, 0.71, 1.15, 3.59, 1.09, 0.14, 3.98, 1.26, 1.05, 1.26
     ))

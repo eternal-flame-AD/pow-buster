@@ -312,7 +312,7 @@ pub fn bench_proof(c: &mut Criterion) {
 #[cfg(feature = "rayon")]
 pub fn bench_proof_rayon(c: &mut Criterion) {
     let mut group = c.benchmark_group("bench_rayon_hashrate");
-    group.sample_size(100);
+    group.sample_size(50);
     group.warm_up_time(Duration::from_secs(8));
     group.measurement_time(Duration::from_secs(15));
     group.throughput(Throughput::Elements(1024 * 5_000_000));

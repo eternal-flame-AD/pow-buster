@@ -7,7 +7,10 @@ include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/local_macros.rs"));
 
 // disable inline because without hardware AVX-512 this will explode in complexity and cause comptime to skyrocket
 // disable inline for debug_assertions because no one wants to wait for 5 minutes to run a unit test
-#[cfg_attr(all(not(debug_assertions), target_feature = "avx512f"), inline(always))]
+#[cfg_attr(
+    all(not(debug_assertions), not(test), target_feature = "avx512f"),
+    inline(always)
+)]
 /// Do a 16-way SHA-256 compression function without adding back the saved state, without feedback
 ///
 /// This is useful for making state share registers with a-h when caller has the previous state recalled cheaply from elsewhere after the fact
@@ -77,7 +80,10 @@ pub(crate) fn multiway_arx<const BEGIN_ROUND: usize>(
 /// Do a 16-way SHA-256 compression function using broadcasted message schedule, without feedback
 ///
 /// You can skip loading the first couple words by passing a non-zero value for `LeadingZeroes`
-#[cfg_attr(all(not(debug_assertions), target_feature = "avx512f"), inline(always))]
+#[cfg_attr(
+    all(not(debug_assertions), not(test), target_feature = "avx512f"),
+    inline(always)
+)]
 pub(crate) fn bcst_multiway_arx<const LEAD_ZEROES: usize>(
     state: &mut [__m512i; 8],
     w_k: &[u32; 64],

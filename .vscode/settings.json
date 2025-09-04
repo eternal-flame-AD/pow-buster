@@ -7,7 +7,9 @@
     ],
     "rust-analyzer.cargo.cfgs": [
         "debug_assertions",
-        "miri",
-        "target_feature=avx2"
-    ]
+        "miri"
+    ],
+    "rust-analyzer.cargo.extraEnv": {
+        "RUSTFLAGS": "-C target-feature=+avx512f"
+    }
 }

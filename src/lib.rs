@@ -1,10 +1,7 @@
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![doc = include_str!("../README.md")]
 
-#[cfg(all(
-    target_arch = "x86_64",
-    any(target_feature = "avx512f", target_feature = "sha")
-))]
+#[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
 #[cfg(target_arch = "wasm32")]
@@ -24,6 +21,9 @@ pub mod server;
 
 #[cfg(feature = "wasm-bindgen")]
 mod wasm_ffi;
+
+/// String manipulation functions
+mod strings;
 
 /// SHA-256 primitives
 mod sha256;
@@ -70,6 +70,9 @@ impl<T> core::ops::DerefMut for Align64<T> {
         &mut self.0
     }
 }
+
+#[cold]
+fn unlikely() {}
 
 const SWAP_DWORD_BYTE_ORDER: [usize; 64] = [
     3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12, 19, 18, 17, 16, 23, 22, 21, 20, 27, 26,
@@ -247,7 +250,10 @@ impl Solver for SingleBlockSolver {
             prefix = &prefix[64..];
             complete_blocks_before += 1;
         }
-        // if there is not enough room for 9 bytes of padding, pad with '1's and then start a new block whenever possible
+
+        // message padding logic
+
+        // priority 0: if there is not enough room for 9 bytes of padding, pad with '1's and then start a new block whenever possible
         // this avoids having to hash 2 blocks per iteration a naive solution would do
         if prefix.len() + 9 + 9 > 64 {
             let mut tmp_block = [0; 64];
@@ -278,10 +284,10 @@ impl Solver for SingleBlockSolver {
         message[..prefix.len()].copy_from_slice(prefix);
         ptr += prefix.len();
 
-        // try to hot start as much as possible, micro-optimize anubis-like situation
-        // we used to not do this as it is not typical for mCaptcha, but all Anubis deployments start at offset 0, so there is very good incentive to micro-optimize
+        // we used to not do these more subtle optimizations as it is not typical for mCaptcha
+        // but all Anubis deployments start at offset 0, so there is very good incentive to micro-optimize
         if ptr < 32 {
-            // try to pad to an even position to minimize the need to poke 2 words for the lane ID
+            // priority 1: try to pad to an even position to minimize the need to poke 2 words for the lane ID
             if ptr % 2 == 1 {
                 if nonce_addend.checked_mul(10_000_000_000 * 2).is_some() {
                     nonce_addend *= 10;
@@ -290,14 +296,30 @@ impl Solver for SingleBlockSolver {
                     ptr += 1;
                 }
             }
-            // try to move the mutating part into later part of the final block to skim a couple rounds
+            // priority 2: try to pad such that the inner nonce is at a register boundary and PSHUFD shortcut can be used (minus the lane ID)
+            while (ptr + 2) % 4 != 0 {
+                if nonce_addend.checked_mul(10_000_000_000 * 2).is_some() {
+                    nonce_addend *= 10;
+                    nonce_addend += 1;
+                    message[ptr] = b'1';
+                    ptr += 1;
+                } else {
+                    break;
+                }
+            }
+            // priority 3: try to move the mutating part into later part of the final block to skim a couple rounds
             // times 2 because for some reason anubis uses signed nonces ... I wonder if we can send negative nonces
-            while nonce_addend.checked_mul(100_000_000_000 * 2).is_some() {
-                nonce_addend *= 100;
-                nonce_addend += 11;
+            while nonce_addend
+                .checked_mul(10000 * 1_000_000_000 * 2)
+                .is_some()
+            {
+                nonce_addend *= 10000;
+                nonce_addend += 1111;
                 message[ptr] = b'1';
                 message[ptr + 1] = b'1';
-                ptr += 2;
+                message[ptr + 2] = b'1';
+                message[ptr + 3] = b'1';
+                ptr += 4;
             }
         }
         // a double block solver must be used because not enough digits can bridge the 9 byte overhead
@@ -352,6 +374,7 @@ impl Solver for SingleBlockSolver {
                     const DIGIT_WORD_IDX0: usize,
                     const DIGIT_WORD_IDX1: usize,
                     const UPWARDS: bool,
+                    const ON_REGISTER_BOUNDARY: bool,
                 >(
                     this: &mut SingleBlockSolver,
                     target: u32,
@@ -380,28 +403,37 @@ impl Solver for SingleBlockSolver {
                             } else {
                                 lane_id_0_or_value
                             };
-                            macro_rules! fetch_msg {
-                                ($idx:expr) => {
-                                    if $idx == DIGIT_WORD_IDX0 {
-                                        _mm512_or_epi32(
-                                            _mm512_set1_epi32(this.message[$idx] as _),
-                                            lane_id_0_or_value_v,
-                                        )
-                                    } else if $idx == DIGIT_WORD_IDX1 {
-                                        _mm512_or_epi32(
-                                            _mm512_set1_epi32(this.message[$idx] as _),
-                                            lane_id_1_or_value,
-                                        )
-                                    } else {
-                                        _mm512_set1_epi32(this.message[$idx] as _)
-                                    }
-                                };
-                            }
 
                             for inner_key in 0..10_000_000 {
-                                let mut key_copy = inner_key;
-                                {
+                                let mut inner_key_buf = Align16([0; 8]);
+
+                                macro_rules! fetch_msg {
+                                    ($idx:expr) => {
+                                        if $idx == DIGIT_WORD_IDX0 {
+                                            _mm512_or_epi32(
+                                                _mm512_set1_epi32(this.message[$idx] as _),
+                                                lane_id_0_or_value_v,
+                                            )
+                                        } else if $idx == DIGIT_WORD_IDX1 {
+                                            _mm512_or_epi32(
+                                                _mm512_set1_epi32(this.message[$idx] as _),
+                                                lane_id_1_or_value,
+                                            )
+                                        } else if ON_REGISTER_BOUNDARY && $idx == DIGIT_WORD_IDX0 + 1 {
+                                            _mm512_set1_epi32((inner_key_buf.as_ptr().cast::<u32>().read()) as _)
+                                        } else if ON_REGISTER_BOUNDARY && $idx == DIGIT_WORD_IDX0 + 2 {
+                                            _mm512_set1_epi32((inner_key_buf.as_ptr().add(4).cast::<u32>().read()) as _)
+                                        } else {
+                                            _mm512_set1_epi32(this.message[$idx] as _)
+                                        }
+                                    };
+                                }
+
+                                if ON_REGISTER_BOUNDARY {
+                                    strings::simd_itoa8::<7, true, 0x80>(&mut inner_key_buf, inner_key);
+                                } else {
                                     let message_bytes = decompose_blocks_mut(&mut this.message);
+                                    let mut key_copy = inner_key;
 
                                     for i in (0..7).rev() {
                                         let output = key_copy % 10;
@@ -410,12 +442,12 @@ impl Solver for SingleBlockSolver {
                                             *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + i + 2),
                                         ) = output as u8 + b'0';
                                     }
-                                }
 
-                                // hint at LLVM that the modulo ends in 0
-                                if key_copy != 0 {
-                                    debug_assert_eq!(key_copy, 0);
-                                    core::hint::unreachable_unchecked();
+                                    // hint at LLVM that the modulo ends in 0
+                                    if key_copy != 0 {
+                                        debug_assert_eq!(key_copy, 0);
+                                        core::hint::unreachable_unchecked();
+                                    }
                                 }
 
                                 let mut blocks = [
@@ -467,8 +499,15 @@ impl Solver for SingleBlockSolver {
                                 let a_met_target = cmp_fn(result_a, _mm512_set1_epi32(target as _));
 
                                 if a_met_target != 0 {
+                                    unlikely();
+
                                     let success_lane_idx = _tzcnt_u16(a_met_target) as usize;
                                     let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
+
+                                    if ON_REGISTER_BOUNDARY {
+                                        this.message[DIGIT_WORD_IDX0 + 1] = inner_key_buf.as_ptr().cast::<u32>().read();
+                                        this.message[DIGIT_WORD_IDX0 + 2] = inner_key_buf.as_ptr().add(4).cast::<u32>().read();
+                                    }
 
                                     // stamp the lane ID back onto the message
                                     {
@@ -482,7 +521,7 @@ impl Solver for SingleBlockSolver {
                                     }
 
                                     // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
-                                    return Some(nonce_prefix as u64 * 10u64.pow(7) + inner_key);
+                                    return Some(nonce_prefix as u64 * 10u64.pow(7) + inner_key as u64);
                                 }
 
                                 this.attempted_nonces += 16;
@@ -496,22 +535,29 @@ impl Solver for SingleBlockSolver {
                 }
 
                 macro_rules! dispatch {
+                    ($idx0:literal, $idx1:literal) => {
+                        if self.digit_index % 4 == 2 {
+                            solve_inner::<$idx0, $idx1, UPWARDS, true>(self, target[0])
+                        } else {
+                            solve_inner::<$idx0, $idx1, UPWARDS, false>(self, target[0])
+                        }
+                    };
                     ($idx0:literal) => {
                         match lane_id_1_word_idx {
-                            0 => solve_inner::<$idx0, 0, UPWARDS>(self, target[0]),
-                            1 => solve_inner::<$idx0, 1, UPWARDS>(self, target[0]),
-                            2 => solve_inner::<$idx0, 2, UPWARDS>(self, target[0]),
-                            3 => solve_inner::<$idx0, 3, UPWARDS>(self, target[0]),
-                            4 => solve_inner::<$idx0, 4, UPWARDS>(self, target[0]),
-                            5 => solve_inner::<$idx0, 5, UPWARDS>(self, target[0]),
-                            6 => solve_inner::<$idx0, 6, UPWARDS>(self, target[0]),
-                            7 => solve_inner::<$idx0, 7, UPWARDS>(self, target[0]),
-                            8 => solve_inner::<$idx0, 8, UPWARDS>(self, target[0]),
-                            9 => solve_inner::<$idx0, 9, UPWARDS>(self, target[0]),
-                            10 => solve_inner::<$idx0, 10, UPWARDS>(self, target[0]),
-                            11 => solve_inner::<$idx0, 11, UPWARDS>(self, target[0]),
-                            12 => solve_inner::<$idx0, 12, UPWARDS>(self, target[0]),
-                            13 => solve_inner::<$idx0, 13, UPWARDS>(self, target[0]),
+                            0 => dispatch!($idx0, 0),
+                            1 => dispatch!($idx0, 1),
+                            2 => dispatch!($idx0, 2),
+                            3 => dispatch!($idx0, 3),
+                            4 => dispatch!($idx0, 4),
+                            5 => dispatch!($idx0, 5),
+                            6 => dispatch!($idx0, 6),
+                            7 => dispatch!($idx0, 7),
+                            8 => dispatch!($idx0, 8),
+                            9 => dispatch!($idx0, 9),
+                            10 => dispatch!($idx0, 10),
+                            11 => dispatch!($idx0, 11),
+                            12 => dispatch!($idx0, 12),
+                            13 => dispatch!($idx0, 13),
                             // there is no possible way lane ID lands on position 14 or 15, because the padding is 9 bytes and nonce tail is 7 bytes
                             _ => core::hint::unreachable_unchecked(),
                         }
@@ -750,6 +796,8 @@ impl Solver for SingleBlockSolver {
                                     .position(|x| if UPWARDS { *x > target } else { *x < target });
 
                                 if let Some(success_lane_idx) = success_lane_idx {
+                                    unlikely();
+
                                     let nonce_prefix = nonce_prefix_start + success_lane_idx as u32;
 
                                     // stamp the lane ID back onto the message
@@ -905,6 +953,8 @@ impl Solver for SingleBlockSolver {
                             let a_not_met_target = cmp_fn(result_a, u32x4_splat(target[0]));
 
                             if !u32x4_all_true(a_not_met_target) {
+                                unlikely();
+
                                 let mut extract = [0u32; 4];
                                 v128_store(extract.as_mut_ptr().cast(), result_a);
                                 let success_lane_idx = extract
@@ -973,6 +1023,8 @@ impl Solver for SingleBlockSolver {
                     let cmp_fn = if UPWARDS { u32::gt } else { u32::lt };
 
                     if cmp_fn(&state[0], &target[0]) {
+                        unlikely();
+
                         return Some((key + self.nonce_addend, state));
                     }
                 }
@@ -1120,26 +1172,11 @@ impl Solver for DoubleBlockSolver {
                         );
 
                         for inner_key in 0..10_000_000 {
-                            let mut key_copy = inner_key;
-                            let mut cum0 = 0;
-                            for _ in 0..4 {
-                                cum0 <<= 8;
-                                cum0 |= key_copy % 10;
-                                key_copy /= 10;
-                            }
-                            cum0 |= u32::from_be_bytes(*b"0000");
-                            let mut cum1 = 0;
-                            for _ in 0..3 {
-                                cum1 += key_copy % 10;
-                                cum1 <<= 8;
-                                key_copy /= 10;
-                            }
-                            cum1 |= u32::from_be_bytes(*b"000\x80");
+                            let mut itoa_buf = Align16([0; 8]);
+                            strings::simd_itoa8::<7, true, 0x80>(&mut itoa_buf, inner_key);
 
-                            if key_copy != 0 {
-                                debug_assert_eq!(key_copy, 0);
-                                core::hint::unreachable_unchecked();
-                            }
+                            let cum0 = itoa_buf.as_ptr().cast::<u32>().read();
+                            let cum1 = itoa_buf.as_ptr().add(4).cast::<u32>().read();
 
                             let mut blocks = [
                                 _mm512_set1_epi32(self.message[0] as _),
@@ -1190,6 +1227,8 @@ impl Solver for DoubleBlockSolver {
                             );
 
                             if a_met_target != 0 {
+                                unlikely();
+
                                 let success_lane_idx = _tzcnt_u16(a_met_target) as usize;
                                 let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
 
@@ -1214,17 +1253,8 @@ impl Solver for DoubleBlockSolver {
                                 terminal_message[15] = (self.message_length * 8) as u32;
                                 sha256::digest_block(&mut final_sha_state, &terminal_message);
 
-                                // reverse the byte order
-                                let mut nonce_suffix = 0;
-                                let mut key_copy = inner_key;
-                                for _ in 0..7 {
-                                    nonce_suffix *= 10;
-                                    nonce_suffix += key_copy % 10;
-                                    key_copy /= 10;
-                                }
-
                                 let computed_nonce = nonce_prefix as u64 * 10u64.pow(7)
-                                    + nonce_suffix as u64
+                                    + inner_key as u64
                                     + self.nonce_addend;
 
                                 // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
@@ -1361,6 +1391,8 @@ impl Solver for DoubleBlockSolver {
                             });
 
                             if let Some(success_lane_idx) = success_lane_idx {
+                                unlikely();
+
                                 let nonce_prefix = nonce_prefix_start + success_lane_idx as u32;
                                 self.message[13] = lane_index_value_v[success_lane_idx];
                                 self.message[14] = cum0;
@@ -1484,6 +1516,8 @@ impl Solver for DoubleBlockSolver {
                             let a_not_met_target = cmp_fn(result_a, u32x4_splat(target[0]));
 
                             if !u32x4_all_true(a_not_met_target) {
+                                unlikely();
+
                                 let mut extract = [0u32; 4];
                                 v128_store(extract.as_mut_ptr().cast(), result_a);
                                 let success_lane_idx = extract
@@ -1583,6 +1617,8 @@ impl Solver for DoubleBlockSolver {
 
                     let cmp_fn = if UPWARDS { u32::gt } else { u32::lt };
                     if cmp_fn(&state[0].wrapping_add(save_a), &target[0]) {
+                        unlikely();
+
                         let mut state = self.prefix_state;
                         sha2::compress256(&mut state, &[buffer, buffer2]);
                         return Some((key as u64 + self.nonce_addend, *state));
@@ -1701,6 +1737,8 @@ impl Solver for GoAwaySolver {
                             };
                             let a_met_target = cmp_fn(result_a, _mm512_set1_epi32(target[0] as _));
                             if a_met_target != 0 {
+                                unlikely();
+
                                 let success_lane_idx = _tzcnt_u16(a_met_target);
                                 let mut output_msg: [u32; 16] = [0; 16];
 
@@ -1778,6 +1816,8 @@ impl Solver for GoAwaySolver {
                             });
 
                             if let Some(success_lane_idx) = success_lane_idx {
+                                unlikely();
+
                                 let mut output_msg: [u32; 16] = [0; 16];
 
                                 let final_low_word = low_word | (success_lane_idx as u32);
@@ -1842,6 +1882,8 @@ impl Solver for GoAwaySolver {
                             let a_not_met_target = cmp_fn(result_a, u32x4_splat(target[0]));
 
                             if !u32x4_all_true(a_not_met_target) {
+                                unlikely();
+
                                 let mut extract = [0u32; 4];
                                 v128_store(extract.as_mut_ptr().cast(), result_a);
                                 let success_lane_idx = extract
@@ -1895,7 +1937,9 @@ impl Solver for GoAwaySolver {
 
                     let cmp_fn = if UPWARDS { u32::gt } else { u32::lt };
                     if cmp_fn(&state[0], &target[0]) {
-                            return Some((key, state));
+                        unlikely();
+
+                        return Some((key, state));
                     }
                 }
 
