@@ -3,7 +3,7 @@
 
 #[cfg(all(
     target_arch = "x86_64",
-    any(target_feature = "avx512", target_feature = "sha")
+    any(target_feature = "avx512f", target_feature = "sha")
 ))]
 use core::arch::x86_64::*;
 
