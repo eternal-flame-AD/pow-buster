@@ -290,6 +290,7 @@ impl Solver for SingleBlockSolver {
                     ptr += 1;
                 }
             }
+            // try to move the mutating part into later part of the final block to skim a couple rounds
             // times 2 because for some reason anubis uses signed nonces ... I wonder if we can send negative nonces
             while nonce_addend.checked_mul(100_000_000_000 * 2).is_some() {
                 nonce_addend *= 100;
@@ -299,6 +300,7 @@ impl Solver for SingleBlockSolver {
                 ptr += 2;
             }
         }
+        // a double block solver must be used because not enough digits can bridge the 9 byte overhead
         nonce_addend = nonce_addend.checked_mul(1_000_000_000)?;
 
         let digit_index = ptr;
