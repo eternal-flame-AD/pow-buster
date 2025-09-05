@@ -13,10 +13,35 @@ use axum::{
 use reqwest::StatusCode;
 use tokio::sync::Semaphore;
 
-use crate::{
-    Align16,
-    client::{AnubisChallengeDescriptor, GoAwayConfig},
-};
+use crate::{Align16, adapter::AnubisChallengeDescriptor, client::GoAwayConfig};
+
+#[cfg(feature = "server-wasm")]
+mod assets {
+    use axum::response::{IntoResponse, Response};
+
+    #[derive(rust_embed::Embed)]
+    #[folder = "pkg/"]
+    pub struct WasmAssets;
+
+    pub struct StaticFile<T>(pub T);
+
+    impl<T> IntoResponse for StaticFile<T>
+    where
+        T: Into<String>,
+    {
+        fn into_response(self) -> Response {
+            let path = self.0.into();
+
+            match WasmAssets::get(path.as_str()) {
+                Some(content) => {
+                    let mime = content.metadata.mimetype();
+                    ([("Content-Type", mime)], content.data).into_response()
+                }
+                None => (axum::http::StatusCode::NOT_FOUND, "404 Not Found").into_response(),
+            }
+        }
+    }
+}
 
 async fn index() -> Html<&'static str> {
     Html(include_str!("static/index.html"))
@@ -27,6 +52,29 @@ pub struct AppState {
     pool: Arc<rayon::ThreadPool>,
     semaphore: Arc<Semaphore>,
     limit: u32,
+}
+
+#[cfg(feature = "server-wasm")]
+async fn serve_wasm(axum::extract::Path(file): axum::extract::Path<String>) -> Response {
+    use assets::{StaticFile, WasmAssets};
+    if file == "index.txt" {
+        let mut index = String::new();
+        WasmAssets::iter().for_each(|entry| {
+            writeln!(index, "{}", entry.as_ref()).unwrap();
+        });
+        return (
+            axum::http::StatusCode::OK,
+            [("Content-Type", "text/plain")],
+            index,
+        )
+            .into_response();
+    }
+    StaticFile(file).into_response()
+}
+
+#[cfg(not(feature = "server-wasm"))]
+async fn serve_wasm(axum::extract::Path(file): axum::extract::Path<String>) -> Response {
+    (axum::http::StatusCode::NOT_FOUND, "404 Not Found").into_response()
 }
 
 impl AppState {
@@ -48,6 +96,7 @@ impl AppState {
         Router::new()
             .route("/", get(index))
             .route("/solve", post(solve_generic))
+            .route("/pkg/{*file}", get(serve_wasm))
             .layer(tower_http::limit::RequestBodyLimitLayer::new(128 << 10))
             .layer(
                 tower_http::trace::TraceLayer::new_for_http()
@@ -392,10 +441,6 @@ async fn solve_anubis(
 
 async fn add_headers(req: Request<Body>, next: Next) -> Response {
     let mut response = next.run(req).await;
-    response.headers_mut().insert(
-        "Content-Security-Policy",
-        HeaderValue::from_static("default-src 'none'; form-action 'self'"),
-    );
     response
 }
 

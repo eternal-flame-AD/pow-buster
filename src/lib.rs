@@ -7,6 +7,9 @@ use core::arch::x86_64::*;
 #[cfg(target_arch = "wasm32")]
 use core::arch::wasm32::*;
 
+#[cfg(feature = "wasm-bindgen")]
+use wasm_bindgen::prelude::*;
+
 use core::num::NonZeroU8;
 
 #[cfg(feature = "alloc")]
@@ -30,6 +33,8 @@ mod sha256;
 
 /// Implementations considered "safe" for production use
 pub mod safe;
+
+mod adapter;
 
 #[cfg(all(not(doc), not(target_arch = "x86_64"), not(target_arch = "wasm32")))]
 compile_error!("Only x86_64 and wasm32 are supported");
@@ -73,6 +78,18 @@ impl<T> core::ops::DerefMut for Align64<T> {
 
 #[cold]
 fn unlikely() {}
+
+#[cfg(feature = "wasm-bindgen")]
+#[wasm_bindgen]
+pub fn prefix_offset_to_lane_position(offset: usize) -> usize {
+    PREFIX_OFFSET_TO_LANE_POSITION[offset]
+}
+
+const PREFIX_OFFSET_TO_LANE_POSITION: [usize; 64] = [
+    2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8, 9, 9, 9, 9,
+    8, 8, 8, 8, 9, 9, 9, 9, 10, 10, 10, 10, 11, 11, 11, 13, 13, 13, 13, 13, 13, 0, 0, 0, 0, 0, 0,
+    0, 1, 1, 1, 1,
+];
 
 const SWAP_DWORD_BYTE_ORDER: [usize; 64] = [
     3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12, 19, 18, 17, 16, 23, 22, 21, 20, 27, 26,
@@ -140,6 +157,34 @@ pub const fn extract128_be(inp: [u32; 8]) -> u128 {
     (inp[0] as u128) << 96 | (inp[1] as u128) << 64 | (inp[2] as u128) << 32 | (inp[3] as u128)
 }
 
+pub const fn is_supported_lane_position(lane_position: usize) -> bool {
+    match lane_position {
+        0 => cfg!(feature = "lane-position-0"),
+        1 => cfg!(feature = "lane-position-1"),
+        2 => cfg!(feature = "lane-position-2"),
+        3 => cfg!(feature = "lane-position-3"),
+        4 => cfg!(feature = "lane-position-4"),
+        5 => cfg!(feature = "lane-position-5"),
+        6 => cfg!(feature = "lane-position-6"),
+        7 => cfg!(feature = "lane-position-7"),
+        8 => cfg!(feature = "lane-position-8"),
+        9 => cfg!(feature = "lane-position-9"),
+        10 => cfg!(feature = "lane-position-10"),
+        11 => cfg!(feature = "lane-position-11"),
+        12 => cfg!(feature = "lane-position-12"),
+        13 => cfg!(feature = "lane-position-13"),
+        14 => cfg!(feature = "lane-position-14"),
+        15 => cfg!(feature = "lane-position-15"),
+        _ => false,
+    }
+}
+
+#[cfg(feature = "wasm-bindgen")]
+#[wasm_bindgen(js_name = "is_supported_lane_position")]
+pub fn is_supported_lane_position_wasm(lane_position: usize) -> bool {
+    is_supported_lane_position(lane_position)
+}
+
 /// Encode a sha-256 hash into hex
 pub fn encode_hex(out: &mut [u8; 64], inp: [u32; 8]) {
     for w in 0..8 {
@@ -201,14 +246,14 @@ pub trait Solver {
 #[derive(Debug, Clone)]
 pub struct SingleBlockSolver {
     // the message template for the final block
-    pub(crate) message: Align64<[u32; 16]>,
+    message: Align64<[u32; 16]>,
 
     // the SHA-256 state A-H for all prefix bytes
-    pub(crate) prefix_state: [u32; 8],
+    prefix_state: [u32; 8],
 
-    pub(crate) digit_index: usize,
+    digit_index: usize,
 
-    pub(crate) nonce_addend: u64,
+    nonce_addend: u64,
 
     attempted_nonces: u32,
 
@@ -339,6 +384,10 @@ impl Solver for SingleBlockSolver {
         message[(64 - 8)..]
             .copy_from_slice(&((complete_blocks_before * 64 + ptr) as u64 * 8).to_be_bytes());
 
+        if !is_supported_lane_position(digit_index / 4) {
+            return None;
+        }
+
         Some(Self {
             message: Align64(core::array::from_fn(|i| {
                 u32::from_be_bytes([
@@ -367,12 +416,15 @@ impl Solver for SingleBlockSolver {
 
                 // pre-compute an OR to apply to the message to add the lane ID
                 let lane_id_0_word_idx = self.digit_index / 4;
+                if !is_supported_lane_position(lane_id_0_word_idx) {
+                    return None;
+                }
                 let lane_id_1_word_idx = (self.digit_index + 1) / 4;
 
                 // make sure there are no runtime "register indexing" logic
                 fn solve_inner<
                     const DIGIT_WORD_IDX0: usize,
-                    const DIGIT_WORD_IDX1: usize,
+                    const DIGIT_WORD_IDX1_INCREMENT: bool,
                     const UPWARDS: bool,
                     const ON_REGISTER_BOUNDARY: bool,
                 >(
@@ -384,6 +436,8 @@ impl Solver for SingleBlockSolver {
                         &mut partial_state,
                         core::array::from_fn(|i| this.message[i]),
                     );
+
+                    let mut remaining_limit = this.limit;
 
                     let lane_id_0_byte_idx = this.digit_index % 4;
                     let lane_id_1_byte_idx = (this.digit_index + 1) % 4;
@@ -399,11 +453,14 @@ impl Solver for SingleBlockSolver {
                                 _mm_set1_epi64x(((3 - lane_id_1_byte_idx) * 8) as _),
                             );
 
-                            let lane_id_0_or_value_v = if DIGIT_WORD_IDX0 == DIGIT_WORD_IDX1 {
+                            let lane_id_0_or_value_v = if !DIGIT_WORD_IDX1_INCREMENT {
                                 _mm512_or_epi32(lane_id_0_or_value, lane_id_1_or_value)
                             } else {
                                 lane_id_0_or_value
                             };
+
+                            let inner_iteration_end = 10_000_000.min(remaining_limit);
+                            remaining_limit -= inner_iteration_end;
 
                             // soft pipeline this to compute the new message after the hash
                             // LLVM seems to handle cases where high register pressure work happens first better
@@ -411,7 +468,7 @@ impl Solver for SingleBlockSolver {
                             // doesn't seem to affect performance on my Zen4 but dirty so avoid
                             // on the last iteration simd_itoa(10_000_000) is unit-tested to convert to 0000\x80000
                             // so no fixup is needed-saves a branch on LLVM codegen
-                            for next_inner_key in 1..=10_000_000 {
+                            for next_inner_key in 1..=inner_iteration_end {
                                 macro_rules! fetch_msg {
                                     ($idx:expr) => {
                                         if $idx == DIGIT_WORD_IDX0 {
@@ -419,7 +476,7 @@ impl Solver for SingleBlockSolver {
                                                 _mm512_set1_epi32(this.message[$idx] as _),
                                                 lane_id_0_or_value_v,
                                             )
-                                        } else if $idx == DIGIT_WORD_IDX1 {
+                                        } else if DIGIT_WORD_IDX1_INCREMENT && $idx == DIGIT_WORD_IDX0 + 1 {
                                             _mm512_or_epi32(
                                                 _mm512_set1_epi32(this.message[$idx] as _),
                                                 lane_id_1_or_value,
@@ -431,48 +488,50 @@ impl Solver for SingleBlockSolver {
                                         } else {
                                             _mm512_set1_epi32(this.message[$idx] as _)
                                         }
-                                    };
+                                    }
                                 }
 
-                                let mut blocks = [
-                                    fetch_msg!(0),
-                                    fetch_msg!(1),
-                                    fetch_msg!(2),
-                                    fetch_msg!(3),
-                                    fetch_msg!(4),
-                                    fetch_msg!(5),
-                                    fetch_msg!(6),
-                                    fetch_msg!(7),
-                                    fetch_msg!(8),
-                                    fetch_msg!(9),
-                                    fetch_msg!(10),
-                                    fetch_msg!(11),
-                                    fetch_msg!(12),
-                                    fetch_msg!(13),
-                                    fetch_msg!(14),
-                                    fetch_msg!(15),
-                                ];
+                                let result_a = {
+                                    let mut blocks = [
+                                        fetch_msg!(0),
+                                        fetch_msg!(1),
+                                        fetch_msg!(2),
+                                        fetch_msg!(3),
+                                        fetch_msg!(4),
+                                        fetch_msg!(5),
+                                        fetch_msg!(6),
+                                        fetch_msg!(7),
+                                        fetch_msg!(8),
+                                        fetch_msg!(9),
+                                        fetch_msg!(10),
+                                        fetch_msg!(11),
+                                        fetch_msg!(12),
+                                        fetch_msg!(13),
+                                        fetch_msg!(14),
+                                        fetch_msg!(15),
+                                    ];
 
-                                let mut state =
-                                    core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
+                                    let mut state =
+                                        core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
 
-                                // do 16-way SHA-256 without feedback so as not to force the compiler to save 8 registers
-                                // we already have them in scalar form, this allows more registers to be reused in the next iteration
-                                sha256::avx512::multiway_arx::<DIGIT_WORD_IDX0>(&mut state, &mut blocks);
+                                    // do 16-way SHA-256 without feedback so as not to force the compiler to save 8 registers
+                                    // we already have them in scalar form, this allows more registers to be reused in the next iteration
+                                    sha256::avx512::multiway_arx::<DIGIT_WORD_IDX0>(&mut state, &mut blocks);
 
-                                // the target is big endian interpretation of the first 16 bytes of the hash (A-D) >= target
-                                // however, the largest 32-bit digits is unlikely to be all ones (otherwise a legitimate challenger needs on average >2^32 attempts)
-                                // so we can reduce this into simply testing H[0]
-                                // the number of acceptable u32 values (for us) is u32::MAX / difficulty
-                                // so the "inefficiency" this creates is about (u32::MAX / difficulty) * (1 / 2), because for approx. half of the "edge case" do we actually have an acceptable solution,
-                                // which for 1e8 is about 1%, but we get to save the one broadcast add,
-                                // a vectorized comparison, and a scalar logic evaluation
-                                // which I feel is about 1% of the instructions needed per iteration anyways just more registers used so let's not bother
+                                    // the target is big endian interpretation of the first 16 bytes of the hash (A-D) >= target
+                                    // however, the largest 32-bit digits is unlikely to be all ones (otherwise a legitimate challenger needs on average >2^32 attempts)
+                                    // so we can reduce this into simply testing H[0]
+                                    // the number of acceptable u32 values (for us) is u32::MAX / difficulty
+                                    // so the "inefficiency" this creates is about (u32::MAX / difficulty) * (1 / 2), because for approx. half of the "edge case" do we actually have an acceptable solution,
+                                    // which for 1e8 is about 1%, but we get to save the one broadcast add,
+                                    // a vectorized comparison, and a scalar logic evaluation
+                                    // which I feel is about 1% of the instructions needed per iteration anyways just more registers used so let's not bother
 
-                                let result_a = _mm512_add_epi32(
-                                    state[0],
-                                    _mm512_set1_epi32(this.prefix_state[0] as _),
-                                );
+                                    _mm512_add_epi32(
+                                        state[0],
+                                        _mm512_set1_epi32(this.prefix_state[0] as _),
+                                    )
+                                };
 
                                 let cmp_fn = if UPWARDS {
                                     _mm512_cmpgt_epu32_mask
@@ -508,10 +567,7 @@ impl Solver for SingleBlockSolver {
                                     return Some(nonce_prefix as u64 * 10u64.pow(7) + next_inner_key as u64 - 1);
                                 }
 
-                                this.attempted_nonces += 16;
-                                if this.attempted_nonces >= this.limit {
-                                    return None;
-                                }
+                                this.attempted_nonces += 1;
 
                                 if ON_REGISTER_BOUNDARY {
                                     strings::simd_itoa8::<7, true, 0x80>(&mut inner_key_buf, next_inner_key);
@@ -542,31 +598,18 @@ impl Solver for SingleBlockSolver {
                 }
 
                 macro_rules! dispatch {
-                    ($idx0:literal, $idx1:literal) => {
+                    ($idx0:literal, $idx1_inc:literal) => {
                         if self.digit_index % 4 == 2 {
-                            solve_inner::<$idx0, $idx1, UPWARDS, true>(self, target[0])
+                            solve_inner::<$idx0, $idx1_inc, UPWARDS, true>(self, target[0])
                         } else {
-                            solve_inner::<$idx0, $idx1, UPWARDS, false>(self, target[0])
+                            solve_inner::<$idx0, $idx1_inc, UPWARDS, false>(self, target[0])
                         }
                     };
                     ($idx0:literal) => {
-                        match lane_id_1_word_idx {
-                            0 => dispatch!($idx0, 0),
-                            1 => dispatch!($idx0, 1),
-                            2 => dispatch!($idx0, 2),
-                            3 => dispatch!($idx0, 3),
-                            4 => dispatch!($idx0, 4),
-                            5 => dispatch!($idx0, 5),
-                            6 => dispatch!($idx0, 6),
-                            7 => dispatch!($idx0, 7),
-                            8 => dispatch!($idx0, 8),
-                            9 => dispatch!($idx0, 9),
-                            10 => dispatch!($idx0, 10),
-                            11 => dispatch!($idx0, 11),
-                            12 => dispatch!($idx0, 12),
-                            13 => dispatch!($idx0, 13),
-                            // there is no possible way lane ID lands on position 14 or 15, because the padding is 9 bytes and nonce tail is 7 bytes
-                            _ => core::hint::unreachable_unchecked(),
+                        if lane_id_0_word_idx == lane_id_1_word_idx {
+                            dispatch!($idx0, false)
+                        } else {
+                            dispatch!($idx0, true)
                         }
                     };
                 }
@@ -591,6 +634,8 @@ impl Solver for SingleBlockSolver {
                     }
                 }?;
 
+                self.attempted_nonces *= 16;
+
                 // recompute the hash from the beginning
                 // this prevents the compiler from having to compute the final B-H registers alive in tight loops
                 let mut final_sha_state = self.prefix_state;
@@ -602,6 +647,10 @@ impl Solver for SingleBlockSolver {
             #[inline(never)]
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
                 let lane_id_0_word_idx = self.digit_index / 4;
+                if !is_supported_lane_position(lane_id_0_word_idx) {
+                    return None;
+                }
+
                 let lane_id_1_word_idx = (self.digit_index + 1) / 4;
 
                 fn solve_inner<
@@ -909,104 +958,159 @@ impl Solver for SingleBlockSolver {
         } else if #[cfg(target_arch = "wasm32")] {
             #[inline(never)]
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
-                // wasm don't have registers, so we there is no need for code bloat
-                // todo: do the hotstart
-
                 let lane_id_0_word_idx = self.digit_index / 4;
+                if !is_supported_lane_position(lane_id_0_word_idx) {
+                    return None;
+                }
                 let lane_id_1_word_idx = (self.digit_index + 1) / 4;
-                let lane_id_0_byte_idx = self.digit_index % 4;
-                let lane_id_1_byte_idx = (self.digit_index + 1) % 4;
-                unsafe {
-                    for prefix_set_index in 0..((100 - 10) / 4) {
-                        let lane_id_0_or_value = u32x4_shl(
-                            load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index),
-                            ((3 - lane_id_0_byte_idx) * 8) as _,
-                        );
-                        let lane_id_1_or_value = u32x4_shl(
-                            load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index),
-                            ((3 - lane_id_1_byte_idx) * 8) as _,
-                        );
-                        for inner_key in 0..10_000_000 {
-                            {
-                                let message_bytes = decompose_blocks_mut(&mut self.message);
-                                let mut key_copy = inner_key;
-                                for i in (0..7).rev() {
-                                    let output = key_copy % 10;
-                                    key_copy /= 10;
-                                    *message_bytes.get_unchecked_mut(
-                                        *SWAP_DWORD_BYTE_ORDER.get_unchecked(self.digit_index + i + 2),
-                                    ) = output as u8 + b'0';
-                                }
 
-                                if key_copy != 0 {
-                                    debug_assert_eq!(key_copy, 0);
-                                    core::hint::unreachable_unchecked();
-                                }
+                let mut hotstart_state = self.prefix_state;
+                sha256::sha2_arx_slice::<0>(&mut hotstart_state, &self.message[..lane_id_0_word_idx]);
+
+                fn solve_inner<
+                    const LANE_ID_0_WORD_IDX: usize,
+                    const LANE_ID_1_INCREMENT: bool,
+                    const UPWARDS: bool,
+                >(
+                    this: &mut SingleBlockSolver,
+                    hotstart_state: [u32; 8],
+                    target: u32,
+                ) -> Option<u64> {
+                    unsafe {
+                        let mut remaining_limit = this.limit;
+
+                        let lane_id_0_byte_idx = this.digit_index % 4;
+                        let lane_id_1_byte_idx = (this.digit_index + 1) % 4;
+
+                        for prefix_set_index in 0..((100 - 10) / 4) {
+                            let mut lane_id_0_or_value = u32x4_shl(
+                                load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index),
+                                ((3 - lane_id_0_byte_idx) * 8) as _,
+                            );
+                            let lane_id_1_or_value = u32x4_shl(
+                                load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index),
+                                ((3 - lane_id_1_byte_idx) * 8) as _,
+                            );
+
+                            if !LANE_ID_1_INCREMENT {
+                                lane_id_0_or_value = v128_or(lane_id_1_or_value, lane_id_0_or_value);
                             }
 
-                            let mut blocks = core::array::from_fn(|i| u32x4_splat(self.message[i]));
-                            blocks[lane_id_0_word_idx] =
-                                v128_or(blocks[lane_id_0_word_idx], lane_id_0_or_value);
-                            blocks[lane_id_1_word_idx] =
-                                v128_or(blocks[lane_id_1_word_idx], lane_id_1_or_value);
-
-                            let mut state = core::array::from_fn(|i| u32x4_splat(self.prefix_state[i]));
-                            sha256::simd128::multiway_arx::<0>(&mut state, &mut blocks);
-
-                            let result_a = u32x4_add(state[0], u32x4_splat(self.prefix_state[0]));
-
-                            let cmp_fn = if UPWARDS { u32x4_le } else { u32x4_ge };
-
-                            let a_not_met_target = cmp_fn(result_a, u32x4_splat(target[0]));
-
-                            if !u32x4_all_true(a_not_met_target) {
-                                unlikely();
-
-                                let mut extract = [0u32; 4];
-                                v128_store(extract.as_mut_ptr().cast(), result_a);
-                                let success_lane_idx = extract
-                                    .iter()
-                                    .position(|x| {
-                                        if UPWARDS {
-                                            *x > target[0]
-                                        } else {
-                                            *x < target[0]
-                                        }
-                                    })
-                                    .unwrap();
-                                let nonce_prefix = 10 + 4 * prefix_set_index + success_lane_idx;
-
-                                // stamp the lane ID back onto the message
+                            for inner_key in 0..(10_000_000.min(this.limit.div_ceil(4))) {
                                 {
-                                    let message_bytes = decompose_blocks_mut(&mut self.message);
-                                    *message_bytes.get_unchecked_mut(
-                                        *SWAP_DWORD_BYTE_ORDER.get_unchecked(self.digit_index),
-                                    ) = (nonce_prefix / 10) as u8 + b'0';
-                                    *message_bytes.get_unchecked_mut(
-                                        *SWAP_DWORD_BYTE_ORDER.get_unchecked(self.digit_index + 1),
-                                    ) = (nonce_prefix % 10) as u8 + b'0';
+                                    let message_bytes = decompose_blocks_mut(&mut this.message);
+                                    let mut key_copy = inner_key;
+                                    for i in (0..7).rev() {
+                                        let output = key_copy % 10;
+                                        key_copy /= 10;
+                                        *message_bytes.get_unchecked_mut(
+                                            *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + i + 2),
+                                        ) = output as u8 + b'0';
+                                    }
+
+                                    if key_copy != 0 {
+                                        debug_assert_eq!(key_copy, 0);
+                                        core::hint::unreachable_unchecked();
+                                    }
                                 }
 
-                                // recompute the hash from the beginning
-                                // this prevents the compiler from having to compute the final B-H registers alive in tight loops
-                                let mut final_sha_state = self.prefix_state;
-                                sha256::digest_block(&mut final_sha_state, &self.message);
+                                let mut blocks = core::array::from_fn(|i| u32x4_splat(this.message[i]));
+                                blocks[LANE_ID_0_WORD_IDX] =
+                                    v128_or(blocks[LANE_ID_0_WORD_IDX], lane_id_0_or_value);
 
-                                // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
-                                return Some((
-                                    nonce_prefix as u64 * 10u64.pow(7) + inner_key + self.nonce_addend,
-                                    final_sha_state,
-                                ));
-                            }
+                                if LANE_ID_1_INCREMENT {
+                                    blocks[LANE_ID_0_WORD_IDX + LANE_ID_1_INCREMENT as usize] =
+                                        v128_or(blocks[LANE_ID_0_WORD_IDX + LANE_ID_1_INCREMENT as usize], lane_id_1_or_value);
+                                }
 
-                            self.attempted_nonces += 4;
-                            if self.attempted_nonces >= self.limit {
-                                return None;
+                                let mut state = core::array::from_fn(|i| u32x4_splat(hotstart_state[i]));
+                                sha256::simd128::multiway_arx::<LANE_ID_0_WORD_IDX>(&mut state, &mut blocks);
+
+                                let result_a = u32x4_add(state[0], u32x4_splat(this.prefix_state[0]));
+
+                                let cmp_fn = if UPWARDS { u32x4_le } else { u32x4_ge };
+
+                                let a_not_met_target = cmp_fn(result_a, u32x4_splat(target));
+
+                                if !u32x4_all_true(a_not_met_target) {
+                                    unlikely();
+
+                                    let mut extract = [0u32; 4];
+                                    v128_store(extract.as_mut_ptr().cast(), result_a);
+                                    let success_lane_idx = extract
+                                        .iter()
+                                        .position(|x| {
+                                            if UPWARDS {
+                                                *x > target
+                                            } else {
+                                                *x < target
+                                            }
+                                        })
+                                        .unwrap();
+                                    let nonce_prefix = 10 + 4 * prefix_set_index + success_lane_idx;
+
+                                    // stamp the lane ID back onto the message
+                                    {
+                                        let message_bytes = decompose_blocks_mut(&mut this.message);
+                                        *message_bytes.get_unchecked_mut(
+                                            *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index),
+                                        ) = (nonce_prefix / 10) as u8 + b'0';
+                                        *message_bytes.get_unchecked_mut(
+                                            *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + 1),
+                                        ) = (nonce_prefix % 10) as u8 + b'0';
+                                    }
+
+                                    // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
+                                    return Some(
+                                        nonce_prefix as u64 * 10u64.pow(7) + inner_key as u64 + this.nonce_addend,
+                                    );
+                                }
+
+                                this.attempted_nonces += 4;
                             }
                         }
                     }
+
+                    None
                 }
-                None
+
+
+                macro_rules! dispatch {
+                    ($idx0_words:literal) => {
+                        if lane_id_0_word_idx == lane_id_1_word_idx {
+                            solve_inner::<{ $idx0_words }, false, UPWARDS>(self, hotstart_state, target[0])
+                        } else {
+                            solve_inner::<{ $idx0_words }, true, UPWARDS>(self, hotstart_state, target[0])
+                        }
+                    };
+                }
+
+                let nonce = unsafe {
+                    match lane_id_0_word_idx {
+                        0 => dispatch!(0),
+                        1 => dispatch!(1),
+                        2 => dispatch!(2),
+                        3 => dispatch!(3),
+                        4 => dispatch!(4),
+                        5 => dispatch!(5),
+                        6 => dispatch!(6),
+                        7 => dispatch!(7),
+                        8 => dispatch!(8),
+                        9 => dispatch!(9),
+                        10 => dispatch!(10),
+                        11 => dispatch!(11),
+                        12 => dispatch!(12),
+                        13 => dispatch!(13),
+                        _ => core::hint::unreachable_unchecked(),
+                    }?
+                };
+
+                // recompute the hash from the beginning
+                // this prevents the compiler from having to compute the final B-H registers alive in tight loops
+                let mut final_sha_state = self.prefix_state;
+                sha256::digest_block(&mut final_sha_state, &self.message);
+
+                Some((nonce, final_sha_state))
             }
         } else {
             #[inline(never)]
@@ -1016,7 +1120,7 @@ impl Solver for SingleBlockSolver {
                     buffer[i*4..i*4+4].copy_from_slice(&self.message[i].to_be_bytes());
                 }
 
-                for key in 100_000_000..1_000_000_000 {
+                for key in (100_000_000..1_000_000_000).take(self.limit as usize) {
                     let mut key_copy = key;
                     for j in (0..9).rev() {
                         buffer[self.digit_index + j] = (key_copy % 10) as u8 + b'0';
@@ -1079,6 +1183,10 @@ impl Solver for DoubleBlockSolver {
     where
         Self: Sized,
     {
+        if !is_supported_lane_position(Self::DIGIT_IDX as usize / 4) {
+            return None;
+        }
+
         // construct the message buffer
         let mut prefix_state = Align16(sha256::IV);
 
@@ -1158,6 +1266,10 @@ impl Solver for DoubleBlockSolver {
     cfg_if::cfg_if! {
         if #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))] {
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                if !is_supported_lane_position(Self::DIGIT_IDX as usize / 4) {
+                    return None;
+                }
+
                 let mut partial_state = self.prefix_state;
                 sha256::sha2_arx::<0, 13>(&mut partial_state, self.message[..13].try_into().unwrap());
 
@@ -1183,37 +1295,39 @@ impl Solver for DoubleBlockSolver {
                             let cum0 = itoa_buf.as_ptr().cast::<u32>().read();
                             let cum1 = itoa_buf.as_ptr().add(4).cast::<u32>().read();
 
-                            let mut blocks = [
-                                _mm512_set1_epi32(self.message[0] as _),
-                                _mm512_set1_epi32(self.message[1] as _),
-                                _mm512_set1_epi32(self.message[2] as _),
-                                _mm512_set1_epi32(self.message[3] as _),
-                                _mm512_set1_epi32(self.message[4] as _),
-                                _mm512_set1_epi32(self.message[5] as _),
-                                _mm512_set1_epi32(self.message[6] as _),
-                                _mm512_set1_epi32(self.message[7] as _),
-                                _mm512_set1_epi32(self.message[8] as _),
-                                _mm512_set1_epi32(self.message[9] as _),
-                                _mm512_set1_epi32(self.message[10] as _),
-                                _mm512_set1_epi32(self.message[11] as _),
-                                _mm512_set1_epi32(self.message[12] as _),
-                                lane_index_value_v,
-                                _mm512_set1_epi32(cum0 as _),
-                                _mm512_set1_epi32(cum1 as _),
-                            ];
-
                             let mut state =
                                 core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
 
-                            sha256::avx512::multiway_arx::<13>(&mut state, &mut blocks);
+                            {
+                                let mut blocks = [
+                                    _mm512_set1_epi32(self.message[0] as _),
+                                    _mm512_set1_epi32(self.message[1] as _),
+                                    _mm512_set1_epi32(self.message[2] as _),
+                                    _mm512_set1_epi32(self.message[3] as _),
+                                    _mm512_set1_epi32(self.message[4] as _),
+                                    _mm512_set1_epi32(self.message[5] as _),
+                                    _mm512_set1_epi32(self.message[6] as _),
+                                    _mm512_set1_epi32(self.message[7] as _),
+                                    _mm512_set1_epi32(self.message[8] as _),
+                                    _mm512_set1_epi32(self.message[9] as _),
+                                    _mm512_set1_epi32(self.message[10] as _),
+                                    _mm512_set1_epi32(self.message[11] as _),
+                                    _mm512_set1_epi32(self.message[12] as _),
+                                    lane_index_value_v,
+                                    _mm512_set1_epi32(cum0 as _),
+                                    _mm512_set1_epi32(cum1 as _),
+                                ];
 
-                            // we have to do feedback now
-                            state.iter_mut().zip(self.prefix_state.iter()).for_each(
-                                |(state, prefix_state)| {
-                                    *state =
-                                        _mm512_add_epi32(*state, _mm512_set1_epi32(*prefix_state as _));
-                                },
-                            );
+                                sha256::avx512::multiway_arx::<13>(&mut state, &mut blocks);
+
+                                // we have to do feedback now
+                                state.iter_mut().zip(self.prefix_state.iter()).for_each(
+                                    |(state, prefix_state)| {
+                                        *state =
+                                            _mm512_add_epi32(*state, _mm512_set1_epi32(*prefix_state as _));
+                                    },
+                                );
+                            }
 
                             // save only A register for comparison
                             let save_a = state[0];
@@ -1282,6 +1396,10 @@ impl Solver for DoubleBlockSolver {
             }
         } else if #[cfg(all(target_arch = "x86_64", target_feature = "sha"))] {
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                if !is_supported_lane_position(Self::DIGIT_IDX as usize / 4) {
+                    return None;
+                }
+
                 let iv_state = sha256::sha_ni::prepare_state(&self.prefix_state);
                 let mut prefix_state = Align16(self.prefix_state);
                 sha256::sha2_arx::<0, 12>(&mut prefix_state, self.message[..12].try_into().unwrap());
@@ -1441,6 +1559,10 @@ impl Solver for DoubleBlockSolver {
             }
         } else if #[cfg(target_arch = "wasm32")] {
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                if !is_supported_lane_position(Self::DIGIT_IDX as usize / 4) {
+                    return None;
+                }
+
                 let mut partial_state = Align64(self.prefix_state);
                 sha256::sha2_arx::<0, 13>(&mut partial_state, self.message[..13].try_into().unwrap());
 
@@ -1557,9 +1679,13 @@ impl Solver for DoubleBlockSolver {
                                 // this prevents the compiler from having to compute the final B-H registers alive in tight loops
                                 let mut final_sha_state = self.prefix_state;
                                 sha256::digest_block(&mut final_sha_state, &self.message);
+
+                                let mut terminal_message_without_constants = [0; 16];
+                                terminal_message_without_constants[14] = ((self.message_length as u64 * 8) >> 32) as u32;
+                                terminal_message_without_constants[15] = (self.message_length as u64 * 8) as u32;
                                 sha256::digest_block(
                                     &mut final_sha_state,
-                                    terminal_message_schedule[0..16].try_into().unwrap(),
+                                    &terminal_message_without_constants,
                                 );
 
                                 // reverse the byte order
@@ -1658,6 +1784,10 @@ impl Solver for GoAwaySolver {
     type Ctx = ();
 
     fn new(_ctx: Self::Ctx, prefix: &[u8]) -> Option<Self> {
+        if !is_supported_lane_position(PREFIX_OFFSET_TO_LANE_POSITION[0]) {
+            return None;
+        }
+
         let mut prefix_fixed_up = [0; 32];
         let mut final_prefix = &*prefix;
         if prefix.len() != 32 {
@@ -1704,6 +1834,10 @@ impl Solver for GoAwaySolver {
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
                 unsafe {
                     let lane_id_v = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+
+                    if !is_supported_lane_position(PREFIX_OFFSET_TO_LANE_POSITION[0]) {
+                        return None;
+                    }
 
                     let mut prefix_state = sha256::IV;
                     sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
@@ -1775,6 +1909,10 @@ impl Solver for GoAwaySolver {
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
                 unsafe {
                     use core::arch::x86_64::*;
+
+                    if !is_supported_lane_position(PREFIX_OFFSET_TO_LANE_POSITION[0]) {
+                        return None;
+                    }
 
                     let mut prefix_state = Align16(sha256::IV);
                     sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
@@ -1852,6 +1990,10 @@ impl Solver for GoAwaySolver {
             #[inline(never)]
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
                 unsafe {
+                    if !is_supported_lane_position(PREFIX_OFFSET_TO_LANE_POSITION[0]) {
+                        return None;
+                    }
+
                     let lane_id_v = u32x4(0, 1, 2, 3);
 
                     let mut prefix_state = sha256::IV;
@@ -1964,6 +2106,21 @@ mod tests {
     use sha2::{Digest, Sha256, digest::Output};
 
     use super::*;
+
+    #[test]
+    fn test_prefix_position_to_lane_position() {
+        let mut mapping = [0; 64];
+        let x = [b'a'; 64];
+        for i in 0..64 {
+            let single_solver = SingleBlockSolver::new(Default::default(), &x[..i]);
+            if let Some(single_solver) = single_solver {
+                mapping[i] = single_solver.digit_index / 4;
+            } else {
+                mapping[i] = DoubleBlockSolver::DIGIT_IDX as usize / 4;
+            }
+        }
+        assert_eq!(mapping, PREFIX_OFFSET_TO_LANE_POSITION);
+    }
 
     pub fn build_prefix_official<W: std::io::Write>(
         out: &mut W,

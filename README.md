@@ -24,7 +24,7 @@ A fast, adversarially implemented mCaptcha/Anubis/go-away PoW solver, targeting 
 
 The benchmarks demonstrate a significant performance gap between browser-based JavaScript execution and native implementations (both optimized CPU and unoptimized GPU), suggesting fundamental challenges for PoW-based browser CAPTCHA systems.
 
-[Web demo](https://powbuster.yumechi.jp/)
+[Web demo featuring a public backend native solver and client-side WASM solver](https://powbuster.yumechi.jp/)
 
 ## Why?
 
@@ -39,7 +39,7 @@ I personally don't like some projects put themselves at the ethical high ground 
 
 We assume you have a relatively modern and powerful platform, specifically:
 
-- A cold optimized build with end-to-end features may take up to 15 minutes as this program aggressively generates specialized kernels and build time isn't my priority.
+- A cold optimized build with end-to-end features may take up to 5 minutes as this program aggressively generates specialized kernels and build time isn't my priority.
 - Requires AVX-512 or SHA-NI CPU or simd128 on WASM. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard). There is a pure Rust scalar fallback that should make the code compile and work regardless.
 - For Anubis target, this assumes the server is 64-bit (i.e. is able to accept a signed 64-bit nonce).
 - AVX-512 build requires Rust 1.89 or later.
@@ -121,7 +121,7 @@ Fake Proof Control: 3732 requests in 10.1 seconds, 369.2 rps
 Anubis "extreme suspicion" (4, saturated Anubis Go runtime):
 
 ```sh
-target/release/simd-mcaptcha live --api-type anubis --host http://localhost:8923/ \
+> target/release/simd-mcaptcha live --api-type anubis --host http://localhost:8923/ \
                                                     --n-workers 64
 
 You are hitting host http://localhost:8923/, n_workers: 64
@@ -142,8 +142,8 @@ You are hitting host http://localhost:8923/, n_workers: 64
 
 Anubis nightmare (6, doesn't exist in reality because it takes >1min on a 200kH/s browser solver, 256x harder than extreme suspicion):
 
-```
-target/release/simd-mcaptcha live --api-type anubis --host http://localhost:8923/ \
+```sh
+> target/release/simd-mcaptcha live --api-type anubis --host http://localhost:8923/ \
                                                     --n-workers 32
 
 You are hitting host http://localhost:8923/, n_workers: 32
@@ -182,11 +182,11 @@ The single-threaded throughput for OpenSSL with SHA-NI support is about 12.94 MH
 
 For us we have single thread:
 
-| Workload                         | AVX-512 [log](time.txt) | SHA-NI [log](time_sha-ni.txt) |
-| -------------------------------- | ----------------------- | ----------------------------- |
-| SingleBlock/Anubis               | 85.75 MH/s              | 51.71 MH/s                    |
-| DoubleBlock (mCaptcha edge case) | 52.30 MH/s              | 48.78 MH/s                    |
-| go-away (16 bytes)               | 97.87 MH/s              | 79.46 MH/s                    |
+| Workload                         | AVX-512 [log](time.txt) | SHA-NI [log](time_sha-ni.txt) | Chromium SIMD128 [log](time_simd128.txt) |
+| -------------------------------- | ----------------------- | ----------------------------- | ---------------------------------------- |
+| SingleBlock/Anubis               | 85.75 MH/s              | 51.71 MH/s                    | 14.74 MH/s                               |
+| DoubleBlock (mCaptcha edge case) | 52.30 MH/s              | 48.78 MH/s                    | Not Tested                               |
+| go-away (16 bytes)               | 97.87 MH/s              | 79.46 MH/s                    | Not Tested                               |
 
 The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and about 20% of that on Firefox, this is corroborated by Anubis's own accounts in their code comments using 7950X3D empirical testing. Empirical throughput of WASM-based mCaptcha is unreliable due to lack of official benchmark tools, but should be around 2-4 MH/s, corroborated with the author's CACM paper.
 

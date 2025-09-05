@@ -27,7 +27,8 @@ tower-http = { version = "0.6.6", features = ["catch-panic", "timeout", "trace",
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"], optional = true }
 tracing = { version = "0.1.41", optional = true }
 axum-extra = { version = "0.10.1", features = ["typed-header"], optional = true }
-headers = { version = "0.4.1", optional = true }
+headers = { version = "0.4", optional = true }
+rust-embed = { version = "8.7", optional = true, features = ["mime-guess"] }
 
 [profile.release]
 opt-level = 3
@@ -46,11 +47,12 @@ name = "bench_proof"
 harness = false
 
 [features]
-default = ["std"]
+default = ["std", "all-lane-positions"]
 alloc = []
 std = ["alloc"]
-wasm-bindgen = ["alloc", "dep:wasm-bindgen"]
-client = ["std", "rayon", "tokio", "tokio/rt-multi-thread", "dep:url", "dep:serde", "dep:serde_json", "dep:reqwest", "dep:thiserror", "dep:num_cpus", "dep:scraper"]
+adapter = ["alloc", "dep:serde", "dep:serde_json"]
+wasm-bindgen = ["adapter", "dep:wasm-bindgen"]
+client = ["std", "adapter", "rayon", "tokio", "tokio/rt-multi-thread", "dep:url", "dep:reqwest", "dep:thiserror", "dep:num_cpus", "dep:scraper"]
 live-throughput-test = ["client"]
 cli = ["std", "dep:clap", "rayon", "dep:num_cpus"]
 tokio = ["std", "dep:tokio"]
@@ -60,6 +62,41 @@ scraper = ["dep:scraper"]
 url = ["dep:url"]
 server = ["client", "dep:axum", "dep:tower-http", "tracing", "dep:tracing-subscriber", "dep:axum-extra", "dep:headers"]
 tracing = ["dep:tracing"]
+all-lane-positions = [
+    "lane-position-0",
+    "lane-position-1",
+    "lane-position-2",
+    "lane-position-3",
+    "lane-position-4",
+    "lane-position-5",
+    "lane-position-6",
+    "lane-position-7",
+    "lane-position-8",
+    "lane-position-9",
+    "lane-position-10",
+    "lane-position-11",
+    "lane-position-12",
+    "lane-position-13",
+    "lane-position-14",
+    "lane-position-15"
+]
+lane-position-0 = []
+lane-position-1 = []
+lane-position-2 = []
+lane-position-3 = []
+lane-position-4 = []
+lane-position-5 = []
+lane-position-6 = []
+lane-position-7 = []
+lane-position-8 = []
+lane-position-9 = []
+lane-position-10 = []
+lane-position-11 = []
+lane-position-12 = []
+lane-position-13 = []
+lane-position-14 = []
+lane-position-15 = []
+server-wasm = ["server", "dep:rust-embed"]
 
 [[bin]]
 name = "simd-mcaptcha"
