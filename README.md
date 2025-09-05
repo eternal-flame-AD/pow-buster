@@ -39,7 +39,7 @@ I personally don't like some projects put themselves at the ethical high ground 
 
 We assume you have a relatively modern and powerful platform, specifically:
 
-- Optimized builds may take up to 5 minutes as this program aggressively generates specialized kernels.
+- Optimized builds with end-to-end features may take up to 15 minutes as this program aggressively generates specialized kernels.
 - Requires AVX-512 or SHA-NI CPU or simd128 on WASM. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard). There is a pure Rust scalar fallback that should make the code compile and work regardless.
 - For Anubis target, this assumes the server is 64-bit (i.e. is able to accept a signed 64-bit nonce).
 - AVX-512 build requires Rust 1.89 or later.
