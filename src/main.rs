@@ -384,8 +384,6 @@ fn main() {
             n_workers,
             do_control,
         } => {
-            use std::io::Write;
-
             let api_type = ApiType::from_str(&api_type).unwrap();
             let n_workers = n_workers.unwrap_or_else(|| num_cpus::get() as u32);
             eprintln!("You are hitting host {}, n_workers: {}", host, n_workers);
@@ -464,6 +462,7 @@ fn main() {
                 let mut last_failed = 0;
                 let succeeded = Arc::new(AtomicU64::new(0));
                 let failed = Arc::new(AtomicU64::new(0));
+                let packed_time = Arc::new(AtomicU64::new(0));
 
                 for _ in 0..n_workers {
                     let host_clone = host.clone();
@@ -471,6 +470,7 @@ fn main() {
                     let succeeded_clone = succeeded.clone();
                     let failed_clone = failed.clone();
                     let site_key_clone = site_key.clone();
+                    let packed_time_clone = packed_time.clone();
                     let pool = pool.clone();
 
                     let api_type = api_type.clone();
@@ -483,44 +483,40 @@ fn main() {
 
                         match api_type {
                             ApiType::Mcaptcha => loop {
-                                match simd_mcaptcha::client::solve_mcaptcha(
+                                let mut iotime = 0;
+                                let start = Instant::now();
+                                match simd_mcaptcha::client::solve_mcaptcha_ex(
                                     &pool,
                                     &client,
                                     &host_clone,
                                     &site_key_clone,
                                     true,
+                                    &mut iotime,
                                 )
                                 .await
                                 {
-                                    Ok(token) => {
-                                        let mut stdout = std::io::stdout().lock();
-                                        stdout
-                                            .write_all(token.as_bytes())
-                                            .expect("stdout write failed");
-                                        stdout.write_all(b"\n").expect("stdout write failed");
-                                        stdout.flush().expect("stdout flush failed");
-
+                                    Ok(_) => {
                                         succeeded_clone.fetch_add(1, Ordering::Relaxed)
                                     }
                                     Err(_) => failed_clone.fetch_add(1, Ordering::Relaxed),
                                 };
+                                let mut packed_time = start.elapsed().as_micros() as u64;
+                                packed_time <<=32;
+                                packed_time += iotime as u64;
+                                packed_time_clone.fetch_add(packed_time, Ordering::Relaxed);
                             },
                             ApiType::Anubis => loop {
-                                match simd_mcaptcha::client::solve_anubis(
+                                let mut iotime = 0;
+                                let start = Instant::now();
+                                match simd_mcaptcha::client::solve_anubis_ex(
                                     &client,
                                     &host_clone,
                                     true,
+                                    &mut iotime,
                                 )
                                 .await
                                 {
-                                    Ok(response) => {
-                                        let mut stdout = std::io::stdout().lock();
-                                        stdout
-                                            .write_all(response.as_bytes())
-                                            .expect("stdout write failed");
-                                        stdout.write_all(b"\n").expect("stdout write failed");
-                                        stdout.flush().expect("stdout flush failed");
-
+                                    Ok(_) => {
                                         succeeded_clone.fetch_add(1, Ordering::Relaxed);
                                     }
                                     Err(e) => {
@@ -528,6 +524,10 @@ fn main() {
                                         failed_clone.fetch_add(1, Ordering::Relaxed);
                                     }
                                 };
+                                let mut packed_time = start.elapsed().as_micros() as u64;
+                                packed_time <<=32;
+                                packed_time += iotime as u64;
+                                packed_time_clone.fetch_add(packed_time, Ordering::Relaxed);
                             },
                         }
                     });
@@ -545,13 +545,18 @@ fn main() {
                     let rate_5sec_succeeded: f32 = diff_succeeded as f32 / 5.0;
                     let rate_5sec_failed = diff_failed as f32 / 5.0;
 
+                    let packed_time = packed_time.load(Ordering::Relaxed);
+                    let iowait = packed_time as u32;
+                    let total = (packed_time >> 32) as u32;
+
                     eprintln!(
-                        "[{:.1}s] succeeded: {}, failed: {}, 5s: {:.1}rps, 5s_failed: {:.1}rps",
+                        "[{:.1}s] proofs accepted: {}, failed: {}, 5s: {:.1}pps, 5s_failed: {:.1}rps, {:.2}% iowait",
                         elapsed.as_secs_f32(),
                         succeeded,
                         failed,
                         rate_5sec_succeeded,
                         rate_5sec_failed,
+                        if total > 0 { iowait as f64 / total as f64 * 100.0 } else { 0.0 },
                     );
                     last_succeeded = succeeded;
                     last_failed = failed;

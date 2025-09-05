@@ -1,3 +1,5 @@
+#![cfg_attr(target_feature = "avx512f", allow(dead_code, unused))]
+
 // these are mainly adapted from the sha2 crate as well,
 // the core logic is verbatim, but shuffling and batch message loading overhead is removed
 use core::arch::x86_64::*;

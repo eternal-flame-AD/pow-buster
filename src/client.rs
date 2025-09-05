@@ -2,6 +2,7 @@ use core::num::NonZeroU8;
 use std::fmt::Write;
 
 use reqwest::Client;
+use sha2::Digest;
 
 use crate::{Align16, Solver, compute_target, compute_target_anubis, compute_target_goaway};
 
@@ -46,10 +47,6 @@ pub enum SolveError {
     UnexpectedStatusSend(reqwest::StatusCode, String),
 }
 
-/// Solve a mcaptcha live.
-///
-/// If `really_solve` is false, the solver will not be used and a dummy nonce and result will be returned.
-/// This is useful for testing and benchmarking.
 pub async fn solve_mcaptcha(
     pool: &rayon::ThreadPool,
     client: &Client,
@@ -57,7 +54,23 @@ pub async fn solve_mcaptcha(
     site_key: &str,
     really_solve: bool,
 ) -> Result<String, SolveError> {
+    solve_mcaptcha_ex(pool, client, base_url, site_key, really_solve, &mut 0).await
+}
+
+/// Solve a mcaptcha live.
+///
+/// If `really_solve` is false, the solver will not be used and a dummy nonce and result will be returned.
+/// This is useful for testing and benchmarking.
+pub async fn solve_mcaptcha_ex(
+    pool: &rayon::ThreadPool,
+    client: &Client,
+    base_url: &str,
+    site_key: &str,
+    really_solve: bool,
+    time_iowait: &mut u32,
+) -> Result<String, SolveError> {
     let url_get_work = format!("{}/api/v1/pow/config", base_url);
+    let iotime = std::time::Instant::now();
     let res = client
         .post(url_get_work)
         .header("Accept", "application/json")
@@ -66,6 +79,8 @@ pub async fn solve_mcaptcha(
         }))
         .send()
         .await?;
+    let iotime = iotime.elapsed();
+    *time_iowait += iotime.as_micros() as u32;
     if !res.status().is_success() {
         let status = res.status();
         let body = res.text().await?;
@@ -121,12 +136,15 @@ pub async fn solve_mcaptcha(
         token: String,
     }
 
+    let iotime = std::time::Instant::now();
     let res = client
         .post(url_send_work)
         .header("Accept", "application/json")
         .json(&work)
         .send()
         .await?;
+    let iotime = iotime.elapsed();
+    *time_iowait += iotime.as_micros() as u32;
     if !res.status().is_success() {
         let status = res.status();
         let body = res.text().await?;
@@ -139,8 +157,37 @@ pub async fn solve_mcaptcha(
 
 #[derive(serde::Deserialize, Debug)]
 pub struct AnubisChallengeDescriptor {
-    challenge: String,
+    challenge: ChallengeForm,
     rules: AnubisRules,
+}
+
+#[derive(serde::Deserialize, Debug)]
+#[serde(untagged)]
+pub enum ChallengeForm {
+    Plain(String),
+    #[serde(rename_all = "camelCase")]
+    IdWrapped {
+        id: String,
+        random_data: String,
+    },
+}
+
+impl ChallengeForm {
+    pub fn id(&self) -> Option<&str> {
+        match self {
+            ChallengeForm::Plain(_) => None,
+            ChallengeForm::IdWrapped { id, .. } => Some(id),
+        }
+    }
+}
+
+impl AsRef<str> for ChallengeForm {
+    fn as_ref(&self) -> &str {
+        match self {
+            ChallengeForm::Plain(s) => s,
+            ChallengeForm::IdWrapped { random_data, .. } => random_data,
+        }
+    }
 }
 
 impl AnubisChallengeDescriptor {
@@ -152,11 +199,40 @@ impl AnubisChallengeDescriptor {
         &self.rules
     }
 
+    pub fn hash_result_key(&self) -> &str {
+        if self.rules.algorithm == "preact" {
+            "result"
+        } else {
+            "response"
+        }
+    }
+
+    pub fn challenge(&self) -> &ChallengeForm {
+        &self.challenge
+    }
+
     pub fn solve(&self) -> (Option<(u64, [u32; 8])>, u32) {
         self.solve_with_limit(u32::MAX)
     }
 
+    // delay to hold the solution before it will be accepted
+    pub fn delay(&self) -> u64 {
+        if self.rules.algorithm == "preact" {
+            self.rules.difficulty as u64 * 100
+        } else {
+            0
+        }
+    }
+
     pub fn solve_with_limit(&self, limit: u32) -> (Option<(u64, [u32; 8])>, u32) {
+        if self.rules.algorithm == "preact" {
+            let hash = sha2::Sha256::digest(self.challenge.as_ref().as_bytes());
+            let mut hash_arr = [0u32; 8];
+            for i in 0..8 {
+                hash_arr[i] = u32::from_be_bytes(hash[i * 4..i * 4 + 4].try_into().unwrap());
+            }
+            return (Some((0, hash_arr)), 0);
+        }
         let target = compute_target_anubis(self.rules.difficulty.try_into().unwrap());
         let target_bytes = target.to_be_bytes();
         let target_u32s = core::array::from_fn(|i| {
@@ -167,13 +243,16 @@ impl AnubisChallengeDescriptor {
                 target_bytes[i * 4 + 3],
             ])
         });
-        if let Some(mut solver) = crate::SingleBlockSolver::new((), self.challenge.as_bytes()) {
+        if let Some(mut solver) =
+            crate::SingleBlockSolver::new((), self.challenge.as_ref().as_bytes())
+        {
             solver.set_limit(limit);
             let result = solver.solve::<false>(target_u32s);
             let attempted_nonces = solver.get_attempted_nonces();
             (result, attempted_nonces)
         } else {
-            let mut solver = crate::DoubleBlockSolver::new((), self.challenge.as_bytes()).unwrap();
+            let mut solver =
+                crate::DoubleBlockSolver::new((), self.challenge.as_ref().as_bytes()).unwrap();
             let result = solver.solve::<false>(target_u32s);
             let attempted_nonces = solver.get_attempted_nonces();
             (result, attempted_nonces)
@@ -187,12 +266,30 @@ pub struct AnubisRules {
     difficulty: u8,
 }
 
+impl AnubisRules {
+    // if the instant is instantly solved and not worth task spawning
+    pub fn instant(&self) -> bool {
+        return self.algorithm == "preact";
+    }
+}
+
 pub async fn solve_anubis(
     client: &Client,
     base_url: &str,
     really_solve: bool,
 ) -> Result<String, SolveError> {
+    solve_anubis_ex(client, base_url, really_solve, &mut 0).await
+}
+
+pub async fn solve_anubis_ex(
+    client: &Client,
+    base_url: &str,
+    really_solve: bool,
+    time_iowait: &mut u32,
+) -> Result<String, SolveError> {
     let url_parsed = url::Url::parse(base_url)?;
+
+    let iotime = std::time::Instant::now();
     let response: reqwest::Response = client
         .get(base_url)
         .header("Accept", "text/html")
@@ -204,6 +301,8 @@ pub async fn solve_anubis(
         .send()
         .await?
         .error_for_status()?;
+    let iotime = iotime.elapsed();
+    *time_iowait += iotime.as_micros() as u32;
 
     let return_cookie = response
         .headers()
@@ -230,7 +329,7 @@ pub async fn solve_anubis(
     }
 
     let challenge = extract_challenge(&response.text().await?)?;
-    if !["fast", "slow"].contains(&challenge.rules.algorithm.as_str()) {
+    if !["fast", "slow", "preact"].contains(&challenge.rules.algorithm.as_str()) {
         return Err(SolveError::UnknownAlgorithm(challenge.rules.algorithm));
     }
     let (result, attempted_nonces) = if really_solve {
@@ -259,19 +358,30 @@ pub async fn solve_anubis(
     }
     write!(
         final_url,
-        "/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime={}&response=",
-        plausible_time
+        "/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime={}&{}=",
+        plausible_time,
+        challenge.hash_result_key()
     )
     .unwrap();
 
     final_url
         .write_str(&unsafe { std::str::from_utf8_unchecked(&response_hex) })
         .unwrap();
+
+    if let Some(id) = challenge.challenge().id() {
+        write!(final_url, "&id={}", id).unwrap();
+    }
     write!(final_url, "&nonce={}&redir=", nonce).unwrap();
     let redir_encoder = url::form_urlencoded::byte_serialize(base_url.as_bytes());
     redir_encoder.for_each(|b| {
         final_url.push_str(b);
     });
+
+    let iotime = std::time::Instant::now();
+    let delay = challenge.delay();
+    if delay > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+    }
 
     let golden_response = client
         .get(final_url)
@@ -285,6 +395,9 @@ pub async fn solve_anubis(
         )
         .send()
         .await?;
+    let iotime = iotime.elapsed();
+    *time_iowait += iotime.as_micros() as u32;
+
     if golden_response.status().is_client_error() || golden_response.status().is_server_error() {
         let status = golden_response.status();
         let body = golden_response.text().await?;

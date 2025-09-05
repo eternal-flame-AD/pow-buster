@@ -39,7 +39,7 @@ I personally don't like some projects put themselves at the ethical high ground 
 
 We assume you have a relatively modern and powerful platform, specifically:
 
-- Optimized builds with end-to-end features may take up to 15 minutes as this program aggressively generates specialized kernels.
+- A cold optimized build with end-to-end features may take up to 15 minutes as this program aggressively generates specialized kernels and build time isn't my priority.
 - Requires AVX-512 or SHA-NI CPU or simd128 on WASM. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard). There is a pure Rust scalar fallback that should make the code compile and work regardless.
 - For Anubis target, this assumes the server is 64-bit (i.e. is able to accept a signed 64-bit nonce).
 - AVX-512 build requires Rust 1.89 or later.
@@ -118,31 +118,48 @@ Fake Proof Control: 3732 requests in 10.1 seconds, 369.2 rps
 [60.0s] succeeded: 13761, failed: 0, 5s: 251.2rps, 5s_failed: 0.0rps
 ```
 
-Anubis "extreme suspicion" (4):
+Anubis "extreme suspicion" (4, saturated Anubis Go runtime):
 
 ```sh
-cargo run --features cli --release -- anubis \
-    --url http://localhost:8923/ \
-    --do-control \
-    --n-workers 40 \
-    >/dev/null
+target/release/simd-mcaptcha live --api-type anubis --host http://localhost:8923/ \
+                                                    --n-workers 64
 
-You are hitting host http://localhost:8923/, n_workers: 40
-running 10 seconds of control sending random proofs
-[0.0s] succeeded: 0, failed: 0, 5s: 0.0rps, 5s_failed: 0.0rps
-[5.0s] succeeded: 34906, failed: 0, 5s: 6981.2rps, 5s_failed: 0.0rps
-[10.0s] succeeded: 69816, failed: 0, 5s: 6982.0rps, 5s_failed: 0.0rps
-Fake Proof Control: 81249 requests in 10.0 seconds, 8110.1 rps
-[15.0s] succeeded: 132294, failed: 0, 5s: 12495.6rps, 5s_failed: 0.0rps
-[20.0s] succeeded: 194841, failed: 0, 5s: 12509.4rps, 5s_failed: 0.0rps
-[25.0s] succeeded: 257433, failed: 0, 5s: 12518.4rps, 5s_failed: 0.0rps
-[30.0s] succeeded: 320410, failed: 0, 5s: 12595.4rps, 5s_failed: 0.0rps
-[35.0s] succeeded: 383561, failed: 0, 5s: 12630.2rps, 5s_failed: 0.0rps
-[40.0s] succeeded: 446068, failed: 0, 5s: 12501.4rps, 5s_failed: 0.0rps
-[45.0s] succeeded: 509071, failed: 0, 5s: 12600.6rps, 5s_failed: 0.0rps
-[50.0s] succeeded: 571523, failed: 0, 5s: 12490.4rps, 5s_failed: 0.0rps
-[55.0s] succeeded: 633624, failed: 0, 5s: 12420.2rps, 5s_failed: 0.0rps
-[60.0s] succeeded: 695687, failed: 0, 5s: 12412.6rps, 5s_failed: 0.0rps
+You are hitting host http://localhost:8923/, n_workers: 64
+[0.0s] proofs accepted: 0, failed: 0, 5s: 0.0pps, 5s_failed: 0.0rps, 0.00% iowait
+[5.0s] proofs accepted: 53805, failed: 0, 5s: 10761.0pps, 5s_failed: 0.0rps, 74.91% iowait
+[10.0s] proofs accepted: 108805, failed: 0, 5s: 11000.0pps, 5s_failed: 0.0rps, 74.34% iowait
+[15.0s] proofs accepted: 164656, failed: 0, 5s: 11170.2pps, 5s_failed: 0.0rps, 73.92% iowait
+[20.0s] proofs accepted: 220786, failed: 0, 5s: 11226.0pps, 5s_failed: 0.0rps, 73.65% iowait
+[25.0s] proofs accepted: 277543, failed: 0, 5s: 11351.4pps, 5s_failed: 0.0rps, 73.43% iowait
+[30.0s] proofs accepted: 335189, failed: 0, 5s: 11529.2pps, 5s_failed: 0.0rps, 73.10% iowait
+[35.0s] proofs accepted: 392865, failed: 0, 5s: 11535.2pps, 5s_failed: 0.0rps, 72.80% iowait
+[40.0s] proofs accepted: 450552, failed: 0, 5s: 11537.4pps, 5s_failed: 0.0rps, 72.56% iowait
+[45.0s] proofs accepted: 508698, failed: 0, 5s: 11629.2pps, 5s_failed: 0.0rps, 72.35% iowait
+[50.0s] proofs accepted: 566663, failed: 0, 5s: 11593.0pps, 5s_failed: 0.0rps, 72.20% iowait
+[55.0s] proofs accepted: 624373, failed: 0, 5s: 11542.0pps, 5s_failed: 0.0rps, 72.08% iowait
+[60.0s] proofs accepted: 681909, failed: 0, 5s: 11507.2pps, 5s_failed: 0.0rps, 71.99% iowait
+```
+
+Anubis nightmare (6, doesn't exist in reality because it takes >1min on a 200kH/s browser solver, 256x harder than extreme suspicion):
+
+```
+target/release/simd-mcaptcha live --api-type anubis --host http://localhost:8923/ \
+                                                    --n-workers 32
+
+You are hitting host http://localhost:8923/, n_workers: 32
+[0.0s] proofs accepted: 0, failed: 0, 5s: 0.0pps, 5s_failed: 0.0rps, 0.00% iowait
+[5.0s] proofs accepted: 426, failed: 0, 5s: 85.2pps, 5s_failed: 0.0rps, 0.53% iowait
+[10.0s] proofs accepted: 843, failed: 0, 5s: 83.4pps, 5s_failed: 0.0rps, 0.43% iowait
+[15.1s] proofs accepted: 1291, failed: 0, 5s: 89.6pps, 5s_failed: 0.0rps, 0.41% iowait
+[20.0s] proofs accepted: 1727, failed: 0, 5s: 87.2pps, 5s_failed: 0.0rps, 0.39% iowait
+[25.0s] proofs accepted: 2179, failed: 0, 5s: 90.4pps, 5s_failed: 0.0rps, 0.38% iowait
+[30.0s] proofs accepted: 2625, failed: 0, 5s: 89.2pps, 5s_failed: 0.0rps, 0.37% iowait
+[35.0s] proofs accepted: 3069, failed: 0, 5s: 88.8pps, 5s_failed: 0.0rps, 0.37% iowait
+[40.0s] proofs accepted: 3477, failed: 0, 5s: 81.6pps, 5s_failed: 0.0rps, 0.36% iowait
+[45.0s] proofs accepted: 3880, failed: 0, 5s: 80.6pps, 5s_failed: 0.0rps, 0.35% iowait
+[50.0s] proofs accepted: 4289, failed: 0, 5s: 81.8pps, 5s_failed: 0.0rps, 0.34% iowait
+[55.0s] proofs accepted: 4734, failed: 0, 5s: 89.0pps, 5s_failed: 0.0rps, 0.34% iowait
+[60.0s] proofs accepted: 5180, failed: 0, 5s: 89.2pps, 5s_failed: 0.0rps, 0.34% iowait
 ```
 
 All 32 cores of a AMD Ryzen 9 7950X are used for the end-to-end benchmark. It seems we are at the bottleneck of the server being able to record successful attempts, as further performance tuning only show improvement in offline benchmarks.

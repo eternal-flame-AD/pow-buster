@@ -278,7 +278,7 @@ async fn solve_goaway(
     );
 
     let mut output = format!(
-        "# elapsed time: {}ms; attempted nonces: {}; {:.2} MH/s; {:.2}% limit used",
+        "// elapsed time: {}ms; attempted nonces: {}; {:.2} MH/s; {:.2}% limit used",
         elapsed.as_millis(),
         nonce,
         hash_rate_mhs,
@@ -304,7 +304,21 @@ async fn solve_anubis(
     let rules = descriptor.rules();
     tracing::info!("solving anubis challenge {:?}", rules);
 
-    let ((result, attempted_nonces), elapsed) = {
+    let mut final_url = String::from("/.within.website/x/cmd/anubis/api/pass-challenge?");
+
+    if let Some(id) = descriptor.challenge().id() {
+        write!(final_url, "id={}&", id).unwrap();
+    }
+
+    let instant = rules.instant();
+    let delay = descriptor.delay();
+
+    let ((result, attempted_nonces), elapsed) = if instant {
+        let start = std::time::Instant::now();
+        let result = descriptor.solve_with_limit(state.limit);
+        let elapsed = start.elapsed();
+        (result, elapsed)
+    } else {
         let _permit = state.semaphore.acquire().await.unwrap();
 
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -323,19 +337,20 @@ async fn solve_anubis(
         attempted: attempted_nonces,
     })?;
 
-    let plausible_time = attempted_nonces / 1024;
+    let plausible_time = (attempted_nonces / 1024).max(delay as u32 + 100);
+
+    write!(final_url, "elapsedTime={}&response=", plausible_time).unwrap();
 
     let mut response_hex = [0u8; 64];
     crate::encode_hex(&mut response_hex, result);
 
-    let mut final_url = format!(
-        "/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime={}&response=",
-        plausible_time
-    );
     final_url
         .write_str(&unsafe { std::str::from_utf8_unchecked(&response_hex) })
         .unwrap();
-    write!(final_url, "&nonce={}&redir=", nonce).unwrap();
+    if !instant {
+        write!(final_url, "&nonce={}", nonce).unwrap();
+    }
+    final_url.write_str("&redir=").unwrap();
 
     let hash_rate_mhs = attempted_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0;
     let limit_used = attempted_nonces as f32 / state.limit as f32 * 100.0;
@@ -349,13 +364,23 @@ async fn solve_anubis(
     );
 
     let mut output = format!(
-        "# elapsed time: {}ms; attempted nonces: {}; {:.2} MH/s; {:.2}% limit used",
+        "// elapsed time: {}ms; attempted nonces: {}; {:.2} MH/s; {:.2}% limit used",
         elapsed.as_millis(),
         attempted_nonces,
         hash_rate_mhs,
         limit_used
     )
     .into_bytes();
+
+    if delay > 0 {
+        use std::io::Write;
+        write!(
+            output,
+            "\r\n// This challenge is delay-gated, you need to wait {}ms before you can submit your solution.",
+            delay - elapsed.as_millis() as u64
+        )
+        .unwrap();
+    }
 
     output.extend_from_slice(b"\r\nwindow.location.replace(");
     // This only fails for non trivial types, for string it is infallible
@@ -405,6 +430,7 @@ async fn check_origin(
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct XForwardedFor(Vec<std::net::IpAddr>);
 
 impl headers::Header for XForwardedFor {
