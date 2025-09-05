@@ -205,20 +205,23 @@ pub(crate) fn simd_itoa8<const N: usize, const REGISTER_BSWAP: bool, const PLACE
     let mut input = input;
 
     out.fill(0);
-    for i in (0..8).rev() {
-        let pos = if REGISTER_BSWAP {
-            (3 - i % 4) + i / 4 * 4
-        } else {
-            i
-        };
-
-        out[pos] = (input % 10) as u8;
+    for i in (0..N).rev() {
+        out[i] = (input % 10) as u8;
         input /= 10;
     }
 
     let out_ptr = out.as_mut_ptr().cast::<u64>();
     unsafe {
         *out_ptr = *out_ptr | mask;
+    }
+
+    if REGISTER_BSWAP {
+        let mut out_ptr = out.as_mut_ptr().cast::<u32>();
+        unsafe {
+            *out_ptr = (*out_ptr).swap_bytes();
+            out_ptr = out_ptr.add(1);
+            *out_ptr = (*out_ptr).swap_bytes();
+        }
     }
 }
 
@@ -232,8 +235,14 @@ mod tests {
         simd_itoa8::<8, false, 0x80>(&mut buf, 12345678);
         assert_eq!(buf, Align16(*b"12345678"));
 
+        simd_itoa8::<8, false, 0x80>(&mut buf, 1_0000_0000);
+        assert_eq!(buf, Align16(*b"00000000"));
+
         simd_itoa8::<7, false, 0x80>(&mut buf, 1234567);
         assert_eq!(buf, Align16(*b"1234567\x80"));
+
+        simd_itoa8::<7, false, 0x80>(&mut buf, 1000_0000);
+        assert_eq!(buf, Align16(*b"0000000\x80"));
 
         simd_itoa8::<8, true, 0x80>(&mut buf, 12345678);
         assert_eq!(buf, Align16(*b"43218765"));

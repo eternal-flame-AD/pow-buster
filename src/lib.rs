@@ -201,7 +201,7 @@ pub trait Solver {
 #[derive(Debug, Clone)]
 pub struct SingleBlockSolver {
     // the message template for the final block
-    pub(crate) message: Align16<[u32; 16]>,
+    pub(crate) message: Align64<[u32; 16]>,
 
     // the SHA-256 state A-H for all prefix bytes
     pub(crate) prefix_state: [u32; 8],
@@ -340,7 +340,7 @@ impl Solver for SingleBlockSolver {
             .copy_from_slice(&((complete_blocks_before * 64 + ptr) as u64 * 8).to_be_bytes());
 
         Some(Self {
-            message: Align16(core::array::from_fn(|i| {
+            message: Align64(core::array::from_fn(|i| {
                 u32::from_be_bytes([
                     message[i * 4],
                     message[i * 4 + 1],
@@ -387,6 +387,7 @@ impl Solver for SingleBlockSolver {
 
                     let lane_id_0_byte_idx = this.digit_index % 4;
                     let lane_id_1_byte_idx = (this.digit_index + 1) % 4;
+                    let mut inner_key_buf = Align16(*b"0000\x80000");
                     for prefix_set_index in 0..5 {
                         unsafe {
                             let lane_id_0_or_value = _mm512_sll_epi32(
@@ -404,9 +405,13 @@ impl Solver for SingleBlockSolver {
                                 lane_id_0_or_value
                             };
 
-                            for inner_key in 0..10_000_000 {
-                                let mut inner_key_buf = Align16([0; 8]);
-
+                            // soft pipeline this to compute the new message after the hash
+                            // LLVM seems to handle cases where high register pressure work happens first better
+                            // so this prevents some needless register spills
+                            // doesn't seem to affect performance on my Zen4 but dirty so avoid
+                            // on the last iteration simd_itoa(10_000_000) is unit-tested to convert to 0000\x80000
+                            // so no fixup is needed-saves a branch on LLVM codegen
+                            for next_inner_key in 1..=10_000_000 {
                                 macro_rules! fetch_msg {
                                     ($idx:expr) => {
                                         if $idx == DIGIT_WORD_IDX0 {
@@ -427,27 +432,6 @@ impl Solver for SingleBlockSolver {
                                             _mm512_set1_epi32(this.message[$idx] as _)
                                         }
                                     };
-                                }
-
-                                if ON_REGISTER_BOUNDARY {
-                                    strings::simd_itoa8::<7, true, 0x80>(&mut inner_key_buf, inner_key);
-                                } else {
-                                    let message_bytes = decompose_blocks_mut(&mut this.message);
-                                    let mut key_copy = inner_key;
-
-                                    for i in (0..7).rev() {
-                                        let output = key_copy % 10;
-                                        key_copy /= 10;
-                                        *message_bytes.get_unchecked_mut(
-                                            *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + i + 2),
-                                        ) = output as u8 + b'0';
-                                    }
-
-                                    // hint at LLVM that the modulo ends in 0
-                                    if key_copy != 0 {
-                                        debug_assert_eq!(key_copy, 0);
-                                        core::hint::unreachable_unchecked();
-                                    }
                                 }
 
                                 let mut blocks = [
@@ -521,16 +505,39 @@ impl Solver for SingleBlockSolver {
                                     }
 
                                     // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
-                                    return Some(nonce_prefix as u64 * 10u64.pow(7) + inner_key as u64);
+                                    return Some(nonce_prefix as u64 * 10u64.pow(7) + next_inner_key as u64 - 1);
                                 }
 
                                 this.attempted_nonces += 16;
                                 if this.attempted_nonces >= this.limit {
                                     return None;
                                 }
+
+                                if ON_REGISTER_BOUNDARY {
+                                    strings::simd_itoa8::<7, true, 0x80>(&mut inner_key_buf, next_inner_key);
+                                } else {
+                                    let message_bytes = decompose_blocks_mut(&mut this.message);
+                                    let mut key_copy = next_inner_key;
+
+                                    for i in (0..7).rev() {
+                                        let output = key_copy % 10;
+                                        key_copy /= 10;
+                                        *message_bytes.get_unchecked_mut(
+                                            *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + i + 2),
+                                        ) = output as u8 + b'0';
+                                    }
+
+                                    // hint at LLVM that the modulo ends in 0
+                                    if key_copy != 0 {
+                                        debug_assert_eq!(key_copy, 0);
+                                        core::hint::unreachable_unchecked();
+                                    }
+                                }
                             }
                         }
                     }
+
+                    unlikely();
                     None
                 }
 
@@ -1004,7 +1011,6 @@ impl Solver for SingleBlockSolver {
         } else {
             #[inline(never)]
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
-
                 let mut buffer : sha2::digest::crypto_common::Block<sha2::Sha256> = Default::default();
                 for i in 0..16 {
                     buffer[i*4..i*4+4].copy_from_slice(&self.message[i].to_be_bytes());
@@ -1039,12 +1045,6 @@ impl Solver for SingleBlockSolver {
 ///
 /// It has slightly better than half throughput than the single block solver, but you should use the single block solver if possible
 pub struct DoubleBlockSolver {
-    // the SHA-256 state A-H for all prefix bytes
-    pub(crate) prefix_state: Align16<[u32; 8]>,
-
-    // the message template for the final block
-    pub(crate) message: [u32; 16],
-
     pub(crate) message_length: u64,
 
     pub(crate) nonce_addend: u64,
@@ -1052,6 +1052,12 @@ pub struct DoubleBlockSolver {
     attempted_nonces: u32,
 
     limit: u32,
+
+    // the SHA-256 state A-H for all prefix bytes
+    pub(crate) prefix_state: Align16<[u32; 8]>,
+
+    // the message template for the final block
+    pub(crate) message: Align64<[u32; 16]>,
 }
 
 impl DoubleBlockSolver {
@@ -1134,14 +1140,14 @@ impl Solver for DoubleBlockSolver {
 
         Some(Self {
             prefix_state,
-            message: core::array::from_fn(|i| {
+            message: Align64(core::array::from_fn(|i| {
                 u32::from_be_bytes([
                     message[i * 4],
                     message[i * 4 + 1],
                     message[i * 4 + 2],
                     message[i * 4 + 3],
                 ])
-            }),
+            })),
             nonce_addend,
             message_length,
             attempted_nonces: 0,
@@ -1160,6 +1166,7 @@ impl Solver for DoubleBlockSolver {
                 terminal_message_schedule[15] = (self.message_length as u64 * 8) as u32;
                 sha256::do_message_schedule_k_w(&mut terminal_message_schedule);
 
+                let mut itoa_buf = Align16(*b"0000\x80000");
                 for prefix_set_index in 0..5 {
                     unsafe {
                         let lane_id_0_or_value =
@@ -1171,9 +1178,7 @@ impl Solver for DoubleBlockSolver {
                             _mm512_or_epi32(lane_id_0_or_value, lane_id_1_or_value),
                         );
 
-                        for inner_key in 0..10_000_000 {
-                            let mut itoa_buf = Align16([0; 8]);
-                            strings::simd_itoa8::<7, true, 0x80>(&mut itoa_buf, inner_key);
+                        for next_inner_key in 1..=10_000_000 {
 
                             let cum0 = itoa_buf.as_ptr().cast::<u32>().read();
                             let cum1 = itoa_buf.as_ptr().add(4).cast::<u32>().read();
@@ -1254,7 +1259,7 @@ impl Solver for DoubleBlockSolver {
                                 sha256::digest_block(&mut final_sha_state, &terminal_message);
 
                                 let computed_nonce = nonce_prefix as u64 * 10u64.pow(7)
-                                    + inner_key as u64
+                                    + next_inner_key as u64 - 1
                                     + self.nonce_addend;
 
                                 // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
@@ -1266,10 +1271,13 @@ impl Solver for DoubleBlockSolver {
                             if self.attempted_nonces >= self.limit {
                                 return None;
                             }
+
+                            strings::simd_itoa8::<7, true, 0x80>(&mut itoa_buf, next_inner_key);
                         }
                     }
                 }
 
+                unlikely();
                 None
             }
         } else if #[cfg(all(target_arch = "x86_64", target_feature = "sha"))] {
