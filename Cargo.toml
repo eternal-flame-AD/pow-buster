@@ -50,6 +50,7 @@ harness = false
 default = ["std", "all-lane-positions"]
 alloc = []
 std = ["alloc"]
+compare-64bit = []
 adapter = ["alloc", "dep:serde", "dep:serde_json"]
 wasm-bindgen = ["adapter", "dep:wasm-bindgen"]
 client = ["std", "adapter", "rayon", "tokio", "tokio/rt-multi-thread", "dep:url", "dep:reqwest", "dep:thiserror", "dep:num_cpus", "dep:scraper"]

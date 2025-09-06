@@ -235,6 +235,11 @@ mod tests {
         );
 
         let a = unsafe { _mm_extract_epi32(prepared_state_0[0], 3) as u32 };
+        let b = unsafe { _mm_extract_epi32(prepared_state_0[0], 2) as u32 };
+
+        let ab = unsafe { _mm_extract_epi64(prepared_state_0[0], 1) };
+        let ab_b = ab as u32;
+        let ab_a = (ab >> 32) as u32;
 
         let mut full_message_schedule = [0u32; 64];
         full_message_schedule[0..16].copy_from_slice(&input_block);
@@ -244,5 +249,8 @@ mod tests {
         crate::sha256::sha2_arx::<0, 64>(&mut reference_state, full_message_schedule);
 
         assert_eq!(a, reference_state[0]);
+        assert_eq!(b, reference_state[1]);
+        assert_eq!(ab_a, reference_state[0], "a={} b={}", a, b);
+        assert_eq!(ab_b, reference_state[1], "a={} b={}", a, b);
     }
 }

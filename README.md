@@ -38,7 +38,7 @@ I personally don't like some projects put themselves at the ethical high ground 
 
 ## Building
 
-Requires AVX-512 (cpuid: `avx512f`) or SHA-NI (cpuid: `sha`) CPU or SIMD128 on WASM. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard). There is a pure Rust scalar fallback that should make the code compile and work regardless.
+Requires AVX-512 (cpuid: `avx512f`) or SHA-NI+SSE4.1 (cpuid: `sha`, `sse4_1`) CPU or SIMD128 on WASM. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard). There is a pure Rust scalar fallback that should make the code compile and work regardless.
 
 ```sh
 RUSTFLAGS="-Ctarget-cpu=native" cargo build --release --features cli
@@ -46,6 +46,7 @@ RUSTFLAGS="-Ctarget-cpu=native" cargo build --release --features cli
 
 Optional Features:
 
+- `compare-64bit`: Compare 64-bit words instead of 32-bit words at ~5% penalty, almost never needed for realistic challenges. Not compatible with WASM.
 - `client`: End-to-end solver client, required for most non-computational functionality.
 - `live-throughput-test`: End-to-end multi-worker throughput benchmark.
 - `server`: Solver-as-a-Service API.

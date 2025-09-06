@@ -40,11 +40,14 @@ mod adapter;
 #[cfg(all(not(doc), not(target_arch = "x86_64"), not(target_arch = "wasm32")))]
 compile_error!("Only x86_64 and wasm32 are supported");
 
+#[cfg(all(not(doc), target_arch = "wasm32", feature = "compare-64bit"))]
+compile_error!("compare-64bit is only supported on x86_64 architectures");
+
 #[cfg(all(
     not(doc),
     target_arch = "x86_64",
     not(feature = "ignore-target-feature-checks"),
-    any(target_feature = "avx512f", target_feature = "sha")
+    not(any(target_feature = "avx512f", target_feature = "sha"))
 ))]
 compile_error!(concat!(
     "AVX512F or SHA is required for performance. Compile with -Ctarget-feature=+avx512f or -Ctarget-feature=+sha, ",
@@ -82,6 +85,20 @@ impl<T> core::ops::DerefMut for Align16<T> {
 #[repr(align(64))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Align64<T>(T);
+
+//Ref downcast to Align16
+impl<'a, T> Into<&'a Align16<T>> for &'a Align64<T> {
+    fn into(self) -> &'a Align16<T> {
+        unsafe { core::mem::transmute(self) }
+    }
+}
+
+//Ref downcast to Align16
+impl<'a, T> Into<&'a mut Align16<T>> for &'a mut Align64<T> {
+    fn into(self) -> &'a mut Align16<T> {
+        unsafe { core::mem::transmute(self) }
+    }
+}
 
 impl<T> core::ops::Deref for Align64<T> {
     type Target = T;
@@ -122,6 +139,9 @@ static LANE_ID_MSB_STR: Align16<[u8; 5 * 16]> =
 
 static LANE_ID_LSB_STR: Align16<[u8; 5 * 16]> =
     Align16(*b"01234567890123456789012345678901234567890123456789012345678901234567890123456789");
+
+#[cfg(feature = "compare-64bit")]
+const INDEX_REMAP_PUNPCKLDQ: [usize; 16] = [0, 1, 4, 5, 8, 9, 12, 13, 2, 3, 6, 7, 10, 11, 14, 15];
 
 #[inline(always)]
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
@@ -449,13 +469,19 @@ impl Solver for SingleBlockSolver {
                     const ON_REGISTER_BOUNDARY: bool,
                 >(
                     this: &mut SingleBlockSolver,
+                    #[cfg(not(feature = "compare-64bit"))]
                     target: u32,
+                    #[cfg(feature = "compare-64bit")]
+                    target: u64,
                 ) -> Option<u64> {
                     let mut partial_state = this.prefix_state;
                     sha256::ingest_message_prefix::<DIGIT_WORD_IDX0>(
                         &mut partial_state,
                         core::array::from_fn(|i| this.message[i]),
                     );
+
+                    #[cfg(feature = "compare-64bit")]
+                    let feedback_ab = (this.prefix_state[0] as u64) << 32 | (this.prefix_state[1] as u64);
 
                     let mut remaining_limit = this.limit;
 
@@ -510,61 +536,92 @@ impl Solver for SingleBlockSolver {
                                         }
                                     }
                                 }
+                                let mut blocks = [
+                                    fetch_msg!(0),
+                                    fetch_msg!(1),
+                                    fetch_msg!(2),
+                                    fetch_msg!(3),
+                                    fetch_msg!(4),
+                                    fetch_msg!(5),
+                                    fetch_msg!(6),
+                                    fetch_msg!(7),
+                                    fetch_msg!(8),
+                                    fetch_msg!(9),
+                                    fetch_msg!(10),
+                                    fetch_msg!(11),
+                                    fetch_msg!(12),
+                                    fetch_msg!(13),
+                                    fetch_msg!(14),
+                                    fetch_msg!(15),
+                                ];
 
-                                let result_a = {
-                                    let mut blocks = [
-                                        fetch_msg!(0),
-                                        fetch_msg!(1),
-                                        fetch_msg!(2),
-                                        fetch_msg!(3),
-                                        fetch_msg!(4),
-                                        fetch_msg!(5),
-                                        fetch_msg!(6),
-                                        fetch_msg!(7),
-                                        fetch_msg!(8),
-                                        fetch_msg!(9),
-                                        fetch_msg!(10),
-                                        fetch_msg!(11),
-                                        fetch_msg!(12),
-                                        fetch_msg!(13),
-                                        fetch_msg!(14),
-                                        fetch_msg!(15),
-                                    ];
+                                let mut state =
+                                    core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
 
-                                    let mut state =
-                                        core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
+                                // do 16-way SHA-256 without feedback so as not to force the compiler to save 8 registers
+                                // we already have them in scalar form, this allows more registers to be reused in the next iteration
+                                sha256::avx512::multiway_arx::<DIGIT_WORD_IDX0>(&mut state, &mut blocks);
 
-                                    // do 16-way SHA-256 without feedback so as not to force the compiler to save 8 registers
-                                    // we already have them in scalar form, this allows more registers to be reused in the next iteration
-                                    sha256::avx512::multiway_arx::<DIGIT_WORD_IDX0>(&mut state, &mut blocks);
+                                state[0] = _mm512_add_epi32(state[0], _mm512_set1_epi32(this.prefix_state[0] as _));
 
-                                    // the target is big endian interpretation of the first 16 bytes of the hash (A-D) >= target
-                                    // however, the largest 32-bit digits is unlikely to be all ones (otherwise a legitimate challenger needs on average >2^32 attempts)
-                                    // so we can reduce this into simply testing H[0]
-                                    // the number of acceptable u32 values (for us) is u32::MAX / difficulty
-                                    // so the "inefficiency" this creates is about (u32::MAX / difficulty) * (1 / 2), because for approx. half of the "edge case" do we actually have an acceptable solution,
-                                    // which for 1e8 is about 1%, but we get to save the one broadcast add,
-                                    // a vectorized comparison, and a scalar logic evaluation
-                                    // which I feel is about 1% of the instructions needed per iteration anyways just more registers used so let's not bother
+                                #[cfg(feature = "compare-64bit")]
+                                {
+                                    state[1] = _mm512_add_epi32(state[1], _mm512_set1_epi32(this.prefix_state[1] as _));
+                                }
 
-                                    _mm512_add_epi32(
-                                        state[0],
-                                        _mm512_set1_epi32(this.prefix_state[0] as _),
-                                    )
-                                };
+                                #[cfg(feature = "compare-64bit")]
+                                let result_ab_lo = _mm512_unpacklo_epi32(state[1], state[0]);
+                                #[cfg(feature = "compare-64bit")]
+                                let result_ab_hi = _mm512_unpackhi_epi32(state[1], state[0]);
 
+                                // the target is big endian interpretation of the first 16 bytes of the hash (A-D) >= target
+                                // however, the largest 32-bit digits is unlikely to be all ones (otherwise a legitimate challenger needs on average >2^32 attempts)
+                                // so we can reduce this into simply testing H[0]
+                                // the number of acceptable u32 values (for us) is u32::MAX / difficulty
+                                // so the "inefficiency" this creates is about (u32::MAX / difficulty) * (1 / 2), because for approx. half of the "edge case" do we actually have an acceptable solution,
+                                // which for 1e8 is about 1%, but we get to save the one broadcast add,
+                                // a vectorized comparison, and a scalar logic evaluation
+                                // which I feel is about 1% of the instructions needed per iteration anyways just more registers used so let's not bother
+                                //
+                                // A 64-bit compare solution is provided for completeness but almost never needed for realistic challenges.
+
+                                #[cfg(not(feature = "compare-64bit"))]
                                 let cmp_fn = if UPWARDS {
                                     _mm512_cmpgt_epu32_mask
                                 } else {
                                     _mm512_cmplt_epu32_mask
                                 };
 
-                                let a_met_target = cmp_fn(result_a, _mm512_set1_epi32(target as _));
+                                #[cfg(feature = "compare-64bit")]
+                                let cmp64_fn = if UPWARDS {
+                                    _mm512_cmpgt_epu64_mask
+                                } else {
+                                    _mm512_cmplt_epu64_mask
+                                };
 
-                                if a_met_target != 0 {
+                                #[cfg(not(feature = "compare-64bit"))]
+                                let met_target = cmp_fn(state[0], _mm512_set1_epi32(target as _));
+
+                                #[cfg(feature = "compare-64bit")]
+                                let met_target = {
+                                    let ab_met_target_lo =
+                                        cmp64_fn(result_ab_lo, _mm512_set1_epi64(target as _)) as u16;
+
+                                    let ab_met_target_high =
+                                        cmp64_fn(result_ab_hi, _mm512_set1_epi64(target as _)) as u16;
+
+                                    ab_met_target_high << 8 | ab_met_target_lo
+                                };
+
+                                if met_target != 0 {
                                     unlikely();
 
-                                    let success_lane_idx = _tzcnt_u16(a_met_target) as usize;
+                                    let success_lane_idx = _tzcnt_u16(met_target) as usize;
+
+                                    // remap the indices according to unpacking order
+                                    #[cfg(feature = "compare-64bit")]
+                                    let success_lane_idx = INDEX_REMAP_PUNPCKLDQ[success_lane_idx];
+
                                     let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
 
                                     if ON_REGISTER_BOUNDARY {
@@ -617,12 +674,18 @@ impl Solver for SingleBlockSolver {
                     None
                 }
 
+                #[cfg(not(feature = "compare-64bit"))]
+                let compact_target = target[0];
+
+                #[cfg(feature = "compare-64bit")]
+                let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
+
                 macro_rules! dispatch {
                     ($idx0:literal, $idx1_inc:literal) => {
                         if self.digit_index % 4 == 2 {
-                            solve_inner::<$idx0, $idx1_inc, UPWARDS, true>(self, target[0])
+                            solve_inner::<$idx0, $idx1_inc, UPWARDS, true>(self, compact_target)
                         } else {
-                            solve_inner::<$idx0, $idx1_inc, UPWARDS, false>(self, target[0])
+                            solve_inner::<$idx0, $idx1_inc, UPWARDS, false>(self, compact_target)
                         }
                     };
                     ($idx0:literal) => {
@@ -681,7 +744,8 @@ impl Solver for SingleBlockSolver {
                     const UPWARDS: bool,
                 >(
                     this: &mut SingleBlockSolver,
-                    target: u32,
+                    #[cfg(feature = "compare-64bit")]
+                    target: u64,
                 ) -> Option<u64> {
                     let mut partial_state = Align16(this.prefix_state);
                     sha256::ingest_message_prefix::<{ DIGIT_WORD_IDX0_DIV_4_TIMES_4 }>(
@@ -691,6 +755,13 @@ impl Solver for SingleBlockSolver {
                     let prepared_state = sha256::sha_ni::prepare_state(&partial_state);
                     let lane_id_0_byte_idx = this.digit_index % 4;
                     let lane_id_1_byte_idx = (this.digit_index + 1) % 4;
+
+                    // move AB into position for feedback
+                    let feedback_ab = unsafe {
+                        let lows = _mm_cvtsi64x_si128(((this.prefix_state[0] as u64) << 32 | this.prefix_state[1] as u64) as _);
+
+                        _mm_shuffle_epi32(lows, 0b01001010)
+                    };
 
                     for nonce_prefix_start in (10u32..=96).step_by(4) {
                         unsafe {
@@ -845,7 +916,7 @@ impl Solver for SingleBlockSolver {
 
                                 sha256::sha_ni::multiway_arx_abef_cdgh::<{ DIGIT_WORD_IDX0_DIV_4 }, 4, _>(
                                     [&mut state0, &mut state1, &mut state2, &mut state3],
-                                    &mut this.message,
+                                    (&this.message).into(),
                                     LaneIdPlucker::<
                                         DIGIT_WORD_IDX0_DIV_4,
                                         DIGIT_WORD_IDX0_MOD_4,
@@ -856,20 +927,24 @@ impl Solver for SingleBlockSolver {
                                     },
                                 );
 
-                                let result_as = [
-                                    (_mm_extract_epi32(state0[0], 3) as u32)
-                                        .wrapping_add(this.prefix_state[0]),
-                                    (_mm_extract_epi32(state1[0], 3) as u32)
-                                        .wrapping_add(this.prefix_state[0]),
-                                    (_mm_extract_epi32(state2[0], 3) as u32)
-                                        .wrapping_add(this.prefix_state[0]),
-                                    (_mm_extract_epi32(state3[0], 3) as u32)
-                                        .wrapping_add(this.prefix_state[0]),
-                                ];
+                                // paddd is basically free on modern CPUs so do the feedback uncondtionally
+                                state0[0] = _mm_add_epi32(state0[0], feedback_ab);
+                                state1[0] = _mm_add_epi32(state1[0], feedback_ab);
+                                state2[0] = _mm_add_epi32(state2[0], feedback_ab);
+                                state3[0] = _mm_add_epi32(state3[0], feedback_ab);
 
-                                let success_lane_idx = result_as
-                                    .iter()
-                                    .position(|x| if UPWARDS { *x > target } else { *x < target });
+                                let success_lane_idx = {
+                                    let result_abs = [
+                                        _mm_extract_epi64(state0[0], 1) as u64,
+                                        _mm_extract_epi64(state1[0], 1) as u64,
+                                        _mm_extract_epi64(state2[0], 1) as u64,
+                                        _mm_extract_epi64(state3[0], 1) as u64,
+                                    ];
+
+                                    result_abs
+                                        .iter()
+                                        .position(|x| if UPWARDS { *x > target } else { *x < target })
+                                };
 
                                 if let Some(success_lane_idx) = success_lane_idx {
                                     unlikely();
@@ -900,50 +975,52 @@ impl Solver for SingleBlockSolver {
                     None
                 }
 
+                let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
+
                 macro_rules! dispatch {
                     ($idx0_0:literal, $idx0_1:literal, $idx0_2:literal) => {
                         match lane_id_1_word_idx {
                             0 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 0, UPWARDS>(
-                                self, target[0],
+                                self, compact_target,
                             ),
                             1 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 1, UPWARDS>(
-                                self, target[0],
+                                self, compact_target,
                             ),
                             2 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 2, UPWARDS>(
-                                self, target[0],
+                                self, compact_target,
                             ),
                             3 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 3, UPWARDS>(
-                                self, target[0],
+                                self, compact_target,
                             ),
                             4 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 4, UPWARDS>(
-                                self, target[0],
+                                self, compact_target,
                             ),
                             5 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 5, UPWARDS>(
-                                self, target[0],
+                                self, compact_target,
                             ),
                             6 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 6, UPWARDS>(
-                                self, target[0],
+                                self, compact_target,
                             ),
                             7 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 7, UPWARDS>(
-                                self, target[0],
+                                self, compact_target,
                             ),
                             8 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 8, UPWARDS>(
-                                self, target[0],
+                                self, compact_target,
                             ),
                             9 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 9, UPWARDS>(
-                                self, target[0],
+                                self, compact_target,
                             ),
                             10 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 10, UPWARDS>(
-                                self, target[0],
+                                self, compact_target,
                             ),
                             11 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 11, UPWARDS>(
-                                self, target[0],
+                                self, compact_target,
                             ),
                             12 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 12, UPWARDS>(
-                                self, target[0],
+                                self, compact_target,
                             ),
                             13 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 13, UPWARDS>(
-                                self, target[0],
+                                self, compact_target,
                             ),
                             _ => core::hint::unreachable_unchecked(),
                         }
@@ -1140,6 +1217,8 @@ impl Solver for SingleBlockSolver {
                     buffer[i*4..i*4+4].copy_from_slice(&self.message[i].to_be_bytes());
                 }
 
+                let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
+
                 for key in (100_000_000..1_000_000_000).take(self.limit as usize) {
                     let mut key_copy = key;
                     for j in (0..9).rev() {
@@ -1150,9 +1229,11 @@ impl Solver for SingleBlockSolver {
                     let mut state = self.prefix_state;
                     sha2::compress256(&mut state, &[buffer]);
 
-                    let cmp_fn = if UPWARDS { u32::gt } else { u32::lt };
+                    let state_ab = (state[0] as u64) << 32 | (state[1] as u64);
 
-                    if cmp_fn(&state[0], &target[0]) {
+                    let cmp_fn = if UPWARDS { u64::gt } else { u64::lt };
+
+                    if cmp_fn(&state_ab, &compact_target) {
                         unlikely();
 
                         return Some((key + self.nonce_addend, state));
@@ -1290,6 +1371,9 @@ impl Solver for DoubleBlockSolver {
                     return None;
                 }
 
+                #[cfg(feature = "compare-64bit")]
+                let feedback_ab = (target[0] as u64) << 32 | (target[1] as u64);
+
                 let mut partial_state = self.prefix_state;
                 sha256::sha2_arx::<0, 13>(&mut partial_state, self.message[..13].try_into().unwrap());
 
@@ -1352,23 +1436,56 @@ impl Solver for DoubleBlockSolver {
                             // save only A register for comparison
                             let save_a = state[0];
 
+                            #[cfg(feature = "compare-64bit")]
+                            let save_b = state[1];
+
                             sha256::avx512::bcst_multiway_arx::<14>(&mut state, &terminal_message_schedule);
 
+                            #[cfg(not(feature = "compare-64bit"))]
                             let cmp_fn = if UPWARDS {
                                 _mm512_cmpgt_epu32_mask
                             } else {
                                 _mm512_cmplt_epu32_mask
                             };
 
-                            let a_met_target = (cmp_fn)(
-                                _mm512_add_epi32(state[0], save_a),
-                                _mm512_set1_epi32(target[0] as _),
-                            );
+                            #[cfg(feature = "compare-64bit")]
+                            let cmp64_fn = if UPWARDS {
+                                _mm512_cmpgt_epu64_mask
+                            } else {
+                                _mm512_cmplt_epu64_mask
+                            };
 
-                            if a_met_target != 0 {
+                            state[0] = _mm512_add_epi32(state[0], save_a);
+
+                            #[cfg(feature = "compare-64bit")]
+                            {
+                                state[1] = _mm512_add_epi32(state[1], save_b);
+                            }
+
+                            #[cfg(not(feature = "compare-64bit"))]
+                            let met_target = (cmp_fn)(state[0], _mm512_set1_epi32(target[0] as _));
+
+                            #[cfg(feature = "compare-64bit")]
+                            let result_ab_lo = _mm512_unpacklo_epi32(state[1], state[0]);
+                            #[cfg(feature = "compare-64bit")]
+                            let result_ab_hi = _mm512_unpackhi_epi32(state[1], state[0]);
+                            #[cfg(feature = "compare-64bit")]
+                            let met_target = {
+                                let ab_met_target_lo =
+                                    cmp64_fn(result_ab_lo, _mm512_set1_epi64(feedback_ab as _)) as u16;
+                                let ab_met_target_high =
+                                    cmp64_fn(result_ab_hi, _mm512_set1_epi64(feedback_ab as _)) as u16;
+                                ab_met_target_high << 8 | ab_met_target_lo
+                            };
+
+                            if met_target != 0 {
                                 unlikely();
 
-                                let success_lane_idx = _tzcnt_u16(a_met_target) as usize;
+                                let success_lane_idx = _tzcnt_u16(met_target) as usize;
+
+                                #[cfg(feature = "compare-64bit")]
+                                let success_lane_idx = INDEX_REMAP_PUNPCKLDQ[success_lane_idx];
+
                                 let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
 
                                 self.message[14] = cum0;
@@ -1443,6 +1560,8 @@ impl Solver for DoubleBlockSolver {
                             to_ascii_u32(nonce_prefix_start + 3) | self.message[13],
                         ];
 
+                        let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
+
                         for inner_key in 0..10_000_000 {
                             let mut states0 = prepared_state;
                             let mut states1 = prepared_state;
@@ -1506,11 +1625,8 @@ impl Solver for DoubleBlockSolver {
                                     });
                             }
 
-                            let save_as = [
-                                _mm_extract_epi32(states0[0], 3) as u32,
-                                _mm_extract_epi32(states1[0], 3) as u32,
-                                _mm_extract_epi32(states2[0], 3) as u32,
-                                _mm_extract_epi32(states3[0], 3) as u32,
+                            let save_abs = [
+                                states0[0], states1[0], states2[0], states3[0]
                             ];
 
                             // this isn't really SIMD so we can't really amortize the cost of fetching message schedule
@@ -1521,18 +1637,23 @@ impl Solver for DoubleBlockSolver {
                                 (),
                             );
 
-                            let final_as = [
-                                (_mm_extract_epi32(states0[0], 3) as u32).wrapping_add(save_as[0]),
-                                (_mm_extract_epi32(states1[0], 3) as u32).wrapping_add(save_as[1]),
-                                (_mm_extract_epi32(states2[0], 3) as u32).wrapping_add(save_as[2]),
-                                (_mm_extract_epi32(states3[0], 3) as u32).wrapping_add(save_as[3]),
+                            states0[0] = _mm_add_epi32(states0[0], save_abs[0]);
+                            states1[0] = _mm_add_epi32(states1[0], save_abs[1]);
+                            states2[0] = _mm_add_epi32(states2[0], save_abs[2]);
+                            states3[0] = _mm_add_epi32(states3[0], save_abs[3]);
+
+                            let final_abs = [
+                                _mm_extract_epi64(states0[0], 1) as u64,
+                                _mm_extract_epi64(states1[0], 1) as u64,
+                                _mm_extract_epi64(states2[0], 1) as u64,
+                                _mm_extract_epi64(states3[0], 1) as u64,
                             ];
 
-                            let success_lane_idx = final_as.iter().position(|x| {
+                            let success_lane_idx = final_abs.iter().position(|x| {
                                 if UPWARDS {
-                                    *x > target[0]
+                                    *x > compact_target
                                 } else {
-                                    *x < target[0]
+                                    *x < compact_target
                                 }
                             });
 
@@ -1752,6 +1873,8 @@ impl Solver for DoubleBlockSolver {
                 terminal_message_schedule[15] = (self.message_length as u64 * 8) as u32;
                 sha256::do_message_schedule_k_w(&mut terminal_message_schedule);
 
+                let feedback_ab = (target[0] as u64) << 32 | (target[1] as u64);
+                let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
 
                 for key in 100_000_000..1_000_000_000 {
                     let mut key_copy = key;
@@ -1766,11 +1889,17 @@ impl Solver for DoubleBlockSolver {
                     sha2::compress256(&mut state, &[buffer]);
 
                     let save_a = state[0];
+                    let save_b = state[1];
 
                     sha256::sha2_arx_without_constants::<0, 64>(&mut state, terminal_message_schedule);
 
-                    let cmp_fn = if UPWARDS { u32::gt } else { u32::lt };
-                    if cmp_fn(&state[0].wrapping_add(save_a), &target[0]) {
+                    state[0] = state[0].wrapping_add(save_a);
+                    state[1] = state[1].wrapping_add(save_b);
+
+                    let ab = (state[0] as u64) << 32 | (state[1] as u64);
+
+                    let cmp_fn = if UPWARDS { u64::gt } else { u64::lt };
+                    if cmp_fn(&ab, &compact_target) {
                         unlikely();
 
                         let mut state = self.prefix_state;
@@ -1862,6 +1991,8 @@ impl Solver for GoAwaySolver {
                     let mut prefix_state = sha256::IV;
                     sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
 
+                    let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
+
                     for high_word in 0..=u32::MAX {
                         let mut partial_state = Align64(prefix_state);
                         sha256::sha2_arx::<8, _>(&mut partial_state, [high_word]);
@@ -1889,19 +2020,54 @@ impl Solver for GoAwaySolver {
                                 _mm512_set1_epi32(Self::MSG_LEN as _),
                             ];
                             sha256::avx512::multiway_arx::<9>(&mut state, &mut msg);
-                            let result_a =
+
+                            state[0] =
                                 _mm512_add_epi32(state[0], _mm512_set1_epi32(sha256::IV[0] as _));
 
+                            #[cfg(feature = "compare-64bit")]
+                            {
+                                state[1] =
+                                    _mm512_add_epi32(state[1], _mm512_set1_epi32(sha256::IV[1] as _));
+                            }
+
+                            #[cfg(not(feature = "compare-64bit"))]
                             let cmp_fn = if UPWARDS {
                                 _mm512_cmpgt_epu32_mask
                             } else {
                                 _mm512_cmplt_epu32_mask
                             };
-                            let a_met_target = cmp_fn(result_a, _mm512_set1_epi32(target[0] as _));
-                            if a_met_target != 0 {
+
+                            #[cfg(feature = "compare-64bit")]
+                            let cmp_fn = if UPWARDS {
+                                _mm512_cmpgt_epu64_mask
+                            } else {
+                                _mm512_cmplt_epu64_mask
+                            };
+
+                            #[cfg(not(feature = "compare-64bit"))]
+                            let met_target = cmp_fn(state[0], _mm512_set1_epi32(target[0] as _));
+
+                            #[cfg(feature = "compare-64bit")]
+                            let result_ab_lo = _mm512_unpacklo_epi32(state[1], state[0]);
+                            #[cfg(feature = "compare-64bit")]
+                            let result_ab_hi = _mm512_unpackhi_epi32(state[1], state[0]);
+                            #[cfg(feature = "compare-64bit")]
+                            let met_target = {
+                                let ab_met_target_lo =
+                                    cmp_fn(result_ab_lo, _mm512_set1_epi64(compact_target as _)) as u16;
+                                let ab_met_target_high =
+                                    cmp_fn(result_ab_hi, _mm512_set1_epi64(compact_target as _)) as u16;
+                                ab_met_target_high << 8 | ab_met_target_lo
+                            };
+
+                            if met_target != 0 {
                                 unlikely();
 
-                                let success_lane_idx = _tzcnt_u16(a_met_target);
+                                let success_lane_idx = _tzcnt_u16(met_target);
+
+                                #[cfg(feature = "compare-64bit")]
+                                let success_lane_idx = INDEX_REMAP_PUNPCKLDQ[success_lane_idx as usize];
+
                                 let mut output_msg: [u32; 16] = [0; 16];
 
                                 let final_low_word = low_word | (success_lane_idx as u32);
@@ -1938,6 +2104,14 @@ impl Solver for GoAwaySolver {
                     sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
                     let prepared_state = sha256::sha_ni::prepare_state(&prefix_state);
 
+                    let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
+
+                    let feedback_ab = {
+                        let lows = _mm_cvtsi64x_si128(((sha256::IV[0] as u64) << 32 | sha256::IV[1] as u64) as _);
+
+                        _mm_shuffle_epi32(lows, 0b01001010)
+                    };
+
                     for high_word in 0..=u32::MAX {
                         for low_word in (0..=u32::MAX).step_by(4) {
                             let mut states0 = prepared_state;
@@ -1966,18 +2140,23 @@ impl Solver for GoAwaySolver {
                                 LaneIdPlucker,
                             );
 
-                            let result_as = [
-                                (_mm_extract_epi32(states0[0], 3) as u32).wrapping_add(sha256::IV[0]),
-                                (_mm_extract_epi32(states1[0], 3) as u32).wrapping_add(sha256::IV[0]),
-                                (_mm_extract_epi32(states2[0], 3) as u32).wrapping_add(sha256::IV[0]),
-                                (_mm_extract_epi32(states3[0], 3) as u32).wrapping_add(sha256::IV[0]),
+                            states0[0] = _mm_add_epi32(states0[0], feedback_ab);
+                            states1[0] = _mm_add_epi32(states1[0], feedback_ab);
+                            states2[0] = _mm_add_epi32(states2[0], feedback_ab);
+                            states3[0] = _mm_add_epi32(states3[0], feedback_ab);
+
+                            let result_abs = [
+                                _mm_extract_epi64(states0[0], 1) as u64,
+                                _mm_extract_epi64(states1[0], 1) as u64,
+                                _mm_extract_epi64(states2[0], 1) as u64,
+                                _mm_extract_epi64(states3[0], 1) as u64,
                             ];
 
-                            let success_lane_idx = result_as.iter().position(|x| {
+                            let success_lane_idx = result_abs.iter().position(|x| {
                                 if UPWARDS {
-                                    *x > target[0]
+                                    *x > compact_target
                                 } else {
-                                    *x < target[0]
+                                    *x < compact_target
                                 }
                             });
 
@@ -2097,6 +2276,8 @@ impl Solver for GoAwaySolver {
                 buffer[0][40] = 0x80;
                 buffer[0][60..64].copy_from_slice(&(Self::MSG_LEN as u32).to_be_bytes());
 
+                let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
+
                 for key in 0..=u64::MAX {
                     unsafe {
                         *buffer[0].as_mut_ptr().add(32).cast::<u64>() = u64::from_ne_bytes(key.to_be_bytes());
@@ -2105,8 +2286,13 @@ impl Solver for GoAwaySolver {
                     let mut state = sha256::IV;
                     sha2::compress256(&mut state, &*buffer);
 
-                    let cmp_fn = if UPWARDS { u32::gt } else { u32::lt };
-                    if cmp_fn(&state[0], &target[0]) {
+                    state[0] = state[0].wrapping_add(sha256::IV[0]);
+                    state[1] = state[1].wrapping_add(sha256::IV[1]);
+
+                    let state_ab = (state[0] as u64) << 32 | (state[1] as u64);
+
+                    let cmp_fn = if UPWARDS { u64::gt } else { u64::lt };
+                    if cmp_fn(&state_ab, &compact_target) {
                         unlikely();
 
                         return Some((key, state));
