@@ -51,7 +51,7 @@ async fn index() -> Html<&'static str> {
 pub struct AppState {
     pool: Arc<rayon::ThreadPool>,
     semaphore: Arc<Semaphore>,
-    limit: u32,
+    limit: u64,
 }
 
 #[cfg(feature = "server-wasm")]
@@ -78,7 +78,7 @@ async fn serve_wasm(axum::extract::Path(file): axum::extract::Path<String>) -> R
 }
 
 impl AppState {
-    pub fn new(n_threads: usize, limit: u32) -> Self {
+    pub fn new(n_threads: usize, limit: u64) -> Self {
         Self {
             pool: Arc::new(
                 rayon::ThreadPoolBuilder::new()
@@ -137,7 +137,7 @@ enum SolveError {
     Json(#[from] serde_json::Error),
 
     #[error("solver failed or server limit reached")]
-    SolverFailed { limit: u32, attempted: u32 },
+    SolverFailed { limit: u64, attempted: u64 },
 
     #[error("solver fatal error")]
     SolverFatal,
@@ -254,7 +254,7 @@ async fn solve_goaway(
         let (tx, rx) = tokio::sync::oneshot::channel();
         state.pool.spawn(move || {
             let start = std::time::Instant::now();
-            let result = config.solve();
+            let result = config.solve_with_limit(state.limit);
             let elapsed = start.elapsed();
             tx.send((result, elapsed)).ok();
         });
@@ -264,7 +264,7 @@ async fn solve_goaway(
 
     let (nonce, result) = result.ok_or(SolveError::SolverFailed {
         limit: state.limit,
-        attempted: u32::MAX,
+        attempted: u64::MAX,
     })?;
 
     let plausible_time = nonce / 1024;
@@ -386,7 +386,7 @@ async fn solve_anubis(
         attempted: attempted_nonces,
     })?;
 
-    let plausible_time = (attempted_nonces / 1024).max(delay as u32 + 100);
+    let plausible_time = (attempted_nonces / 1024).max(delay + 100);
 
     write!(final_url, "elapsedTime={}&response=", plausible_time).unwrap();
 

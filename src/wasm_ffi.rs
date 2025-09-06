@@ -16,7 +16,7 @@ pub struct AnubisResponse {
     delay: u32,
     nonce: u64,
     response: String,
-    attempted_nonces: u32,
+    attempted_nonces: u64,
 }
 
 #[wasm_bindgen]
@@ -34,7 +34,7 @@ impl AnubisResponse {
         self.delay
     }
     #[wasm_bindgen(getter)]
-    pub fn attempted_nonces(&self) -> u32 {
+    pub fn attempted_nonces(&self) -> u64 {
         self.attempted_nonces
     }
 }

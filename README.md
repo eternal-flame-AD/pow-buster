@@ -5,6 +5,7 @@
 - [PoW Buster](#pow-buster)
   - [Table of Contents](#table-of-contents)
   - [Why?](#why)
+  - [Features](#features)
   - [Building](#building)
   - [Limitations](#limitations)
   - [Ethical Disclaimer (i.e. the "How Dare you Publish this?" question)](#ethical-disclaimer-ie-the-how-dare-you-publish-this-question)
@@ -35,6 +36,14 @@ I personally don't like some projects put themselves at the ethical high ground 
 - Justify the annoying friction by claiming the lack of a transparent spec and alternative manual solutions to be ["[good] taste [for] a 'security product'"](https://anubis.techaro.lol/docs/user/frequently-asked-questions), despite themselves not publishing sound security analysis to justify the friction. I did the reverse engineering that nobody should even have to do for an open source security product.
 
 [A longer blabbing post regarding this](https://mi.yumechi.jp/notes/aa223tk8c5ao02v9)
+
+## Features
+
+- Greedy padding logic
+- Efficient outer loop and SIMD nonce encoding
+- SHA-2 hotstarting with round-level granularity
+- Fully unrolled and monomorphic core friendly to pipelining and ternary logic instruction lowering
+- Short-circuiting comparison with $H_1 \to H_7$ feedback elision with optional 64-bit support
 
 ## Building
 
@@ -81,7 +90,7 @@ We assume you have a relatively modern and powerful platform, specifically:
 - For Anubis target, this assumes the server is 64-bit (i.e. is able to accept a signed 64-bit nonce).
 - AVX-512 build requires Rust 1.89 or later.
 - All solvers are single-threaded and are intended to be scaled up using multiple workers optionally pinned to specific cores.
-- This is designed for "low", practical-for-a-website difficulty settings, A $1 - P_{geom}(80e7, 1/\text{difficulty})$ chance of failure for any particular challenge, which for 1e8 (takes about 10 seconds on a browser for mCaptcha and an eternity for Anubis) is about 0.03%. Go-away solver explores the full solution space and guarantees a solution if one exists.
+- This is designed for "low", practical-for-a-website difficulty settings, A worst-case $1 - P_{geom}(80e7, 1/\text{difficulty})$ chance of failure for any particular messaeg offset with most offset cases almost guaranteed to succeed eventually, which for 1e8 (takes about 10 seconds on a browser for mCaptcha and an eternity for Anubis) is about 0.03%. Go-away solver explores the full solution space and guarantees a solution if one exists.
 
 ## Ethical Disclaimer (i.e. the "How Dare you Publish this?" question)
 

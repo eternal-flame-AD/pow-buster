@@ -73,7 +73,7 @@ enum SubCommand {
         addr: String,
 
         #[clap(short, long, default_value = "200000000")]
-        limit: u32,
+        limit: u64,
 
         #[clap(short, long, default_value = "2")]
         n_workers: usize,

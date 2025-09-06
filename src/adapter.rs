@@ -64,8 +64,8 @@ impl AnubisChallengeDescriptor {
             || self.rules.algorithm == "preact"
     }
 
-    pub fn solve(&self) -> (Option<(u64, [u32; 8])>, u32) {
-        self.solve_with_limit(u32::MAX)
+    pub fn solve(&self) -> (Option<(u64, [u32; 8])>, u64) {
+        self.solve_with_limit(u64::MAX)
     }
 
     // delay to hold the solution before it will be accepted
@@ -77,7 +77,7 @@ impl AnubisChallengeDescriptor {
         }
     }
 
-    pub fn solve_with_limit(&self, limit: u32) -> (Option<(u64, [u32; 8])>, u32) {
+    pub fn solve_with_limit(&self, limit: u64) -> (Option<(u64, [u32; 8])>, u64) {
         if self.rules.algorithm == "preact" {
             let hash = sha2::Sha256::digest(self.challenge.as_ref().as_bytes());
             let mut hash_arr = [0u32; 8];

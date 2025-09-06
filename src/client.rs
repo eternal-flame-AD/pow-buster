@@ -319,6 +319,10 @@ impl GoAwayConfig {
     }
 
     pub fn solve(&self) -> Option<(u64, [u32; 8])> {
+        self.solve_with_limit(u64::MAX)
+    }
+
+    pub fn solve_with_limit(&self, limit: u64) -> Option<(u64, [u32; 8])> {
         let target = compute_target_goaway(self.difficulty);
         let target_bytes = target.to_be_bytes();
         let target_u32s = core::array::from_fn(|i| {
@@ -330,6 +334,7 @@ impl GoAwayConfig {
             ])
         });
         let mut solver = crate::GoAwaySolver::new((), &self.challenge.as_bytes()).unwrap();
+        solver.set_limit(limit);
         solver.solve::<false>(target_u32s)
     }
 }

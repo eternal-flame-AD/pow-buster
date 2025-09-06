@@ -258,6 +258,12 @@ pub trait Solver {
     where
         Self: Sized;
 
+    // if possible, switch to a new search space
+    // returns false when there are no more search spaces available
+    fn next_search_space(&mut self) -> bool {
+        false
+    }
+
     // returns a valid nonce and "result" value
     //
     // mCaptcha uses an upwards comparison, Anubis uses a downwards comparison
@@ -295,17 +301,17 @@ pub struct SingleBlockSolver {
 
     nonce_addend: u64,
 
-    attempted_nonces: u32,
+    attempted_nonces: u64,
 
-    limit: u32,
+    limit: u64,
 }
 
 impl SingleBlockSolver {
-    pub fn set_limit(&mut self, limit: u32) {
+    pub fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
 
-    pub fn get_attempted_nonces(&self) -> u32 {
+    pub fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
     }
 }
@@ -336,7 +342,17 @@ impl Solver for SingleBlockSolver {
             complete_blocks_before += 1;
         }
 
-        // message padding logic
+        let mut is_fitst_digit = true;
+        let mut pop_padding_digit = || {
+            if is_fitst_digit {
+                is_fitst_digit = false;
+                1u8
+            } else {
+                0u8
+            }
+        };
+
+        // greedy padding logic
 
         // priority 0: if there is not enough room for 9 bytes of padding, pad with '1's and then start a new block whenever possible
         // this avoids having to hash 2 blocks per iteration a naive solution would do
@@ -344,9 +360,10 @@ impl Solver for SingleBlockSolver {
             let mut tmp_block = [0; 64];
             tmp_block[..prefix.len()].copy_from_slice(prefix);
             tmp_block[prefix.len()..].iter_mut().for_each(|b| {
+                let pad = pop_padding_digit();
                 nonce_addend *= 10;
-                nonce_addend += 1;
-                *b = b'1';
+                nonce_addend += pad as u64;
+                *b = b'0' + pad;
             });
             nonce_addend.checked_mul(1_000_000_000)?; // make sure we still have enough headroom
             complete_blocks_before += 1;
@@ -376,8 +393,9 @@ impl Solver for SingleBlockSolver {
             if ptr % 2 == 1 {
                 if nonce_addend.checked_mul(10_000_000_000 * 2).is_some() {
                     nonce_addend *= 10;
-                    nonce_addend += 1;
-                    message[ptr] = b'1';
+                    let pad = pop_padding_digit();
+                    nonce_addend += pad as u64;
+                    message[ptr] = b'0' + pad;
                     ptr += 1;
                 }
             }
@@ -385,8 +403,9 @@ impl Solver for SingleBlockSolver {
             while (ptr + 2) % 4 != 0 {
                 if nonce_addend.checked_mul(10_000_000_000 * 2).is_some() {
                     nonce_addend *= 10;
-                    nonce_addend += 1;
-                    message[ptr] = b'1';
+                    let pad = pop_padding_digit();
+                    nonce_addend += pad as u64;
+                    message[ptr] = b'0' + pad;
                     ptr += 1;
                 } else {
                     break;
@@ -398,12 +417,17 @@ impl Solver for SingleBlockSolver {
                 .checked_mul(10000 * 1_000_000_000 * 2)
                 .is_some()
             {
+                let pad0 = pop_padding_digit();
+                let pad1 = pop_padding_digit();
+                let pad2 = pop_padding_digit();
+                let pad3 = pop_padding_digit();
                 nonce_addend *= 10000;
-                nonce_addend += 1111;
-                message[ptr] = b'1';
-                message[ptr + 1] = b'1';
-                message[ptr + 2] = b'1';
-                message[ptr + 3] = b'1';
+                nonce_addend +=
+                    pad0 as u64 * 1000 + pad1 as u64 * 100 + pad2 as u64 * 10 + pad3 as u64;
+                message[ptr] = b'0' + pad0;
+                message[ptr + 1] = b'0' + pad1;
+                message[ptr + 2] = b'0' + pad2;
+                message[ptr + 3] = b'0' + pad3;
                 ptr += 4;
             }
         }
@@ -441,8 +465,46 @@ impl Solver for SingleBlockSolver {
             digit_index,
             nonce_addend,
             attempted_nonces: 0,
-            limit: u32::MAX,
+            limit: u64::MAX,
         })
+    }
+
+    fn next_search_space(&mut self) -> bool {
+        if self.digit_index == 0 || self.nonce_addend == 0 {
+            return false;
+        }
+
+        self.nonce_addend = match self.nonce_addend.checked_add(1_000_000_000) {
+            Some(nonce_addend) => nonce_addend,
+            None => return false,
+        };
+
+        let mut addend_copy = self.nonce_addend / 1_000_000_000;
+        let mut i = self.digit_index - 1;
+        let mut last_digit = 0;
+        while addend_copy > 0 {
+            let idx = SWAP_DWORD_BYTE_ORDER[i];
+
+            let message = decompose_blocks_mut(&mut self.message);
+            last_digit = (addend_copy % 10) as u8;
+            addend_copy /= 10;
+            message[idx] = b'0' + last_digit;
+            if i > 0 {
+                i -= 1;
+            } else {
+                break;
+            }
+        }
+
+        // make sure no carry propagates to blocks that are already committed
+        while addend_copy > 0 {
+            last_digit = (addend_copy % 10) as u8;
+            addend_copy /= 10;
+            if last_digit != 0 {
+                break;
+            }
+        }
+        last_digit == 1 && addend_copy == 0
     }
 
     cfg_if::cfg_if! {
@@ -460,6 +522,12 @@ impl Solver for SingleBlockSolver {
                     return None;
                 }
                 let lane_id_1_word_idx = (self.digit_index + 1) / 4;
+
+                // zero out the nonce portion to prevent incorrect results if solvers are reused
+                for i in (self.digit_index..).take(9) {
+                    let message = decompose_blocks_mut(&mut self.message);
+                    message[SWAP_DWORD_BYTE_ORDER[i]] = b'0';
+                }
 
                 // make sure there are no runtime "register indexing" logic
                 fn solve_inner<
@@ -480,7 +548,10 @@ impl Solver for SingleBlockSolver {
                         core::array::from_fn(|i| this.message[i]),
                     );
 
-                    let mut remaining_limit = this.limit;
+                    let mut remaining_limit = this.limit.saturating_sub(this.attempted_nonces);
+                    if remaining_limit == 0 {
+                        return None;
+                    }
 
                     let lane_id_0_byte_idx = this.digit_index % 4;
                     let lane_id_1_byte_idx = (this.digit_index + 1) % 4;
@@ -502,8 +573,8 @@ impl Solver for SingleBlockSolver {
                                 lane_id_0_or_value
                             };
 
-                            let inner_iteration_end = 10_000_000.min(remaining_limit);
-                            remaining_limit -= inner_iteration_end;
+                            let inner_iteration_end = if remaining_limit < 10_000_000 { remaining_limit as u32 } else { 10_000_000 };
+                            remaining_limit -= inner_iteration_end as u64;
 
                             // soft pipeline this to compute the new message after the hash
                             // LLVM seems to handle cases where high register pressure work happens first better
@@ -694,25 +765,32 @@ impl Solver for SingleBlockSolver {
                     };
                 }
 
-                let nonce = unsafe {
-                    match lane_id_0_word_idx {
-                        0 => dispatch!(0),
-                        1 => dispatch!(1),
-                        2 => dispatch!(2),
-                        3 => dispatch!(3),
-                        4 => dispatch!(4),
-                        5 => dispatch!(5),
-                        6 => dispatch!(6),
-                        7 => dispatch!(7),
-                        8 => dispatch!(8),
-                        9 => dispatch!(9),
-                        10 => dispatch!(10),
-                        11 => dispatch!(11),
-                        12 => dispatch!(12),
-                        13 => dispatch!(13),
-                        _ => core::hint::unreachable_unchecked(),
+                let nonce = loop {
+                    unsafe {
+                        match match lane_id_0_word_idx {
+                            0 => dispatch!(0),
+                            1 => dispatch!(1),
+                            2 => dispatch!(2),
+                            3 => dispatch!(3),
+                            4 => dispatch!(4),
+                            5 => dispatch!(5),
+                            6 => dispatch!(6),
+                            7 => dispatch!(7),
+                            8 => dispatch!(8),
+                            9 => dispatch!(9),
+                            10 => dispatch!(10),
+                            11 => dispatch!(11),
+                            12 => dispatch!(12),
+                            13 => dispatch!(13),
+                            _ => core::hint::unreachable_unchecked(),
+                        } {
+                            Some(nonce) => break nonce,
+                            None => if !self.next_search_space() {
+                                return None;
+                            },
+                        }
                     }
-                }?;
+                };
 
                 self.attempted_nonces *= 16;
 
@@ -731,6 +809,11 @@ impl Solver for SingleBlockSolver {
                     return None;
                 }
 
+                for i in (self.digit_index as usize..).take(9) {
+                    let message = decompose_blocks_mut(&mut self.message);
+                    message[SWAP_DWORD_BYTE_ORDER[i]] = b'0';
+                }
+
                 let lane_id_1_word_idx = (self.digit_index + 1) / 4;
 
                 fn solve_inner<
@@ -741,7 +824,6 @@ impl Solver for SingleBlockSolver {
                     const UPWARDS: bool,
                 >(
                     this: &mut SingleBlockSolver,
-                    #[cfg(feature = "compare-64bit")]
                     target: u64,
                 ) -> Option<u64> {
                     let mut partial_state = Align16(this.prefix_state);
@@ -1024,25 +1106,32 @@ impl Solver for SingleBlockSolver {
                     };
                 }
 
-                let nonce = unsafe {
-                    match lane_id_0_word_idx {
-                        0 => dispatch!(0, 0, 0),
-                        1 => dispatch!(0, 0, 1),
-                        2 => dispatch!(0, 0, 2),
-                        3 => dispatch!(0, 0, 3),
-                        4 => dispatch!(4, 1, 0),
-                        5 => dispatch!(4, 1, 1),
-                        6 => dispatch!(4, 1, 2),
-                        7 => dispatch!(4, 1, 3),
-                        8 => dispatch!(8, 2, 0),
-                        9 => dispatch!(8, 2, 1),
-                        10 => dispatch!(8, 2, 2),
-                        11 => dispatch!(8, 2, 3),
-                        12 => dispatch!(12, 3, 0),
-                        13 => dispatch!(12, 3, 1),
-                        _ => core::hint::unreachable_unchecked(),
+                let nonce = loop {
+                    unsafe {
+                        match match lane_id_0_word_idx {
+                            0 => dispatch!(0, 0, 0),
+                            1 => dispatch!(0, 0, 1),
+                            2 => dispatch!(0, 0, 2),
+                            3 => dispatch!(0, 0, 3),
+                            4 => dispatch!(4, 1, 0),
+                            5 => dispatch!(4, 1, 1),
+                            6 => dispatch!(4, 1, 2),
+                            7 => dispatch!(4, 1, 3),
+                            8 => dispatch!(8, 2, 0),
+                            9 => dispatch!(8, 2, 1),
+                            10 => dispatch!(8, 2, 2),
+                            11 => dispatch!(8, 2, 3),
+                            12 => dispatch!(12, 3, 0),
+                            13 => dispatch!(12, 3, 1),
+                            _ => core::hint::unreachable_unchecked(),
+                        } {
+                            Some(nonce) => break nonce,
+                            None => if !self.next_search_space() {
+                                return None;
+                            },
+                        }
                     }
-                }?;
+                };
 
                 let mut final_sha_state = self.prefix_state;
                 sha256::digest_block(&mut final_sha_state, &self.message);
@@ -1058,6 +1147,11 @@ impl Solver for SingleBlockSolver {
                 }
                 let lane_id_1_word_idx = (self.digit_index + 1) / 4;
 
+                for i in (self.digit_index as usize..).take(9) {
+                    let message = decompose_blocks_mut(&mut self.message);
+                    message[SWAP_DWORD_BYTE_ORDER[i]] = b'0';
+                }
+
                 let mut hotstart_state = self.prefix_state;
                 sha256::sha2_arx_slice::<0>(&mut hotstart_state, &self.message[..lane_id_0_word_idx]);
 
@@ -1071,7 +1165,10 @@ impl Solver for SingleBlockSolver {
                     target: u32,
                 ) -> Option<u64> {
                     unsafe {
-                        let mut remaining_limit = this.limit;
+                        let mut remaining_limit = this.limit.saturating_sub(this.attempted_nonces);
+                        if remaining_limit == 0 {
+                            return None;
+                        }
 
                         let lane_id_0_byte_idx = this.digit_index % 4;
                         let lane_id_1_byte_idx = (this.digit_index + 1) % 4;
@@ -1179,24 +1276,31 @@ impl Solver for SingleBlockSolver {
                     };
                 }
 
-                let nonce = unsafe {
-                    match lane_id_0_word_idx {
-                        0 => dispatch!(0),
-                        1 => dispatch!(1),
-                        2 => dispatch!(2),
-                        3 => dispatch!(3),
-                        4 => dispatch!(4),
-                        5 => dispatch!(5),
-                        6 => dispatch!(6),
-                        7 => dispatch!(7),
-                        8 => dispatch!(8),
-                        9 => dispatch!(9),
-                        10 => dispatch!(10),
-                        11 => dispatch!(11),
-                        12 => dispatch!(12),
-                        13 => dispatch!(13),
-                        _ => core::hint::unreachable_unchecked(),
-                    }?
+                let nonce = loop {
+                    unsafe {
+                        match match lane_id_0_word_idx {
+                            0 => dispatch!(0),
+                            1 => dispatch!(1),
+                            2 => dispatch!(2),
+                            3 => dispatch!(3),
+                            4 => dispatch!(4),
+                            5 => dispatch!(5),
+                            6 => dispatch!(6),
+                            7 => dispatch!(7),
+                            8 => dispatch!(8),
+                            9 => dispatch!(9),
+                            10 => dispatch!(10),
+                            11 => dispatch!(11),
+                            12 => dispatch!(12),
+                            13 => dispatch!(13),
+                            _ => core::hint::unreachable_unchecked(),
+                        } {
+                            Some(nonce) => break nonce,
+                            None => if !self.next_search_space() {
+                                return None;
+                            },
+                        }
+                    }
                 };
 
                 // recompute the hash from the beginning
@@ -1235,9 +1339,14 @@ impl Solver for SingleBlockSolver {
 
                         return Some((key + self.nonce_addend, state));
                     }
+                    self.limit -= 1;
                 }
 
-                None
+                if !self.next_search_space() {
+                    return None;
+                }
+
+                self.solve::<UPWARDS>(target)
             }
         }
     }
@@ -1251,9 +1360,9 @@ pub struct DoubleBlockSolver {
 
     pub(crate) nonce_addend: u64,
 
-    attempted_nonces: u32,
+    attempted_nonces: u64,
 
-    limit: u32,
+    limit: u64,
 
     // the SHA-256 state A-H for all prefix bytes
     pub(crate) prefix_state: Align16<[u32; 8]>,
@@ -1265,11 +1374,11 @@ pub struct DoubleBlockSolver {
 impl DoubleBlockSolver {
     const DIGIT_IDX: u64 = 54;
 
-    pub fn set_limit(&mut self, limit: u32) {
+    pub fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
 
-    pub fn get_attempted_nonces(&self) -> u32 {
+    pub fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
     }
 }
@@ -1357,8 +1466,38 @@ impl Solver for DoubleBlockSolver {
             nonce_addend,
             message_length,
             attempted_nonces: 0,
-            limit: u32::MAX,
+            limit: u64::MAX,
         })
+    }
+
+    fn next_search_space(&mut self) -> bool {
+        if self.nonce_addend == 0 {
+            return false;
+        }
+
+        self.nonce_addend = match self.nonce_addend.checked_add(1_000_000_000) {
+            Some(nonce_addend) => nonce_addend,
+            None => return false,
+        };
+
+        // this case the prefix is guaranteed to be in one block so no need to check
+        let mut addend_copy = self.nonce_addend / 1_000_000_000;
+        let mut i = Self::DIGIT_IDX as usize - 1;
+        let mut last_digit = 0;
+        while addend_copy > 0 {
+            let idx = SWAP_DWORD_BYTE_ORDER[i];
+            last_digit = (addend_copy % 10) as u8;
+            let message = decompose_blocks_mut(&mut self.message);
+            message[idx] = b'0' + last_digit;
+            addend_copy /= 10;
+            if i > 0 {
+                i -= 1;
+            } else {
+                return false;
+            }
+        }
+
+        last_digit == 1
     }
 
     cfg_if::cfg_if! {
@@ -1366,6 +1505,11 @@ impl Solver for DoubleBlockSolver {
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
                 if !is_supported_lane_position(Self::DIGIT_IDX as usize / 4) {
                     return None;
+                }
+
+                for i in (Self::DIGIT_IDX as usize..).take(9) {
+                    let message = decompose_blocks_mut(&mut self.message);
+                    message[SWAP_DWORD_BYTE_ORDER[i]] = b'0';
                 }
 
                 #[cfg(feature = "compare-64bit")]
@@ -1526,12 +1670,23 @@ impl Solver for DoubleBlockSolver {
                 }
 
                 unlikely();
-                None
+
+                // try to advance the search space and tail recurse
+                if !self.next_search_space() {
+                    return None;
+                }
+
+                self.solve::<UPWARDS>(target)
             }
         } else if #[cfg(all(target_arch = "x86_64", target_feature = "sha"))] {
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
                 if !is_supported_lane_position(Self::DIGIT_IDX as usize / 4) {
                     return None;
+                }
+
+                for i in (Self::DIGIT_IDX as usize..).take(9) {
+                    let message = decompose_blocks_mut(&mut self.message);
+                    message[SWAP_DWORD_BYTE_ORDER[i]] = b'0';
                 }
 
                 let iv_state = sha256::sha_ni::prepare_state(&self.prefix_state);
@@ -1693,12 +1848,22 @@ impl Solver for DoubleBlockSolver {
                         }
                     }
                 }
-                None
+
+                if !self.next_search_space() {
+                    return None;
+                }
+
+                self.solve::<UPWARDS>(target)
             }
         } else if #[cfg(target_arch = "wasm32")] {
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
                 if !is_supported_lane_position(Self::DIGIT_IDX as usize / 4) {
                     return None;
+                }
+
+                for i in (Self::DIGIT_IDX as usize..).take(9) {
+                    let message = decompose_blocks_mut(&mut self.message);
+                    message[SWAP_DWORD_BYTE_ORDER[i]] = b'0';
                 }
 
                 let mut partial_state = Align64(self.prefix_state);
@@ -1852,7 +2017,11 @@ impl Solver for DoubleBlockSolver {
                     }
                 }
 
-                None
+                if !self.next_search_space() {
+                    return None;
+                }
+
+                self.solve::<UPWARDS>(target)
             }
         } else {
             #[inline(never)]
@@ -1873,7 +2042,7 @@ impl Solver for DoubleBlockSolver {
                 let feedback_ab = (target[0] as u64) << 32 | (target[1] as u64);
                 let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
 
-                for key in 100_000_000..1_000_000_000 {
+                for key in (if self.nonce_addend == 0 { 100_000_000 } else { 0 })..1_000_000_000 {
                     let mut key_copy = key;
 
                     for j in (0..9).rev() {
@@ -1905,7 +2074,11 @@ impl Solver for DoubleBlockSolver {
                     }
                 }
 
-                None
+                if !self.next_search_space() {
+                    return None;
+                }
+
+                self.solve::<UPWARDS>(target)
             }
         }
     }
@@ -1920,10 +2093,15 @@ impl Solver for DoubleBlockSolver {
 /// proof := challenge || nonce
 pub struct GoAwaySolver {
     challenge: [u32; 8],
+    limit: u64,
 }
 
 impl GoAwaySolver {
     const MSG_LEN: u32 = 10 * 4 * 8;
+
+    pub fn set_limit(&mut self, limit: u64) {
+        self.limit = limit;
+    }
 }
 
 impl Solver for GoAwaySolver {
@@ -1971,6 +2149,7 @@ impl Solver for GoAwaySolver {
                     final_prefix[i * 4 + 3],
                 ])
             }),
+            limit: u64::MAX,
         })
     }
 
@@ -1990,11 +2169,14 @@ impl Solver for GoAwaySolver {
 
                     let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
 
-                    for high_word in 0..=u32::MAX {
+                    let high_limit = (self.limit >> 32) as u32;
+                    let low_limit = self.limit as u32;
+
+                    for high_word in 0..=high_limit {
                         let mut partial_state = Align64(prefix_state);
                         sha256::sha2_arx::<8, _>(&mut partial_state, [high_word]);
 
-                        for low_word in (0..=u32::MAX).step_by(16) {
+                        for low_word in (0..=if high_word == high_limit { low_limit } else { u32::MAX }).step_by(16) {
                             let mut state =
                                 core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
 
@@ -2414,103 +2596,119 @@ mod tests {
                 continue;
             };
             let mut anubis_solver = S::new(Default::default(), &concatenated_prefix).unwrap();
-            solved.insert(phrase_len);
-            let target_bytes = compute_target(DIFFICULTY).to_be_bytes();
-            let target_u32s = core::array::from_fn(|i| {
-                u32::from_be_bytes([
-                    target_bytes[i * 4],
-                    target_bytes[i * 4 + 1],
-                    target_bytes[i * 4 + 2],
-                    target_bytes[i * 4 + 3],
-                ])
-            });
-            let target_anubis = compute_target_anubis(ANUBIS_DIFFICULTY);
-            let target_anubis_bytes = target_anubis.to_be_bytes();
-            let target_anubis_u32s = core::array::from_fn(|i| {
-                u32::from_be_bytes([
-                    target_anubis_bytes[i * 4],
-                    target_anubis_bytes[i * 4 + 1],
-                    target_anubis_bytes[i * 4 + 2],
-                    target_anubis_bytes[i * 4 + 3],
-                ])
-            });
-            let (nonce, result) = solver.solve::<true>(target_u32s).expect("solver failed");
-            let result_128 = extract128_be(result);
-            let (anubis_nonce, anubis_result) = anubis_solver
-                .solve::<false>(target_anubis_u32s)
-                .expect("solver failed");
-            let anubis_result_128 = extract128_be(anubis_result);
-            let anubis_result_bytes = anubis_result_128.to_be_bytes();
-            assert!(
-                target_anubis > anubis_result_128,
-                "[{}] target_anubis: {:016x} <= anubis_result: {:016x}",
-                core::any::type_name::<S>(),
-                target_anubis,
-                anubis_result_128
-            );
+            'nudge: for try_nudge_count in [0, 1, 9, 10, 11] {
+                for _ in 0..try_nudge_count {
+                    if !solver.next_search_space() {
+                        continue 'nudge;
+                    }
+                    if !anubis_solver.next_search_space() {
+                        continue 'nudge;
+                    }
+                }
 
-            /*
-            let mut expected_message = concatenated_prefix.clone();
-            let nonce_string = nonce.to_string();
-            expected_message.extend_from_slice(nonce_string.as_bytes());
-            let mut hasher = sha2::Sha256::default();
-            hasher.update(&expected_message);
-            let expected_hash = hasher.finalize();
-            */
-
-            let test_response = pow_sha256::PoWBuilder::default()
-                .nonce(nonce)
-                .result(result_128.to_string())
-                .build()
-                .unwrap();
-            let anubis_test_response = pow_sha256::PoWBuilder::default()
-                .nonce(anubis_nonce)
-                .result(anubis_result_128.to_string())
-                .build()
-                .unwrap();
-            assert_eq!(
-                config.calculate(&test_response, &phrase_str).unwrap(),
-                result_128
-            );
-            assert_eq!(
-                config
-                    .calculate(&anubis_test_response, &phrase_str)
-                    .unwrap(),
-                anubis_result_128
-            );
-
-            assert!(
-                config.is_valid_proof(&test_response, &phrase_str),
-                "{} is not valid proof (solver: {})",
-                result_128,
-                core::any::type_name::<S>()
-            );
-
-            assert!(
-                config.is_sufficient_difficulty(&test_response, DIFFICULTY),
-                "{:016x} is not sufficient difficulty, expected {:016x} (solver: {})",
-                result_128,
-                compute_target(DIFFICULTY),
-                core::any::type_name::<S>()
-            );
-
-            // based on proof-of-work.mjs
-            for i in 0..ANUBIS_DIFFICULTY.get() as usize {
-                let byte_index = i / 2;
-                let nibble_index = (1 - i % 2) as u8;
-
-                let nibble = (anubis_result_bytes[byte_index] >> (nibble_index * 4)) & 0x0f;
-                assert_eq!(
-                    nibble,
-                    0,
-                    "{:08x} is not valid anubis proof (solver: {}, nibble: {})",
+                solved.insert(phrase_len);
+                let target_bytes = compute_target(DIFFICULTY).to_be_bytes();
+                let target_u32s = core::array::from_fn(|i| {
+                    u32::from_be_bytes([
+                        target_bytes[i * 4],
+                        target_bytes[i * 4 + 1],
+                        target_bytes[i * 4 + 2],
+                        target_bytes[i * 4 + 3],
+                    ])
+                });
+                let target_anubis = compute_target_anubis(ANUBIS_DIFFICULTY);
+                let target_anubis_bytes = target_anubis.to_be_bytes();
+                let target_anubis_u32s = core::array::from_fn(|i| {
+                    u32::from_be_bytes([
+                        target_anubis_bytes[i * 4],
+                        target_anubis_bytes[i * 4 + 1],
+                        target_anubis_bytes[i * 4 + 2],
+                        target_anubis_bytes[i * 4 + 3],
+                    ])
+                });
+                let (nonce, result) = solver.solve::<true>(target_u32s).expect("solver failed");
+                let result_128 = extract128_be(result);
+                let (anubis_nonce, anubis_result) = anubis_solver
+                    .solve::<false>(target_anubis_u32s)
+                    .expect("solver failed");
+                let anubis_result_128 = extract128_be(anubis_result);
+                let anubis_result_bytes = anubis_result_128.to_be_bytes();
+                assert!(
+                    target_anubis > anubis_result_128,
+                    "[{}] target_anubis: {:016x} <= anubis_result: {:016x} (solver: {}, try_nudge_count: {})",
+                    core::any::type_name::<S>(),
+                    target_anubis,
                     anubis_result_128,
                     core::any::type_name::<S>(),
-                    i
+                    try_nudge_count
                 );
+
+                /*
+                let mut expected_message = concatenated_prefix.clone();
+                let nonce_string = nonce.to_string();
+                expected_message.extend_from_slice(nonce_string.as_bytes());
+                let mut hasher = sha2::Sha256::default();
+                hasher.update(&expected_message);
+                let expected_hash = hasher.finalize();
+                */
+
+                let test_response = pow_sha256::PoWBuilder::default()
+                    .nonce(nonce)
+                    .result(result_128.to_string())
+                    .build()
+                    .unwrap();
+                let anubis_test_response = pow_sha256::PoWBuilder::default()
+                    .nonce(anubis_nonce)
+                    .result(anubis_result_128.to_string())
+                    .build()
+                    .unwrap();
+                assert_eq!(
+                    config.calculate(&test_response, &phrase_str).unwrap(),
+                    result_128,
+                    "test_response: {:?} (solver: {}, try_nudge_count: {})",
+                    test_response,
+                    core::any::type_name::<S>(),
+                    try_nudge_count
+                );
+                assert_eq!(
+                    config
+                        .calculate(&anubis_test_response, &phrase_str)
+                        .unwrap(),
+                    anubis_result_128
+                );
+
+                assert!(
+                    config.is_valid_proof(&test_response, &phrase_str),
+                    "{} is not valid proof (solver: {})",
+                    result_128,
+                    core::any::type_name::<S>()
+                );
+
+                assert!(
+                    config.is_sufficient_difficulty(&test_response, DIFFICULTY),
+                    "{:016x} is not sufficient difficulty, expected {:016x} (solver: {})",
+                    result_128,
+                    compute_target(DIFFICULTY),
+                    core::any::type_name::<S>()
+                );
+
+                // based on proof-of-work.mjs
+                for i in 0..ANUBIS_DIFFICULTY.get() as usize {
+                    let byte_index = i / 2;
+                    let nibble_index = (1 - i % 2) as u8;
+
+                    let nibble = (anubis_result_bytes[byte_index] >> (nibble_index * 4)) & 0x0f;
+                    assert_eq!(
+                        nibble,
+                        0,
+                        "{:08x} is not valid anubis proof (solver: {}, nibble: {})",
+                        anubis_result_128,
+                        core::any::type_name::<S>(),
+                        i
+                    );
+                }
             }
         }
-
         println!(
             "cannot_solve: {} out of 64 lengths using {} (success rate: {:.2}%)",
             cannot_solve,
