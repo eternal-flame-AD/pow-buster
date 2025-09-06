@@ -231,21 +231,29 @@ For us we have single thread:
 
 | Workload                         | AVX-512 [log](time.txt) | SHA-NI [log](time_sha-ni.txt) | Chromium SIMD128 [log](time_simd128.txt) |
 | -------------------------------- | ----------------------- | ----------------------------- | ---------------------------------------- |
-| SingleBlock/Anubis               | 85.75 MH/s              | 51.71 MH/s                    | 14.74 MH/s                               |
-| DoubleBlock (mCaptcha edge case) | 52.30 MH/s              | 48.78 MH/s                    | Not Tested                               |
-| go-away (16 bytes)               | 97.87 MH/s              | 79.46 MH/s                    | Not Tested                               |
+| SingleBlock/Anubis               | 85.75 MH/s              | 52.19 MH/s                    | 14.74 MH/s                               |
+| DoubleBlock (mCaptcha edge case) | 52.30 MH/s              | 42.55 MH/s                    | Not Tested                               |
+| go-away (16 bytes)               | 97.87 MH/s              | 78.10 MH/s                    | Not Tested                               |
 
 The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and about 20% of that on Firefox, this is corroborated by Anubis's own accounts in their code comments using 7950X3D empirical testing. Empirical throughput of WASM-based mCaptcha is unreliable due to lack of official benchmark tools, but should be around 2-4 MH/s, corroborated with the author's CACM paper.
 
 #### Multi Threaded
 
-The peak throughput reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous.
+The peak throughput on 7950X reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous.
 
 | Workload                         | AVX-512     | SHA-NI      |
 | -------------------------------- | ----------- | ----------- |
 | SingleBlock/Anubis               | 1.485 GH/s  | 1.143 GH/s  |
 | DoubleBlock (mCaptcha edge case) | 850.75 MH/s | 827.74 MH/s |
 | go-away (16 bytes)               | 1.525 GH/s  | 1.291 GH/s  |
+
+On EPYC 9634 with better thermals, OpenSSL has 598.28 MH/s (38.29 GB/s) single block, 1.91 GH/s (122.54 GB/s) continuous.
+
+| Workload                         | AVX-512    | SHA-NI    |
+| -------------------------------- | ---------- | --------- |
+| SingleBlock/Anubis               | 3.387 GH/s | 2.09 GH/s |
+| DoubleBlock (mCaptcha edge case) | 1.861 GH/s | 1.64 GH/s |
+| go-away (16 bytes)               | 3.826 GH/s | 3.15 GH/s |
 
 ## Security Implications
 

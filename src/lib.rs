@@ -836,8 +836,9 @@ impl Solver for SingleBlockSolver {
                     const DIGIT_WORD_IDX0_DIV_4_TIMES_4: usize,
                     const DIGIT_WORD_IDX0_DIV_4: usize,
                     const DIGIT_WORD_IDX0_MOD_4: usize,
-                    const DIGIT_WORD_IDX1: usize,
+                    const DIGIT_WORD_IDX1_INC: bool,
                     const UPWARDS: bool,
+                    const ON_REGISTER_BOUNDARY: bool,
                 >(
                     this: &mut SingleBlockSolver,
                     target: u64,
@@ -878,7 +879,7 @@ impl Solver for SingleBlockSolver {
 
                             let lane_id_0_or_value = core::array::from_fn(|i| {
                                 let mut r = (lane_index_values[i] >> 8) << ((3 - lane_id_0_byte_idx) * 8);
-                                if DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 == DIGIT_WORD_IDX1 {
+                                if !DIGIT_WORD_IDX1_INC {
                                     r |= lane_id_1_or_value[i]
                                 }
                                 r
@@ -888,7 +889,7 @@ impl Solver for SingleBlockSolver {
                                 'a,
                                 const DIGIT_WORD_IDX0_DIV_4: usize,
                                 const DIGIT_WORD_IDX0_MOD_4: usize,
-                                const DIGIT_WORD_IDX1: usize,
+                                const DIGIT_WORD_IDX1_INC: bool,
                             > {
                                 lane_0_or_value: &'a [u32; 4],
                                 lane_1_or_value: &'a [u32; 4],
@@ -898,20 +899,20 @@ impl Solver for SingleBlockSolver {
                                 'a,
                                 const DIGIT_WORD_IDX0_DIV_4: usize,
                                 const DIGIT_WORD_IDX0_MOD_4: usize,
-                                const DIGIT_WORD_IDX1: usize,
+                                const DIGIT_WORD_IDX1_INC: bool,
                             >
                                 LaneIdPlucker<
                                     'a,
                                     DIGIT_WORD_IDX0_DIV_4,
                                     DIGIT_WORD_IDX0_MOD_4,
-                                    DIGIT_WORD_IDX1,
+                                    DIGIT_WORD_IDX1_INC,
                                 >
                             {
                                 #[inline(always)]
                                 fn fetch_msg_or(&self, idx: usize, lane: usize) -> u32 {
                                     if idx == DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 {
                                         self.lane_0_or_value[lane]
-                                    } else if idx == DIGIT_WORD_IDX1 {
+                                    } else if DIGIT_WORD_IDX1_INC && idx == DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 + 1 {
                                         self.lane_1_or_value[lane]
                                     } else {
                                         0
@@ -923,13 +924,13 @@ impl Solver for SingleBlockSolver {
                                 'a,
                                 const DIGIT_WORD_IDX0_DIV_4: usize,
                                 const DIGIT_WORD_IDX0_MOD_4: usize,
-                                const DIGIT_WORD_IDX1: usize,
+                                const DIGIT_WORD_IDX1_INC: bool,
                             > sha256::sha_ni::Plucker
                                 for LaneIdPlucker<
                                     'a,
                                     DIGIT_WORD_IDX0_DIV_4,
                                     DIGIT_WORD_IDX0_MOD_4,
-                                    DIGIT_WORD_IDX1,
+                                    DIGIT_WORD_IDX1_INC,
                                 >
                             {
                                 #[inline(always)]
@@ -990,19 +991,10 @@ impl Solver for SingleBlockSolver {
                                 }
                             }
 
-                            for inner_key in 0..10_000_000 {
-                                let mut key_copy = inner_key;
-                                {
-                                    let message_bytes = decompose_blocks_mut(&mut this.message);
+                            #[cfg(target_feature = "avx2")]
+                            let mut itoa_buf = Align16(*b"0000\x80000");
 
-                                    for i in (0..7).rev() {
-                                        let output = key_copy % 10;
-                                        key_copy /= 10;
-                                        *message_bytes.get_unchecked_mut(
-                                            *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + i + 2),
-                                        ) = output as u8 + b'0';
-                                    }
-                                }
+                            for next_inner_key in 1..=10_000_000 {
 
                                 let mut state0 = prepared_state;
                                 let mut state1 = prepared_state;
@@ -1015,7 +1007,7 @@ impl Solver for SingleBlockSolver {
                                     LaneIdPlucker::<
                                         DIGIT_WORD_IDX0_DIV_4,
                                         DIGIT_WORD_IDX0_MOD_4,
-                                        DIGIT_WORD_IDX1,
+                                        DIGIT_WORD_IDX1_INC,
                                     > {
                                         lane_0_or_value: &lane_id_0_or_value,
                                         lane_1_or_value: &lane_id_1_or_value,
@@ -1057,7 +1049,40 @@ impl Solver for SingleBlockSolver {
                                         ) = (nonce_prefix % 10) as u8 + b'0';
                                     }
 
-                                    return Some(nonce_prefix as u64 * 10u64.pow(7) + inner_key);
+                                    return Some(nonce_prefix as u64 * 10u64.pow(7) + next_inner_key - 1);
+                                }
+
+                                #[cfg(target_feature = "avx2")]
+                                {
+                                    if ON_REGISTER_BOUNDARY {
+                                        strings::simd_itoa8::<7, true, 0x80>(
+                                            this.message.as_mut_ptr().add(DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 + 1).cast::<Align16<[u8; 8]>>().as_mut().unwrap(),
+                                            next_inner_key as u32);
+                                    } else {
+                                        strings::simd_itoa8::<7, false, 0x80>(&mut itoa_buf, next_inner_key as u32);
+                                        for i in 0..7 {
+                                            let message_bytes = decompose_blocks_mut(&mut this.message);
+                                            *message_bytes.get_unchecked_mut(
+                                                *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + i + 2),
+                                            ) = itoa_buf[i];
+                                        }
+                                    }
+                                }
+
+                                #[cfg(not(target_feature = "avx2"))]
+                                {
+                                    let mut key_copy = next_inner_key;
+                                    {
+                                        let message_bytes = decompose_blocks_mut(&mut this.message);
+
+                                        for i in (0..7).rev() {
+                                            let output = key_copy % 10;
+                                            key_copy /= 10;
+                                            *message_bytes.get_unchecked_mut(
+                                                *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.digit_index + i + 2),
+                                            ) = output as u8 + b'0';
+                                        }
+                                    }
                                 }
 
                                 this.attempted_nonces += 4;
@@ -1073,51 +1098,22 @@ impl Solver for SingleBlockSolver {
                 let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
 
                 macro_rules! dispatch {
+                    ($idx0_0:literal, $idx0_1:literal, $idx0_2:literal, $lane_id_1_word_idx_inc:literal) => {
+                        if self.digit_index % 4 == 2 {
+                            solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, { $lane_id_1_word_idx_inc }, UPWARDS, true>(
+                                self, compact_target,
+                            )
+                        } else {
+                            solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, { $lane_id_1_word_idx_inc }, UPWARDS, false>(
+                                self, compact_target,
+                            )
+                        }
+                    };
                     ($idx0_0:literal, $idx0_1:literal, $idx0_2:literal) => {
-                        match lane_id_1_word_idx {
-                            0 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 0, UPWARDS>(
-                                self, compact_target,
-                            ),
-                            1 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 1, UPWARDS>(
-                                self, compact_target,
-                            ),
-                            2 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 2, UPWARDS>(
-                                self, compact_target,
-                            ),
-                            3 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 3, UPWARDS>(
-                                self, compact_target,
-                            ),
-                            4 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 4, UPWARDS>(
-                                self, compact_target,
-                            ),
-                            5 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 5, UPWARDS>(
-                                self, compact_target,
-                            ),
-                            6 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 6, UPWARDS>(
-                                self, compact_target,
-                            ),
-                            7 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 7, UPWARDS>(
-                                self, compact_target,
-                            ),
-                            8 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 8, UPWARDS>(
-                                self, compact_target,
-                            ),
-                            9 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 9, UPWARDS>(
-                                self, compact_target,
-                            ),
-                            10 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 10, UPWARDS>(
-                                self, compact_target,
-                            ),
-                            11 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 11, UPWARDS>(
-                                self, compact_target,
-                            ),
-                            12 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 12, UPWARDS>(
-                                self, compact_target,
-                            ),
-                            13 => solve_inner::<{ $idx0_0 }, { $idx0_1 }, { $idx0_2 }, 13, UPWARDS>(
-                                self, compact_target,
-                            ),
-                            _ => core::hint::unreachable_unchecked(),
+                        if lane_id_1_word_idx == lane_id_0_word_idx {
+                            dispatch!($idx0_0, $idx0_1, $idx0_2, false)
+                        } else {
+                            dispatch!($idx0_0, $idx0_1, $idx0_2, true)
                         }
                     };
                 }
