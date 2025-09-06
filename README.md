@@ -70,13 +70,13 @@ Speedup against official solution, reported by Criterion.rs, single-threaded:
 Results on AMD Ryzen 9 7950X, 32 cores, when supported, single-hash number comes first (there is 90% chance your deployment is single-hash, this vagueness is IMO design oversight by the mCaptcha team), double-hash number comes second, all numbers are in milliseconds, compiled with `-Ctarget-cpu=native` unless otherwise specified.
 
 
-| DFactor    | AVX-512       | Safe Optimized (+) [^1] | Official (+)  | Official Generic x64 (+) | User Survey extrapolated [^2] |
-| ---------- | ------------- | ----------------------- | ------------- | ------------------------ | ----------------------------- |
-| 50_000     | 0.554/0.953   | 1.565                   | 2.851/4.009   | 5.600/9.537              | 14.556                        |
-| 100_000    | 1.105/1.903   | 3.172                   | 5.698/7.817   | 11.152/18.575            | 29.11176                      |
-| 1_000_000  | 11.138/18.515 | 31.622                  | 54.931/80.029 | 117.34/188.41            | 291.118                       |
-| 4_000_000  | 46.136/75.630 | 125.06                  | 222.93/323.70 | 432.81/777.88            | 1164.471                      |
-| 10_000_000 | 107.49/186.01 | 323.06                  | 564.41/805.02 | DNS                      | 2911.18                       |
+| DFactor (equiv. Anubis difficulty) | AVX-512       | Safe Optimized (+) [^1] | Official (+)  | Official Generic x64 (+) | User Survey extrapolated [^2] |
+| ---------------------------------- | ------------- | ----------------------- | ------------- | ------------------------ | ----------------------------- |
+| 50_000 (3.90)                      | 0.554/0.953   | 1.565                   | 2.851/4.009   | 5.600/9.537              | 14.556                        |
+| 100_000 (4.15)                     | 1.105/1.903   | 3.172                   | 5.698/7.817   | 11.152/18.575            | 29.11176                      |
+| 1_000_000 (4.98)                   | 11.138/18.515 | 31.622                  | 54.931/80.029 | 117.34/188.41            | 291.118                       |
+| 4_000_000 (5.48)                   | 46.136/75.630 | 125.06                  | 222.93/323.70 | 432.81/777.88            | 1164.471                      |
+| 10_000_000 (5.81)                  | 107.49/186.01 | 323.06                  | 564.41/805.02 | DNS                      | 2911.18                       |
 
 (+) = SNA-NI and a standard SHA-256 implementation is used.
 
