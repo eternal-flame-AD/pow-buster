@@ -182,6 +182,11 @@ pub const fn compute_target(difficulty_factor: u32) -> u128 {
     u128::MAX - u128::MAX / difficulty_factor as u128
 }
 
+/// Compute the target for an mCaptcha PoW
+pub const fn compute_target_64(difficulty_factor: u64) -> u128 {
+    u128::MAX - u128::MAX / difficulty_factor as u128
+}
+
 /// Compute the target for an Anubis PoW
 pub const fn compute_target_anubis(difficulty_factor: NonZeroU8) -> u128 {
     1u128 << (128 - difficulty_factor.get() * 4)
@@ -509,8 +514,11 @@ impl Solver for SingleBlockSolver {
 
     cfg_if::cfg_if! {
         if #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))] {
-            #[inline(never)]
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                if self.attempted_nonces >= self.limit {
+                    return None;
+                }
+
                 // the official default difficulty is 5e6, so we design for 1e8
                 // and there should almost always be a valid solution within our supported solution space
                 // pgeom(5 * 16e7, 1/5e7, lower=F) = 0.03%
@@ -530,6 +538,7 @@ impl Solver for SingleBlockSolver {
                 }
 
                 // make sure there are no runtime "register indexing" logic
+                #[inline(never)]
                 fn solve_inner<
                     const DIGIT_WORD_IDX0: usize,
                     const DIGIT_WORD_IDX1_INCREMENT: bool,
@@ -717,7 +726,7 @@ impl Solver for SingleBlockSolver {
                                     return Some(nonce_prefix as u64 * 10u64.pow(7) + next_inner_key as u64 - 1);
                                 }
 
-                                this.attempted_nonces += 1;
+                                this.attempted_nonces += 16;
 
                                 if ON_REGISTER_BOUNDARY {
                                     strings::simd_itoa8::<7, true, 0x80>(&mut inner_key_buf, next_inner_key);
@@ -771,6 +780,10 @@ impl Solver for SingleBlockSolver {
                 }
 
                 let nonce = loop {
+                    if self.attempted_nonces >= self.limit {
+                        return None;
+                    }
+
                     unsafe {
                         match match lane_id_0_word_idx {
                             0 => dispatch!(0),
@@ -797,8 +810,6 @@ impl Solver for SingleBlockSolver {
                     }
                 };
 
-                self.attempted_nonces *= 16;
-
                 // recompute the hash from the beginning
                 // this prevents the compiler from having to compute the final B-H registers alive in tight loops
                 let mut final_sha_state = self.prefix_state;
@@ -807,7 +818,6 @@ impl Solver for SingleBlockSolver {
                 Some((nonce + self.nonce_addend, final_sha_state))
             }
         } else if #[cfg(all(target_arch = "x86_64", target_feature = "sha"))] {
-            #[inline(never)]
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
                 let lane_id_0_word_idx = self.digit_index / 4;
                 if !is_supported_lane_position(lane_id_0_word_idx) {
@@ -821,6 +831,7 @@ impl Solver for SingleBlockSolver {
 
                 let lane_id_1_word_idx = (self.digit_index + 1) / 4;
 
+                #[inline(never)]
                 fn solve_inner<
                     const DIGIT_WORD_IDX0_DIV_4_TIMES_4: usize,
                     const DIGIT_WORD_IDX0_DIV_4: usize,
@@ -1112,6 +1123,10 @@ impl Solver for SingleBlockSolver {
                 }
 
                 let nonce = loop {
+                    if self.attempted_nonces >= self.limit {
+                        return None;
+                    }
+
                     unsafe {
                         match match lane_id_0_word_idx {
                             0 => dispatch!(0, 0, 0),
@@ -1282,6 +1297,10 @@ impl Solver for SingleBlockSolver {
                 }
 
                 let nonce = loop {
+                    if self.attempted_nonces >= self.limit {
+                        return None;
+                    }
+
                     unsafe {
                         match match lane_id_0_word_idx {
                             0 => dispatch!(0),
@@ -1318,6 +1337,10 @@ impl Solver for SingleBlockSolver {
         } else {
             #[inline(never)]
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                if self.attempted_nonces >= self.limit {
+                    return None;
+                }
+
                 let mut buffer : sha2::digest::crypto_common::Block<sha2::Sha256> = Default::default();
                 for i in 0..16 {
                     buffer[i*4..i*4+4].copy_from_slice(&self.message[i].to_be_bytes());
@@ -1344,7 +1367,7 @@ impl Solver for SingleBlockSolver {
 
                         return Some((key + self.nonce_addend, state));
                     }
-                    self.limit -= 1;
+                    self.attempted_nonces += 1;
                 }
 
                 if !self.next_search_space() {
@@ -1509,6 +1532,10 @@ impl Solver for DoubleBlockSolver {
         if #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))] {
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
                 if !is_supported_lane_position(Self::DIGIT_IDX as usize / 4) {
+                    return None;
+                }
+
+                if self.attempted_nonces >= self.limit {
                     return None;
                 }
 
@@ -1696,6 +1723,10 @@ impl Solver for DoubleBlockSolver {
                     return None;
                 }
 
+                if self.attempted_nonces >= self.limit {
+                    return None;
+                }
+
                 for i in (Self::DIGIT_IDX as usize..).take(9) {
                     let message = decompose_blocks_mut(&mut self.message);
                     message[SWAP_DWORD_BYTE_ORDER[i]] = b'0';
@@ -1873,6 +1904,10 @@ impl Solver for DoubleBlockSolver {
                     return None;
                 }
 
+                if self.attempted_nonces >= self.limit {
+                    return None;
+                }
+
                 for i in (Self::DIGIT_IDX as usize..).take(9) {
                     let message = decompose_blocks_mut(&mut self.message);
                     message[SWAP_DWORD_BYTE_ORDER[i]] = b'0';
@@ -2038,6 +2073,10 @@ impl Solver for DoubleBlockSolver {
         } else {
             #[inline(never)]
             fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+                if self.attempted_nonces >= self.limit {
+                    return None;
+                }
+
                 let mut buffer : sha2::digest::crypto_common::Block<sha2::Sha256> = Default::default();
                 for i in 0..16 {
                     buffer[i*4..i*4+4].copy_from_slice(&self.message[i].to_be_bytes());
@@ -2083,6 +2122,12 @@ impl Solver for DoubleBlockSolver {
                         let mut state = self.prefix_state;
                         sha2::compress256(&mut state, &[buffer, buffer2]);
                         return Some((key as u64 + self.nonce_addend, *state));
+                    }
+
+                    self.attempted_nonces += 1;
+
+                    if self.attempted_nonces >= self.limit {
+                        return None;
                     }
                 }
 

@@ -110,9 +110,6 @@ impl AppState {
                             .latency_unit(tower_http::LatencyUnit::Micros),
                     ),
             )
-            .layer(tower_http::timeout::TimeoutLayer::new(
-                std::time::Duration::from_secs(5),
-            ))
             .layer(tower_http::catch_panic::CatchPanicLayer::new())
             .layer(axum::middleware::from_fn(add_headers))
             .with_state(self.clone())
@@ -440,7 +437,7 @@ async fn solve_anubis(
 }
 
 async fn add_headers(req: Request<Body>, next: Next) -> Response {
-    let mut response = next.run(req).await;
+    let response = next.run(req).await;
     response
 }
 

@@ -11,7 +11,7 @@ use std::{
 use clap::{Parser, Subcommand};
 
 use simd_mcaptcha::{
-    DoubleBlockSolver, GoAwaySolver, SingleBlockSolver, Solver, compute_target,
+    DoubleBlockSolver, GoAwaySolver, SingleBlockSolver, Solver, compute_target_64,
     compute_target_anubis,
 };
 
@@ -78,16 +78,24 @@ enum SubCommand {
         #[clap(short, long, default_value = "2")]
         n_workers: usize,
 
+        #[clap(
+            short,
+            long,
+            default_value = "5000",
+            help = "request timeout in milliseconds"
+        )]
+        timeout: u64,
+
         #[clap(long)]
         check_origin: Option<String>,
     },
     Profile {
         #[clap(short, long, default_value = "10000000")]
-        difficulty: u32,
+        difficulty: u64,
     },
     ProfileMt {
         #[clap(short, long, default_value = "10000000")]
-        difficulty: u32,
+        difficulty: u64,
 
         #[clap(long)]
         speed: bool,
@@ -100,7 +108,7 @@ enum SubCommand {
     },
     Time {
         #[clap(short, long, default_value = "10000000")]
-        difficulty: u32,
+        difficulty: u64,
 
         #[cfg(feature = "official")]
         #[clap(long)]
@@ -121,7 +129,7 @@ fn main() {
                 let mut prefix_bytes = [0; 64];
                 prefix_bytes[..8].copy_from_slice(&prefix.to_ne_bytes());
                 let mut solver = SingleBlockSolver::new((), &prefix_bytes).expect("solver is None");
-                let target = compute_target(difficulty);
+                let target = compute_target_64(difficulty);
                 let target_bytes = target.to_be_bytes();
                 let target_u32s = core::array::from_fn(|i| {
                     u32::from_be_bytes([
@@ -149,7 +157,7 @@ fn main() {
             let counter = Arc::new(AtomicU64::new(0));
 
             let (target, expected_iters) = if difficulty > 32 {
-                (compute_target(difficulty), difficulty)
+                (compute_target_64(difficulty), difficulty)
             } else {
                 (
                     compute_target_anubis(NonZeroU8::new(difficulty as u8).unwrap()),
@@ -230,7 +238,7 @@ fn main() {
             #[cfg(feature = "official")]
             test_official,
         } => {
-            let target = compute_target(difficulty);
+            let target = compute_target_64(difficulty);
             let target_bytes = target.to_be_bytes();
             let target_u32s = core::array::from_fn(|i| {
                 u32::from_be_bytes([
@@ -314,7 +322,7 @@ fn main() {
                 total_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0
             );
             #[cfg(feature = "official")]
-            if test_official {
+            if test_official && let Ok(difficulty) = difficulty.try_into() {
                 let solver = pow_sha256::ConfigBuilder::default()
                     .salt("x".to_string())
                     .build()
@@ -566,9 +574,10 @@ fn main() {
         #[cfg(feature = "server")]
         SubCommand::Server {
             addr,
-            limit,
+            mut limit,
             n_workers,
             check_origin,
+            timeout,
         } => {
             use tracing::level_filters::LevelFilter;
             use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -582,7 +591,11 @@ fn main() {
                 )
                 .init();
 
-            let app = match check_origin {
+            if limit == 0 {
+                limit = u64::MAX;
+            }
+
+            let mut app = match check_origin {
                 Some(check_origin) => {
                     let expected_origin = url::Url::parse(&check_origin).unwrap();
                     simd_mcaptcha::server::AppState::new(n_workers, limit)
@@ -590,6 +603,12 @@ fn main() {
                 }
                 None => simd_mcaptcha::server::AppState::new(n_workers, limit).router(),
             };
+
+            if timeout > 0 {
+                app = app.layer(tower_http::timeout::TimeoutLayer::new(
+                    std::time::Duration::from_millis(timeout),
+                ));
+            }
 
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
