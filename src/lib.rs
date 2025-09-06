@@ -480,9 +480,6 @@ impl Solver for SingleBlockSolver {
                         core::array::from_fn(|i| this.message[i]),
                     );
 
-                    #[cfg(feature = "compare-64bit")]
-                    let feedback_ab = (this.prefix_state[0] as u64) << 32 | (this.prefix_state[1] as u64);
-
                     let mut remaining_limit = this.limit;
 
                     let lane_id_0_byte_idx = this.digit_index % 4;
