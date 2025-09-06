@@ -4,41 +4,6 @@ use crate::Align16;
 #[cfg(target_feature = "avx512f")]
 use crate::Align64;
 
-const MAGIC_NUMBERS: [MagicNumber; 8] = [
-    find_magic_number(NonZeroU32::new(1).unwrap()),
-    find_magic_number(NonZeroU32::new(10).unwrap()),
-    find_magic_number(NonZeroU32::new(100).unwrap()),
-    find_magic_number(NonZeroU32::new(1000).unwrap()),
-    find_magic_number(NonZeroU32::new(10000).unwrap()),
-    find_magic_number(NonZeroU32::new(100000).unwrap()),
-    find_magic_number(NonZeroU32::new(1000000).unwrap()),
-    find_magic_number(NonZeroU32::new(10000000).unwrap()),
-];
-
-#[cfg(target_feature = "avx512f")]
-static DIV_BY_10_MULTIPLIERS: Align64<[u64; 8]> = Align64([
-    MAGIC_NUMBERS[0].m as u64,
-    MAGIC_NUMBERS[1].m as u64,
-    MAGIC_NUMBERS[2].m as u64,
-    MAGIC_NUMBERS[3].m as u64,
-    MAGIC_NUMBERS[4].m as u64,
-    MAGIC_NUMBERS[5].m as u64,
-    MAGIC_NUMBERS[6].m as u64,
-    MAGIC_NUMBERS[7].m as u64,
-]);
-
-#[cfg(target_feature = "avx512f")]
-static DIV_BY_10_SHIFTS: Align64<[u64; 8]> = Align64([
-    (MAGIC_NUMBERS[0].s + 32) as u64,
-    (MAGIC_NUMBERS[1].s + 32) as u64,
-    (MAGIC_NUMBERS[2].s + 32) as u64,
-    (MAGIC_NUMBERS[3].s + 32) as u64,
-    (MAGIC_NUMBERS[4].s + 32) as u64,
-    (MAGIC_NUMBERS[5].s + 32) as u64,
-    (MAGIC_NUMBERS[6].s + 32) as u64,
-    (MAGIC_NUMBERS[7].s + 32) as u64,
-]);
-
 #[derive(Debug, Clone, Copy)]
 struct MagicNumber {
     m: i32,
@@ -51,6 +16,7 @@ impl MagicNumber {
     }
 
     #[inline(always)]
+    #[allow(unused)]
     const fn divide(self, n: u32) -> u32 {
         let mut t = n;
         t = ((t as u64).wrapping_mul(self.m as u64) >> 32) as u32;
@@ -97,6 +63,41 @@ const fn find_magic_number(d: NonZeroU32) -> MagicNumber {
 
     MagicNumber::new((q2 + 1) as i32, p - 32)
 }
+
+const MAGIC_NUMBERS: [MagicNumber; 8] = [
+    find_magic_number(NonZeroU32::new(1).unwrap()),
+    find_magic_number(NonZeroU32::new(10).unwrap()),
+    find_magic_number(NonZeroU32::new(100).unwrap()),
+    find_magic_number(NonZeroU32::new(1000).unwrap()),
+    find_magic_number(NonZeroU32::new(10000).unwrap()),
+    find_magic_number(NonZeroU32::new(100000).unwrap()),
+    find_magic_number(NonZeroU32::new(1000000).unwrap()),
+    find_magic_number(NonZeroU32::new(10000000).unwrap()),
+];
+
+#[cfg(target_feature = "avx512f")]
+static DIV_BY_10_MULTIPLIERS: Align64<[u64; 8]> = Align64([
+    MAGIC_NUMBERS[0].m as u64,
+    MAGIC_NUMBERS[1].m as u64,
+    MAGIC_NUMBERS[2].m as u64,
+    MAGIC_NUMBERS[3].m as u64,
+    MAGIC_NUMBERS[4].m as u64,
+    MAGIC_NUMBERS[5].m as u64,
+    MAGIC_NUMBERS[6].m as u64,
+    MAGIC_NUMBERS[7].m as u64,
+]);
+
+#[cfg(target_feature = "avx512f")]
+static DIV_BY_10_SHIFTS: Align64<[u64; 8]> = Align64([
+    (MAGIC_NUMBERS[0].s + 32) as u64,
+    (MAGIC_NUMBERS[1].s + 32) as u64,
+    (MAGIC_NUMBERS[2].s + 32) as u64,
+    (MAGIC_NUMBERS[3].s + 32) as u64,
+    (MAGIC_NUMBERS[4].s + 32) as u64,
+    (MAGIC_NUMBERS[5].s + 32) as u64,
+    (MAGIC_NUMBERS[6].s + 32) as u64,
+    (MAGIC_NUMBERS[7].s + 32) as u64,
+]);
 
 struct ComputeMask<const N: usize, const PLACEHOLDER: u8>;
 

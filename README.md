@@ -17,7 +17,7 @@
   - [Security Implications](#security-implications)
   - [Future Work (i.e. Okay, so what would be a good PoW then?)](#future-work-ie-okay-so-what-would-be-a-good-pow-then)
   - [Contributing / Wishlist](#contributing--wishlist)
-  - [License](#license)
+  - [License and Acknowledgments](#license-and-acknowledgments)
   - [AI Disclaimer](#ai-disclaimer)
 
 A fast, adversarially implemented mCaptcha/Anubis/go-away PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features without wasting energy in the browser.
@@ -221,11 +221,13 @@ Contributions are welcome, roughly in priority order we want:
 2. Would be nice to have a real WebGPU solution that runs side-by-side with the current real Captcha widget.
 3. An AVX-2 solution and corresponding benchmark. (low priority as this isn't really a "product")
 
-## License
+## License and Acknowledgments
 
 This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
 
-This project contains some copy pasted or minimally modified code from the [sha2](https://crates.io/crates/sha2) crate, in the core SHA-2 routine in [sha256.rs](src/sha256.rs).
+This project contains some copy pasted or minimally modified/transpiled code from:
+- the [sha2](https://crates.io/crates/sha2) crate, in the core SHA-2 routine in [sha256.rs](src/sha256.rs).
+- milakov's [int_fastdiv](https://github.com/milakov/int_fastdiv), in [strings.rs](src/strings.rs).
 
 ## AI Disclaimer
 
