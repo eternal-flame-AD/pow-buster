@@ -34,13 +34,33 @@ mod sha256;
 /// Implementations considered "safe" for production use
 pub mod safe;
 
+#[cfg(feature = "adapter")]
 mod adapter;
 
 #[cfg(all(not(doc), not(target_arch = "x86_64"), not(target_arch = "wasm32")))]
 compile_error!("Only x86_64 and wasm32 are supported");
 
-#[cfg(all(not(doc), target_arch = "wasm32", not(target_feature = "simd128")))]
-compile_error!("SIMD128 extensions required. Compile with -Ctarget-feature=+simd128");
+#[cfg(all(
+    not(doc),
+    target_arch = "x86_64",
+    not(feature = "ignore-target-feature-checks"),
+    any(target_feature = "avx512f", target_feature = "sha")
+))]
+compile_error!(concat!(
+    "AVX512F or SHA is required for performance. Compile with -Ctarget-feature=+avx512f or -Ctarget-feature=+sha, ",
+    "alternatively pass --features ignore-target-feature-checks to build a slow reference implementation."
+));
+
+#[cfg(all(
+    not(doc),
+    target_arch = "wasm32",
+    not(feature = "ignore-target-feature-checks"),
+    not(target_feature = "simd128")
+))]
+compile_error!(concat!(
+    "SIMD128 extensions required. Compile with -Ctarget-feature=+simd128, ",
+    "alternatively pass --features ignore-target-feature-checks to build a slow reference implementation."
+));
 
 #[repr(align(16))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

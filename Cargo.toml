@@ -97,6 +97,7 @@ lane-position-13 = []
 lane-position-14 = []
 lane-position-15 = []
 server-wasm = ["server", "dep:rust-embed"]
+ignore-target-feature-checks = []
 
 [[bin]]
 name = "simd-mcaptcha"

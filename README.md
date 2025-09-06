@@ -5,6 +5,7 @@
 - [PoW Buster](#pow-buster)
   - [Table of Contents](#table-of-contents)
   - [Why?](#why)
+  - [Building](#building)
   - [Limitations](#limitations)
   - [Ethical Disclaimer (i.e. the "How Dare you Publish this?" question)](#ethical-disclaimer-ie-the-how-dare-you-publish-this-question)
   - [Benchmark](#benchmark)
@@ -35,14 +36,50 @@ I personally don't like some projects put themselves at the ethical high ground 
 
 [A longer blabbing post regarding this](https://mi.yumechi.jp/notes/aa223tk8c5ao02v9)
 
+## Building
+
+Requires AVX-512 (cpuid: `avx512f`) or SHA-NI (cpuid: `sha`) CPU or SIMD128 on WASM. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard). There is a pure Rust scalar fallback that should make the code compile and work regardless.
+
+```sh
+RUSTFLAGS="-Ctarget-cpu=native" cargo build --release --features cli
+```
+
+Optional Features:
+
+- `client`: End-to-end solver client, required for most non-computational functionality.
+- `live-throughput-test`: End-to-end multi-worker throughput benchmark.
+- `server`: Solver-as-a-Service API.
+- `server-wasm`: Solver-as-a-Service API (with WASM simd128 solver, build first with `./build_wasm.sh`).
+
+Demo:
+
+```sh
+> time target/release/simd-mcaptcha anubis --url https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/diff/
+
+set-cookie: techaro.lol-anubis-auth=eyJeyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.ey<...>
+
+________________________________________________________
+Executed in  491.36 millis    fish           external
+   usr time    7.08 millis  390.00 micros    6.69 millis
+   sys time    8.95 millis  114.00 micros    8.83 millis
+```
+
+```sh
+> target/release/simd-mcaptcha server & # require `server` feature
+> curl --data-urlencode challenge='{"rules":{"algorithm":"fast","difficulty":6,"report_as":6},"challenge":"xxxxxx"}' localhost:8080/solve
+
+// elapsed time: 29ms; attempted nonces: 2535920; 81.04 MH/s; 1.27% limit used
+window.location.replace("/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime=2476&response=000000434df465134b51abbde017562b007c8239764d9fdce61817b4c306d304&nonce=11111111140158495&redir=" + encodeURIComponent(window.location.href));
+```
+
 ## Limitations
 
 We assume you have a relatively modern and powerful platform, specifically:
 
 - A cold optimized build with end-to-end features may take up to 5 minutes as this program aggressively generates specialized kernels and build time isn't my priority.
-- Requires AVX-512 or SHA-NI CPU or simd128 on WASM. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard). There is a pure Rust scalar fallback that should make the code compile and work regardless.
 - For Anubis target, this assumes the server is 64-bit (i.e. is able to accept a signed 64-bit nonce).
 - AVX-512 build requires Rust 1.89 or later.
+- All solvers are single-threaded and are intended to be scaled up using multiple workers optionally pinned to specific cores.
 - This is designed for "low", practical-for-a-website difficulty settings, A $1 - P_{geom}(80e7, 1/\text{difficulty})$ chance of failure for any particular challenge, which for 1e8 (takes about 10 seconds on a browser for mCaptcha and an eternity for Anubis) is about 0.03%. Go-away solver explores the full solution space and guarantees a solution if one exists.
 
 ## Ethical Disclaimer (i.e. the "How Dare you Publish this?" question)

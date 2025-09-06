@@ -1,14 +1,20 @@
 {
     "rust-analyzer.cargo.features": [
         "client",
+        "server",
+        "server-wasm",
+        "live-throughput-test",
         "cli",
         "official",
-        "rayon"
+        "rayon",
+        "wasm-bindgen",
+        "ignore-target-feature-checks"
     ],
     "rust-analyzer.cargo.cfgs": [
         "debug_assertions",
         "miri"
     ],
+    // "rust-analyzer.cargo.target": "wasm32-unknown-unknown",
     "rust-analyzer.cargo.extraEnv": {
         "RUSTFLAGS": "-C target-feature=+avx512f"
     }
