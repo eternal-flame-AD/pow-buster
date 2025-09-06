@@ -671,24 +671,29 @@ impl Solver for SingleBlockSolver {
                                 let met_target = cmp_fn(state[0], _mm512_set1_epi32(target as _));
 
                                 #[cfg(feature = "compare-64bit")]
-                                let met_target = {
+                                let (met_target_high, met_target_lo) = {
                                     let ab_met_target_lo =
                                         cmp64_fn(result_ab_lo, _mm512_set1_epi64(target as _)) as u16;
 
                                     let ab_met_target_high =
                                         cmp64_fn(result_ab_hi, _mm512_set1_epi64(target as _)) as u16;
 
-                                    ab_met_target_high << 8 | ab_met_target_lo
+                                    (ab_met_target_high, ab_met_target_lo)
                                 };
+                                #[cfg(feature = "compare-64bit")]
+                                let met_target_test = met_target_high != 0 || met_target_lo != 0;
+                                #[cfg(not(feature = "compare-64bit"))]
+                                let met_target_test = met_target != 0;
 
-                                if met_target != 0 {
+                                if met_target_test {
                                     unlikely();
 
+                                    #[cfg(not(feature = "compare-64bit"))]
                                     let success_lane_idx = _tzcnt_u16(met_target) as usize;
 
                                     // remap the indices according to unpacking order
                                     #[cfg(feature = "compare-64bit")]
-                                    let success_lane_idx = INDEX_REMAP_PUNPCKLDQ[success_lane_idx];
+                                    let success_lane_idx = INDEX_REMAP_PUNPCKLDQ[_tzcnt_u16(met_target_high << 8 | met_target_lo) as usize];
 
                                     let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
 
@@ -1611,21 +1616,28 @@ impl Solver for DoubleBlockSolver {
                             #[cfg(feature = "compare-64bit")]
                             let result_ab_hi = _mm512_unpackhi_epi32(state[1], state[0]);
                             #[cfg(feature = "compare-64bit")]
-                            let met_target = {
+                            let (met_target_high, met_target_lo) = {
                                 let ab_met_target_lo =
                                     cmp64_fn(result_ab_lo, _mm512_set1_epi64(feedback_ab as _)) as u16;
                                 let ab_met_target_high =
                                     cmp64_fn(result_ab_hi, _mm512_set1_epi64(feedback_ab as _)) as u16;
-                                ab_met_target_high << 8 | ab_met_target_lo
+                                (ab_met_target_high, ab_met_target_lo)
                             };
 
-                            if met_target != 0 {
+                            #[cfg(feature = "compare-64bit")]
+                            let met_target_test = met_target_high != 0 || met_target_lo != 0;
+
+                            #[cfg(not(feature = "compare-64bit"))]
+                            let met_target_test = met_target != 0;
+
+                            if met_target_test {
                                 unlikely();
 
+                                #[cfg(not(feature = "compare-64bit"))]
                                 let success_lane_idx = _tzcnt_u16(met_target) as usize;
 
                                 #[cfg(feature = "compare-64bit")]
-                                let success_lane_idx = INDEX_REMAP_PUNPCKLDQ[success_lane_idx];
+                                let success_lane_idx = INDEX_REMAP_PUNPCKLDQ[_tzcnt_u16(met_target_high << 8 | met_target_lo) as usize];
 
                                 let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
 
@@ -2231,21 +2243,27 @@ impl Solver for GoAwaySolver {
                             #[cfg(feature = "compare-64bit")]
                             let result_ab_hi = _mm512_unpackhi_epi32(state[1], state[0]);
                             #[cfg(feature = "compare-64bit")]
-                            let met_target = {
+                            let (met_target_high, met_target_lo) = {
                                 let ab_met_target_lo =
                                     cmp_fn(result_ab_lo, _mm512_set1_epi64(compact_target as _)) as u16;
                                 let ab_met_target_high =
                                     cmp_fn(result_ab_hi, _mm512_set1_epi64(compact_target as _)) as u16;
-                                ab_met_target_high << 8 | ab_met_target_lo
+                                (ab_met_target_high, ab_met_target_lo)
                             };
 
-                            if met_target != 0 {
+                            #[cfg(feature = "compare-64bit")]
+                            let met_target_test = met_target_high != 0 || met_target_lo != 0;
+                            #[cfg(not(feature = "compare-64bit"))]
+                            let met_target_test = met_target != 0;
+
+                            if met_target_test {
                                 unlikely();
 
+                                #[cfg(not(feature = "compare-64bit"))]
                                 let success_lane_idx = _tzcnt_u16(met_target);
 
                                 #[cfg(feature = "compare-64bit")]
-                                let success_lane_idx = INDEX_REMAP_PUNPCKLDQ[success_lane_idx as usize];
+                                let success_lane_idx = INDEX_REMAP_PUNPCKLDQ[_tzcnt_u16(met_target_high << 8 | met_target_lo) as usize];
 
                                 let mut output_msg: [u32; 16] = [0; 16];
 
