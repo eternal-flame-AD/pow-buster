@@ -34,6 +34,10 @@ rust-embed = { version = "8.7", optional = true, features = ["mime-guess"] }
 opt-level = 3
 panic = "abort"
 
+[profile.release-unwinding]
+inherits = "release"
+panic = "unwind"
+
 [dev-dependencies]
 bincode = "1.3"
 pow_sha256 = { git = "https://github.com/mcaptcha/pow_sha256", tag = "0.3.1" }

@@ -58,7 +58,7 @@ Optional Features:
 - `compare-64bit`: Compare 64-bit words instead of 32-bit words at ~5% penalty, almost never needed for realistic challenges. Not compatible with WASM.
 - `client`: End-to-end solver client, required for most non-computational functionality.
 - `live-throughput-test`: End-to-end multi-worker throughput benchmark.
-- `server`: Solver-as-a-Service API.
+- `server`: Solver-as-a-Service API. It is recommended to also use `--profile release-unwinding` instead of `--release` to prevent unexpected panics from aborting the server.
 - `server-wasm`: Solver-as-a-Service API (with WASM simd128 solver, build first with `./build_wasm.sh`).
 
 Demo:
