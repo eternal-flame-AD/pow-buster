@@ -49,6 +49,13 @@ I personally don't like some projects put themselves at the ethical high ground 
 
 Requires AVX-512 (cpuid: `avx512f`) or SHA-NI+SSE4.1 (cpuid: `sha`, `sse4_1`) CPU or SIMD128 on WASM. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard). There is a pure Rust scalar fallback that should make the code compile and work regardless.
 
+Recommended CPU feature flags in order of preference:
+
+- `-Ctarget-cpu=native`
+- `-Ctarget-feature=+avx512f`
+- `-Ctarget-feature=+sha,+avx2`
+- `-Ctarget-feature=+sha,+sse4_1`
+
 ```sh
 RUSTFLAGS="-Ctarget-cpu=native" cargo build --release --features cli
 ```
@@ -231,7 +238,7 @@ For us we have single thread:
 
 | Workload                         | AVX-512 [log](time.txt) | SHA-NI [log](time_sha-ni.txt) | Chromium SIMD128 [log](time_simd128.txt) |
 | -------------------------------- | ----------------------- | ----------------------------- | ---------------------------------------- |
-| SingleBlock/Anubis               | 85.75 MH/s              | 52.19 MH/s                    | 14.74 MH/s                               |
+| SingleBlock/Anubis               | 85.75 MH/s              | 62.19 MH/s                    | 14.74 MH/s                               |
 | DoubleBlock (mCaptcha edge case) | 52.30 MH/s              | 42.55 MH/s                    | Not Tested                               |
 | go-away (16 bytes)               | 97.87 MH/s              | 78.10 MH/s                    | Not Tested                               |
 
