@@ -10,10 +10,12 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
-use reqwest::StatusCode;
 use tokio::sync::Semaphore;
 
-use crate::{Align16, adapter::AnubisChallengeDescriptor, client::GoAwayConfig};
+use crate::{
+    Align16,
+    adapter::{AnubisChallengeDescriptor, GoAwayConfig},
+};
 
 #[cfg(feature = "server-wasm")]
 mod assets {
@@ -92,6 +94,14 @@ impl AppState {
         }
     }
 
+    pub const fn effective_limit(&self) -> u64 {
+        let cap = match cfg!(feature = "compare-64bit") {
+            true => u64::MAX,
+            false => u32::MAX as u64,
+        };
+        if self.limit > cap { cap } else { self.limit }
+    }
+
     pub fn router(&self) -> Router {
         Router::new()
             .route("/", get(index))
@@ -136,6 +146,9 @@ enum SolveError {
     #[error("solver failed or server limit reached")]
     SolverFailed { limit: u64, attempted: u64 },
 
+    #[error("estimated workload is greater than server limit")]
+    EstimatedWorkloadGreaterThanLimit { limit: u64, estimated: u64 },
+
     #[error("solver fatal error")]
     SolverFatal,
 
@@ -159,9 +172,9 @@ impl IntoResponse for SolveError {
             message: String,
         }
         let (code, message, ty) = match self {
-            SolveError::Json(e) => (StatusCode::BAD_REQUEST, e.to_string(), "json"),
+            SolveError::Json(e) => (axum::http::StatusCode::BAD_REQUEST, e.to_string(), "json"),
             SolveError::SolverFailed { limit, attempted } => (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 format!(
                     "solver failed or server limit reached: limit: {}, attempted: {}",
                     limit, attempted
@@ -169,24 +182,32 @@ impl IntoResponse for SolveError {
                 "solver_failed",
             ),
             SolveError::SolverFatal => (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "solver fatal error".to_string(),
                 "solver_fatal",
             ),
             SolveError::UnexpectedOrigin => (
-                StatusCode::FORBIDDEN,
+                axum::http::StatusCode::FORBIDDEN,
                 "unexpected origin".to_string(),
                 "unexpected_origin",
             ),
             SolveError::InvalidChallenge => (
-                StatusCode::BAD_REQUEST,
+                axum::http::StatusCode::BAD_REQUEST,
                 "invalid challenge".to_string(),
                 "invalid_challenge",
             ),
             SolveError::UnexpectedChallengeFormat => (
-                StatusCode::NOT_IMPLEMENTED,
+                axum::http::StatusCode::NOT_IMPLEMENTED,
                 "unexpected challenge format".to_string(),
                 "unexpected_challenge_format",
+            ),
+            SolveError::EstimatedWorkloadGreaterThanLimit { limit, estimated } => (
+                axum::http::StatusCode::BAD_REQUEST,
+                format!(
+                    "estimated workload is greater than server limit: limit: {}, estimated: {}",
+                    limit, estimated
+                ),
+                "estimated_workload_greater_than_limit",
             ),
         };
         (
@@ -244,6 +265,14 @@ async fn solve_goaway(
 
     let mut goaway_token = Align16([b'0'; 64 + 8 * 2]);
     goaway_token[..64].copy_from_slice(config.challenge().as_bytes());
+
+    let estimated_workload = config.estimated_workload();
+    if estimated_workload > state.effective_limit() {
+        return Err(SolveError::EstimatedWorkloadGreaterThanLimit {
+            limit: state.effective_limit(),
+            estimated: estimated_workload,
+        });
+    }
 
     let (result, elapsed) = {
         let _permit = state.semaphore.acquire().await.unwrap();
@@ -358,6 +387,14 @@ async fn solve_anubis(
 
     let instant = rules.instant();
     let delay = descriptor.delay();
+
+    let estimated_workload = descriptor.estimated_workload();
+    if estimated_workload > state.effective_limit() {
+        return Err(SolveError::EstimatedWorkloadGreaterThanLimit {
+            limit: state.effective_limit(),
+            estimated: estimated_workload,
+        });
+    }
 
     let ((result, attempted_nonces), elapsed) = if instant {
         let start = std::time::Instant::now();

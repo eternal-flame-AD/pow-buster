@@ -5,7 +5,9 @@ use reqwest::Client;
 use sha2::Digest;
 
 use crate::{
-    Align16, Solver, adapter::AnubisChallengeDescriptor, compute_target, compute_target_goaway,
+    Align16, Solver,
+    adapter::{AnubisChallengeDescriptor, GoAwayConfig},
+    compute_target, compute_target_goaway,
 };
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
@@ -302,43 +304,6 @@ pub async fn solve_anubis_ex(
     Ok(auth_cookie)
 }
 
-#[derive(serde::Deserialize, Debug)]
-pub struct GoAwayConfig {
-    challenge: String,
-    // target: String,
-    difficulty: NonZeroU8,
-}
-
-impl GoAwayConfig {
-    pub fn challenge(&self) -> &str {
-        &self.challenge
-    }
-
-    pub fn estimated_workload(&self) -> u64 {
-        2u64.pow(self.difficulty.get().try_into().unwrap())
-    }
-
-    pub fn solve(&self) -> Option<(u64, [u32; 8])> {
-        self.solve_with_limit(u64::MAX)
-    }
-
-    pub fn solve_with_limit(&self, limit: u64) -> Option<(u64, [u32; 8])> {
-        let target = compute_target_goaway(self.difficulty);
-        let target_bytes = target.to_be_bytes();
-        let target_u32s = core::array::from_fn(|i| {
-            u32::from_be_bytes([
-                target_bytes[i * 4],
-                target_bytes[i * 4 + 1],
-                target_bytes[i * 4 + 2],
-                target_bytes[i * 4 + 3],
-            ])
-        });
-        let mut solver = crate::GoAwaySolver::new((), &self.challenge.as_bytes()).unwrap();
-        solver.set_limit(limit);
-        solver.solve::<false>(target_u32s)
-    }
-}
-
 pub async fn solve_goaway_js_pow_sha256(
     client: &Client,
     base_url: &str,
@@ -363,8 +328,8 @@ pub async fn solve_goaway_js_pow_sha256(
     }
     let config: GoAwayConfig = res.json().await?;
 
-    let mut solver = crate::GoAwaySolver::new((), &config.challenge.as_bytes()).unwrap();
-    let target_bytes = compute_target_goaway(config.difficulty).to_be_bytes();
+    let mut solver = crate::GoAwaySolver::new((), &config.challenge().as_bytes()).unwrap();
+    let target_bytes = compute_target_goaway(config.difficulty()).to_be_bytes();
     let target_u32s = core::array::from_fn(|i| {
         let i = i * 4;
         u32::from_be_bytes([
@@ -375,7 +340,7 @@ pub async fn solve_goaway_js_pow_sha256(
         ])
     });
 
-    let estimated_workload = 1u64 << config.difficulty.get();
+    let estimated_workload = 1u64 << config.difficulty().get();
 
     let (nonce, result) = if really_solve {
         tokio::task::block_in_place(|| {
@@ -399,7 +364,7 @@ pub async fn solve_goaway_js_pow_sha256(
     let plausible_time = estimated_workload / 1024;
 
     let mut goaway_token = Align16([b'0'; 64 + 8 * 2]);
-    goaway_token[..64].copy_from_slice(config.challenge.as_bytes());
+    goaway_token[..64].copy_from_slice(config.challenge().as_bytes());
     let nonce_bytes = nonce.to_be_bytes();
     for i in 0..8 {
         let high_nibble = nonce_bytes[i] >> 4;

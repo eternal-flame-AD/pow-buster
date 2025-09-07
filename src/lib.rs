@@ -557,6 +557,10 @@ impl Solver for SingleBlockSolver {
                         core::array::from_fn(|i| this.message[i]),
                     );
 
+                    if this.attempted_nonces >= this.limit {
+                        return None;
+                    }
+
                     let mut remaining_limit = this.limit.saturating_sub(this.attempted_nonces);
                     if remaining_limit == 0 {
                         return None;
@@ -1274,6 +1278,10 @@ impl Solver for SingleBlockSolver {
                                 }
 
                                 this.attempted_nonces += 4;
+                            }
+
+                            if this.attempted_nonces >= this.limit {
+                                return None;
                             }
                         }
                     }

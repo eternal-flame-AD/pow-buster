@@ -1,4 +1,6 @@
-use crate::{Solver, compute_target_anubis};
+use core::num::NonZeroU8;
+
+use crate::{Solver, compute_target_anubis, compute_target_goaway};
 use alloc::string::String;
 use sha2::Digest;
 
@@ -106,6 +108,7 @@ impl AnubisChallengeDescriptor {
         } else {
             let mut solver =
                 crate::DoubleBlockSolver::new((), self.challenge.as_ref().as_bytes()).unwrap();
+            solver.set_limit(limit);
             let result = solver.solve::<false>(target_u32s);
             let attempted_nonces = solver.get_attempted_nonces();
             (result, attempted_nonces)
@@ -127,5 +130,46 @@ impl AnubisRules {
 
     pub fn algorithm(&self) -> &str {
         &self.algorithm
+    }
+}
+
+#[derive(serde::Deserialize, Debug)]
+pub struct GoAwayConfig {
+    challenge: String,
+    // target: String,
+    difficulty: NonZeroU8,
+}
+
+impl GoAwayConfig {
+    pub fn challenge(&self) -> &str {
+        &self.challenge
+    }
+
+    pub fn difficulty(&self) -> NonZeroU8 {
+        self.difficulty
+    }
+
+    pub fn estimated_workload(&self) -> u64 {
+        2u64.pow(self.difficulty.get().try_into().unwrap())
+    }
+
+    pub fn solve(&self) -> Option<(u64, [u32; 8])> {
+        self.solve_with_limit(u64::MAX)
+    }
+
+    pub fn solve_with_limit(&self, limit: u64) -> Option<(u64, [u32; 8])> {
+        let target = compute_target_goaway(self.difficulty);
+        let target_bytes = target.to_be_bytes();
+        let target_u32s = core::array::from_fn(|i| {
+            u32::from_be_bytes([
+                target_bytes[i * 4],
+                target_bytes[i * 4 + 1],
+                target_bytes[i * 4 + 2],
+                target_bytes[i * 4 + 3],
+            ])
+        });
+        let mut solver = crate::GoAwaySolver::new((), &self.challenge.as_bytes()).unwrap();
+        solver.set_limit(limit);
+        solver.solve::<false>(target_u32s)
     }
 }
