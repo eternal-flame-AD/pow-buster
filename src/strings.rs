@@ -127,6 +127,7 @@ pub(crate) fn simd_itoa8<const N: usize, const REGISTER_BSWAP: bool, const PLACE
     input: u32,
 ) {
     if N == 0 {
+        out.fill(PLACEHOLDER);
         return;
     }
 
@@ -199,85 +200,131 @@ pub(crate) fn simd_itoa8<const N: usize, const REGISTER_BSWAP: bool, const PLACE
                 _mm256_load_si256(DIV_BY_10_SHIFTS.as_ptr().add(4).cast()),
             );
 
-            const MAGIC_NUMBER_10_MULTIPLIER: u64 =
-                find_magic_number(NonZeroU32::new(10).unwrap()).m as u64;
+            #[cfg(target_feature = "avx512f")]
+            let mut residuals_u64 = {
+                let mut div_results_mul_10 =
+                    _mm512_mul_epu32(div_results, _mm512_set1_epi32(10 as _));
+                div_results_mul_10 =
+                    _mm512_alignr_epi64(_mm512_setzero_si512(), div_results_mul_10, 1);
+
+                _mm512_sub_epi64(div_results, div_results_mul_10)
+            };
 
             #[cfg(target_feature = "avx512f")]
-            let div_div_10_mul = _mm512_mul_epi32(
-                div_results,
-                _mm512_set1_epi64(MAGIC_NUMBER_10_MULTIPLIER as _),
-            );
+            let mut residuals = {
+                let mut residuals_u8 = _mm512_cvtepi64_epi8(residuals_u64);
+                residuals_u8 = _mm_and_si128(
+                    residuals_u8,
+                    _mm_cmplt_epi8(residuals_u8, _mm_set1_epi8(10 as _)),
+                );
 
-            let div_div_10_mul_0 = _mm256_mul_epi32(
-                div_results_0,
-                _mm256_set1_epi64x(MAGIC_NUMBER_10_MULTIPLIER as _),
-            );
+                residuals_u8
+            };
+            residuals = residuals;
 
-            let div_div_10_mul_1 = _mm256_mul_epi32(
-                div_results_1,
-                _mm256_set1_epi64x(MAGIC_NUMBER_10_MULTIPLIER as _),
-            );
+            // note: this is not packed in the same order as the avx512 version
+            let mut residuals_avx2 = {
+                let mut div_results_mul_10_1 =
+                    _mm256_mul_epu32(div_results_1, _mm256_set1_epi32(10 as _));
+                div_results_mul_10_1 = _mm256_permute4x64_epi64(div_results_mul_10_1, 0b00111001);
 
-            const MAGIC_NUMBER_10_SHIFT: u32 =
-                find_magic_number(NonZeroU32::new(10).unwrap()).s as u32 + 32;
+                let mut div_results_mul_10_0 =
+                    _mm256_mul_epu32(div_results_0, _mm256_set1_epi32(10 as _));
+                div_results_mul_10_0 = _mm256_permute4x64_epi64(div_results_mul_10_0, 0b00111001);
 
-            #[cfg(target_feature = "avx512f")]
-            let div_div_10_mul_results = _mm512_srli_epi64(div_div_10_mul, MAGIC_NUMBER_10_SHIFT);
+                div_results_mul_10_0 = _mm256_insert_epi64(
+                    div_results_mul_10_0,
+                    _mm256_extract_epi64(div_results_mul_10_1, 3),
+                    3,
+                );
 
-            let div_div_10_mul_results_0 =
-                _mm256_srli_epi64(div_div_10_mul_0, MAGIC_NUMBER_10_SHIFT as _);
+                let residuals_0 = _mm256_sub_epi64(div_results_0, div_results_mul_10_0);
+                let mut residuals_1 = _mm256_sub_epi64(div_results_1, div_results_mul_10_1);
+                residuals_1 = _mm256_blend_epi32(residuals_1, div_results_1, 0b11000000);
 
-            let div_div_10_mul_results_1 =
-                _mm256_srli_epi64(div_div_10_mul_1, MAGIC_NUMBER_10_SHIFT as _);
+                let tmp = _mm256_or_si256(residuals_0, _mm256_slli_epi64(residuals_1, 8));
 
-            #[cfg(target_feature = "avx512f")]
-            let v0 = _mm512_mul_epi32(div_div_10_mul_results, _mm512_set1_epi64(10));
+                let mut residuals_u8 = _mm_or_si128(
+                    _mm_slli_epi64(_mm256_castsi256_si128(tmp), 16),
+                    _mm256_extracti128_si256(tmp, 1),
+                );
 
-            let v0_0 = _mm256_mul_epi32(div_div_10_mul_results_0, _mm256_set1_epi32(10));
+                residuals_u8 = _mm_and_si128(
+                    residuals_u8,
+                    _mm_cmplt_epi8(residuals_u8, _mm_set1_epi8(10 as _)),
+                );
 
-            let v0_1 = _mm256_mul_epi32(div_div_10_mul_results_1, _mm256_set1_epi32(10));
-
-            #[cfg(target_feature = "avx512f")]
-            let residuals = _mm512_sub_epi64(div_results, v0);
-
-            let residuals_0 = _mm256_sub_epi64(div_results_0, v0_0);
-
-            let residuals_1 = _mm256_sub_epi64(div_results_1, v0_1);
-
-            #[cfg(target_feature = "avx512f")]
-            let mut cvt = _mm512_cvtepi64_epi8(residuals);
-
-            let cvt_avx2 = _mm256_or_si256(residuals_0, _mm256_slli_epi64(residuals_1, 8));
+                residuals_u8
+            };
 
             if REGISTER_BSWAP {
-                #[cfg(target_feature = "avx512f")]
+                #[cfg(all(target_feature = "avx512f", not(target_feature = "avx512vbmi")))]
                 let cvtu64 = {
-                    cvt = _mm_or_si128(cvt, _mm_set1_epi8(b'0' as _));
-                    cvt = _mm_insert_epi8(cvt, PLACEHOLDER as _, 8);
+                    residuals = _mm_or_si128(residuals, _mm_set1_epi8(b'0' as _));
+                    residuals = _mm_insert_epi8(residuals, PLACEHOLDER as _, 8);
 
-                    let mut buf: [u8; 16] = [0u8; 16];
-                    _mm_storeu_si128(buf.as_mut_ptr().cast(), cvt);
-
-                    cvt = _mm_shuffle_epi8(
-                        cvt,
+                    residuals = _mm_shuffle_epi8(
+                        residuals,
                         _mm_load_si128(FindShuffle::<N, false>::TABLE.as_ptr().cast()),
                     );
 
-                    _mm_cvtsi128_si64(cvt) as u64
+                    _mm_cvtsi128_si64(residuals) as u64
                 };
 
-                let mut tmp = _mm_or_si128(
-                    _mm_slli_epi64(_mm256_castsi256_si128(cvt_avx2), 16),
-                    _mm256_extracti128_si256(cvt_avx2, 1),
-                );
-                tmp = _mm_or_si128(tmp, _mm_set1_epi8(b'0' as _));
-                tmp = _mm_insert_epi8(tmp, PLACEHOLDER as _, 4);
-                tmp = _mm_shuffle_epi8(
-                    tmp,
-                    _mm_load_si128(FindShuffle::<N, true>::TABLE.as_ptr().cast()),
-                );
+                #[cfg(target_feature = "avx512vbmi")]
+                let cvtu64 = {
+                    struct FindVbmiShuffle<const N: usize>;
 
-                let cvtu64_avx2 = _mm_cvtsi128_si64(tmp) as u64;
+                    impl<const N: usize> FindVbmiShuffle<N> {
+                        const TABLE: Align64<[u8; 64]> = Align64(
+                            const {
+                                let mut table = [4; 64];
+                                let mut table2 = [0; 64];
+                                let mut idx = 0;
+                                while idx < 8 {
+                                    table[idx] = (7 - idx as u8) * 8;
+                                    idx += 1;
+                                }
+                                idx = 0;
+                                // shift elements by the difference in digit count
+                                while idx < 8 {
+                                    table[idx] = table[idx + (8 - N)];
+                                    idx += 1;
+                                }
+                                idx = 0;
+                                while idx < 64 {
+                                    table2[idx] = table[idx / 4 * 4 + (3 - idx % 4)];
+                                    idx += 1;
+                                }
+                                table2
+                            },
+                        );
+                    }
+
+                    residuals_u64 = _mm512_or_si512(
+                        residuals_u64,
+                        _mm512_set1_epi64((PLACEHOLDER as i64) << 32 | 0x30) as _,
+                    );
+
+                    let gathered = _mm512_permutexvar_epi8(
+                        _mm512_load_si512(FindVbmiShuffle::<N>::TABLE.as_ptr().cast()),
+                        residuals_u64,
+                    );
+
+                    _mm_cvtsi128_si64(_mm512_castsi512_si128(gathered)) as u64
+                };
+
+                let cvtu64_avx2 = {
+                    residuals_avx2 = _mm_or_si128(residuals_avx2, _mm_set1_epi8(b'0' as _));
+                    residuals_avx2 = _mm_insert_epi8(residuals_avx2, PLACEHOLDER as _, 4);
+
+                    residuals_avx2 = _mm_shuffle_epi8(
+                        residuals_avx2,
+                        _mm_load_si128(FindShuffle::<N, true>::TABLE.as_ptr().cast()),
+                    );
+
+                    _mm_cvtsi128_si64(residuals_avx2) as u64
+                };
 
                 #[cfg(target_feature = "avx512f")]
                 debug_assert_eq!(
@@ -292,30 +339,26 @@ pub(crate) fn simd_itoa8<const N: usize, const REGISTER_BSWAP: bool, const PLACE
                 out.as_mut_ptr().cast::<u64>().write(cvtu64);
             } else {
                 #[cfg(target_feature = "avx512f")]
-                let mut cvtu64 = _mm_cvtsi128_si64(cvt) as u64;
-
-                let mut tmp = Align64([0u64; 4]);
-                _mm256_store_si256(tmp.as_mut_ptr().cast(), cvt_avx2);
+                let mut cvtu64 = _mm_cvtsi128_si64(residuals) as u64;
 
                 #[cfg(target_feature = "avx2")]
                 let cvtu64_avx2 = {
-                    let tmp_highes = [tmp[0] & 0xff, tmp[1] & 0xff, tmp[2] & 0xff, tmp[3] & 0xff];
-                    let tmp_lows = [
-                        tmp[0] & 0xff00,
-                        tmp[1] & 0xff00,
-                        tmp[2] & 0xff00,
-                        tmp[3] & 0xff00,
-                    ];
+                    let tmp = _mm_unpacklo_epi8(
+                        residuals_avx2,
+                        _mm_shuffle_epi32(residuals_avx2, 0b01001110),
+                    );
+                    let tmp = _mm_cvtsi128_si64(tmp) as u64;
+                    let mut x0 = tmp >> 16;
+                    let mut x1 = tmp >> 48;
+                    let mut x2 = tmp;
+                    let mut x3 = tmp >> 32;
 
-                    let high4 = (tmp_highes[0] as u64)
-                        | ((tmp_highes[1] as u64) << 8)
-                        | ((tmp_highes[2] as u64) << 16)
-                        | ((tmp_highes[3] as u64) << 24);
-                    let low4 = (tmp_lows[0] as u64 >> 8)
-                        | (tmp_lows[1] as u64)
-                        | ((tmp_lows[2] as u64) << 8)
-                        | ((tmp_lows[3] as u64) << 16);
-                    high4 | (low4 << 32)
+                    x0 = x0 & 0xffff;
+                    x1 = x1 & 0xffff;
+                    x2 = x2 & 0xffff;
+                    x3 = x3 & 0xffff;
+
+                    (x0 << 48) | (x1 << 32) | (x2 << 16) | x3
                 };
 
                 #[cfg(target_feature = "avx512f")]

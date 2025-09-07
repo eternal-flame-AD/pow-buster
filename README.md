@@ -52,6 +52,7 @@ Requires AVX-512 (cpuid: `avx512f`) or SHA-NI+SSE4.1 (cpuid: `sha`, `sse4_1`) CP
 Recommended CPU feature flags in order of preference:
 
 - `-Ctarget-cpu=native`
+- `-Ctarget-feature=+avx512vbmi`
 - `-Ctarget-feature=+avx512f`
 - `-Ctarget-feature=+sha,+avx2`
 - `-Ctarget-feature=+sha,+sse4_1`
