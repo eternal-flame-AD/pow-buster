@@ -201,6 +201,7 @@ pub(crate) fn simd_itoa8<const N: usize, const REGISTER_BSWAP: bool, const PLACE
             );
 
             #[cfg(target_feature = "avx512f")]
+            #[allow(unused_mut)]
             let mut residuals_u64 = {
                 let mut div_results_mul_10 =
                     _mm512_mul_epu32(div_results, _mm512_set1_epi32(10 as _));
@@ -211,6 +212,7 @@ pub(crate) fn simd_itoa8<const N: usize, const REGISTER_BSWAP: bool, const PLACE
             };
 
             #[cfg(target_feature = "avx512f")]
+            #[allow(unused_mut)]
             let mut residuals = {
                 let mut residuals_u8 = _mm512_cvtepi64_epi8(residuals_u64);
                 residuals_u8 = _mm_and_si128(
@@ -220,7 +222,6 @@ pub(crate) fn simd_itoa8<const N: usize, const REGISTER_BSWAP: bool, const PLACE
 
                 residuals_u8
             };
-            residuals = residuals;
 
             // note: this is not packed in the same order as the avx512 version
             let mut residuals_avx2 = {
