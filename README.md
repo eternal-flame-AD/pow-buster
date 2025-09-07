@@ -187,7 +187,7 @@ You are hitting host http://localhost:8923/, n_workers: 64
 [60.0s] proofs accepted: 681909, failed: 0, 5s: 11507.2pps, 5s_failed: 0.0rps, 71.99% iowait
 ```
 
-Anubis nightmare (6, doesn't exist in reality because it takes >1min on a 200kH/s browser solver, 256x harder than extreme suspicion):
+Anubis nightmare (6, doesn't exist in reality because it takes >1 hour on a 200kH/s browser solver, 256x harder than extreme suspicion):
 
 ```sh
 > target/release/simd-mcaptcha live --api-type anubis --host http://localhost:8923/ \
