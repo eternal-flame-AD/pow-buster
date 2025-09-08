@@ -1,6 +1,5 @@
 use std::{
     num::NonZeroU8,
-    str::FromStr,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -11,8 +10,10 @@ use std::{
 use clap::{Parser, Subcommand};
 
 use simd_mcaptcha::{
-    DoubleBlockSolver, GoAwaySolver, SingleBlockSolver, Solver, compute_target_64,
+    DecimalSolver, DoubleBlockSolver, GoAwaySolver, SingleBlockSolver, compute_target_64,
     compute_target_anubis,
+    message::{DecimalMessage, GoAwayMessage},
+    solver::Solver,
 };
 
 #[derive(Parser)]
@@ -22,12 +23,14 @@ struct Cli {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "live-throughput-test")]
 enum ApiType {
     Mcaptcha,
     Anubis,
 }
 
-impl FromStr for ApiType {
+#[cfg(feature = "live-throughput-test")]
+impl std::str::FromStr for ApiType {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -92,6 +95,9 @@ enum SubCommand {
     Profile {
         #[clap(short, long, default_value = "10000000")]
         difficulty: u64,
+
+        #[clap(short, long, default_value = "64")]
+        prefix_length: usize,
     },
     ProfileMt {
         #[clap(short, long, default_value = "10000000")]
@@ -103,8 +109,8 @@ enum SubCommand {
         #[clap(short, long, default_value = "1")]
         n_threads: Option<u32>,
 
-        #[clap(long)]
-        double_block: bool,
+        #[clap(short, long, default_value = "64")]
+        prefix_length: usize,
     },
     Time {
         #[clap(short, long, default_value = "10000000")]
@@ -119,7 +125,10 @@ enum SubCommand {
 fn main() {
     let cli = Cli::parse();
     match cli.subcommand {
-        SubCommand::Profile { difficulty } => {
+        SubCommand::Profile {
+            difficulty,
+            prefix_length,
+        } => {
             println!(
                 "entering busy loop, attach profiler to this process now (difficulty: {})",
                 difficulty
@@ -128,7 +137,10 @@ fn main() {
                 // mimick an anubis-like situation
                 let mut prefix_bytes = [0; 64];
                 prefix_bytes[..8].copy_from_slice(&prefix.to_ne_bytes());
-                let mut solver = SingleBlockSolver::new((), &prefix_bytes).expect("solver is None");
+                let mut solver = DecimalSolver::from(
+                    DecimalMessage::new(&prefix_bytes[..(prefix_length % 64)], 0)
+                        .expect("solver is None"),
+                );
                 let target = compute_target_64(difficulty);
                 let target_bytes = target.to_be_bytes();
                 let target_u32s = core::array::from_fn(|i| {
@@ -147,7 +159,7 @@ fn main() {
             difficulty,
             speed,
             n_threads,
-            double_block,
+            prefix_length,
         } => {
             let n_threads = n_threads.unwrap_or_else(|| num_cpus::get() as u32);
             println!(
@@ -168,46 +180,27 @@ fn main() {
             for _ in 0..n_threads {
                 let counter = counter.clone();
                 std::thread::spawn(move || {
-                    if double_block {
-                        for prefix in 0..u64::MAX {
-                            let mut prefix_bytes = [0u8; 48];
-                            prefix_bytes[..8].copy_from_slice(&prefix.to_ne_bytes());
-                            let mut solver =
-                                DoubleBlockSolver::new((), &prefix_bytes).expect("solver is None");
-                            let target_bytes = target.to_be_bytes();
-                            let target_u32s = core::array::from_fn(|i| {
-                                u32::from_be_bytes([
-                                    target_bytes[i * 4],
-                                    target_bytes[i * 4 + 1],
-                                    target_bytes[i * 4 + 2],
-                                    target_bytes[i * 4 + 3],
-                                ])
-                            });
-                            let result = solver.solve::<true>(target_u32s).expect("solver failed");
-                            counter.fetch_add(1, Ordering::Relaxed);
-                            core::hint::black_box(result);
-                        }
-                    } else {
-                        for prefix in 0..u64::MAX {
-                            // mimick an anubis-like situation
-                            let mut prefix_bytes = [0; 64];
-                            prefix_bytes[..8].copy_from_slice(&prefix.to_ne_bytes());
-                            let mut solver =
-                                SingleBlockSolver::new((), &prefix_bytes).expect("solver is None");
+                    for prefix in 0..u64::MAX {
+                        // mimick an anubis-like situation
+                        let mut prefix_bytes = [0; 64];
+                        prefix_bytes[..8].copy_from_slice(&prefix.to_ne_bytes());
+                        let mut solver = DecimalSolver::from(
+                            DecimalMessage::new(&prefix_bytes[..(prefix_length % 64)], 0)
+                                .expect("solver is None"),
+                        );
 
-                            let target_bytes = target.to_be_bytes();
-                            let target_u32s = core::array::from_fn(|i| {
-                                u32::from_be_bytes([
-                                    target_bytes[i * 4],
-                                    target_bytes[i * 4 + 1],
-                                    target_bytes[i * 4 + 2],
-                                    target_bytes[i * 4 + 3],
-                                ])
-                            });
-                            let result = solver.solve::<true>(target_u32s).expect("solver failed");
-                            counter.fetch_add(1, Ordering::Relaxed);
-                            core::hint::black_box(result);
-                        }
+                        let target_bytes = target.to_be_bytes();
+                        let target_u32s = core::array::from_fn(|i| {
+                            u32::from_be_bytes([
+                                target_bytes[i * 4],
+                                target_bytes[i * 4 + 1],
+                                target_bytes[i * 4 + 2],
+                                target_bytes[i * 4 + 3],
+                            ])
+                        });
+                        let result = solver.solve::<true>(target_u32s).expect("solver failed");
+                        counter.fetch_add(1, Ordering::Relaxed);
+                        core::hint::black_box(result);
                     }
                 });
             }
@@ -254,7 +247,9 @@ fn main() {
                 // mimick an anubis-like situation
                 let mut prefix_bytes = [0; 64];
                 prefix_bytes[0] = i;
-                let mut solver = SingleBlockSolver::new((), &prefix_bytes).expect("solver is None");
+                let mut solver = DecimalSolver::from(
+                    DecimalMessage::new(&prefix_bytes, 0).expect("solver is None"),
+                );
                 let inner_begin = Instant::now();
                 let (nonce, _) = solver.solve::<true>(target_u32s).expect("solver failed");
                 eprintln!(
@@ -278,7 +273,8 @@ fn main() {
             let mut prefix = [0u8; 48];
             for i in 0..40u8 {
                 prefix[0] = i;
-                let mut solver = DoubleBlockSolver::new((), &prefix).expect("solver is None");
+                let mut solver =
+                    DecimalSolver::from(DecimalMessage::new(&prefix, 0).expect("solver is None"));
                 let inner_begin = Instant::now();
                 let (nonce, _) = solver.solve::<true>(target_u32s).expect("solver failed");
                 eprintln!(
@@ -302,7 +298,7 @@ fn main() {
             for i in 0..40u8 {
                 let mut prefix = [0u8; 32];
                 prefix[0] = i;
-                let mut solver = GoAwaySolver::new((), &prefix).expect("solver is None");
+                let mut solver = GoAwaySolver::from(GoAwayMessage::new_bytes(&prefix));
                 let inner_begin = Instant::now();
                 let (nonce, _) = solver.solve::<true>(target_u32s).expect("solver failed");
                 eprintln!(
@@ -392,7 +388,7 @@ fn main() {
             n_workers,
             do_control,
         } => {
-            let api_type = ApiType::from_str(&api_type).unwrap();
+            let api_type: ApiType = api_type.parse().unwrap();
             let n_workers = n_workers.unwrap_or_else(|| num_cpus::get() as u32);
             eprintln!("You are hitting host {}, n_workers: {}", host, n_workers);
             let pool = rayon::ThreadPoolBuilder::new()

@@ -1,6 +1,10 @@
 use core::num::NonZeroU8;
 
-use crate::{Solver, compute_target_anubis, compute_target_goaway};
+use crate::{
+    compute_target_anubis, compute_target_goaway,
+    message::{DecimalMessage, GoAwayMessage},
+    solver::Solver,
+};
 use alloc::string::String;
 use sha2::Digest;
 
@@ -98,21 +102,27 @@ impl AnubisChallengeDescriptor {
                 target_bytes[i * 4 + 3],
             ])
         });
-        if let Some(mut solver) =
-            crate::SingleBlockSolver::new((), self.challenge.as_ref().as_bytes())
-        {
-            solver.set_limit(limit);
-            let result = solver.solve::<false>(target_u32s);
-            let attempted_nonces = solver.get_attempted_nonces();
-            (result, attempted_nonces)
-        } else {
-            let mut solver =
-                crate::DoubleBlockSolver::new((), self.challenge.as_ref().as_bytes()).unwrap();
-            solver.set_limit(limit);
-            let result = solver.solve::<false>(target_u32s);
-            let attempted_nonces = solver.get_attempted_nonces();
-            (result, attempted_nonces)
+
+        let mut result = None;
+        let mut attempted_nonces = 0;
+        let mut remaining_limit = limit;
+        for search_bank in 0.. {
+            let Some(message) =
+                DecimalMessage::new(self.challenge.as_ref().as_bytes(), search_bank)
+            else {
+                break;
+            };
+            let mut solver = crate::DecimalSolver::from(message);
+            solver.set_limit(remaining_limit);
+            result = solver.solve::<false>(target_u32s);
+            attempted_nonces += solver.get_attempted_nonces();
+            remaining_limit = remaining_limit.saturating_sub(solver.get_attempted_nonces());
+            if result.is_some() || remaining_limit == 0 {
+                break;
+            }
         }
+
+        (result, attempted_nonces)
     }
 }
 
@@ -153,11 +163,11 @@ impl GoAwayConfig {
         2u64.pow(self.difficulty.get().try_into().unwrap())
     }
 
-    pub fn solve(&self) -> Option<(u64, [u32; 8])> {
+    pub fn solve(&self) -> (Option<(u64, [u32; 8])>, u64) {
         self.solve_with_limit(u64::MAX)
     }
 
-    pub fn solve_with_limit(&self, limit: u64) -> Option<(u64, [u32; 8])> {
+    pub fn solve_with_limit(&self, limit: u64) -> (Option<(u64, [u32; 8])>, u64) {
         let target = compute_target_goaway(self.difficulty);
         let target_bytes = target.to_be_bytes();
         let target_u32s = core::array::from_fn(|i| {
@@ -168,8 +178,22 @@ impl GoAwayConfig {
                 target_bytes[i * 4 + 3],
             ])
         });
-        let mut solver = crate::GoAwaySolver::new((), &self.challenge.as_bytes()).unwrap();
+
+        let Some(message) = self
+            .challenge
+            .as_bytes()
+            .try_into()
+            .ok()
+            .and_then(GoAwayMessage::new_hex)
+        else {
+            return (None, 0);
+        };
+        let mut solver = crate::GoAwaySolver::from(message);
         solver.set_limit(limit);
-        solver.solve::<false>(target_u32s)
+
+        (
+            solver.solve::<false>(target_u32s),
+            solver.get_attempted_nonces(),
+        )
     }
 }

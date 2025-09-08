@@ -64,7 +64,7 @@ tokio = ["std", "dep:tokio"]
 official = ["dep:pow_sha256"]
 rayon = ["std", "dep:rayon"]
 scraper = ["dep:scraper"]
-server = ["adapter", "tokio", "tracing", "dep:thiserror", "dep:url", "dep:axum", "dep:tower-http", "dep:tracing-subscriber", "dep:axum-extra", "dep:headers"]
+server = ["adapter", "tokio", "tracing", "dep:rayon", "dep:thiserror", "dep:url", "dep:axum", "dep:tower-http", "dep:tracing-subscriber", "dep:axum-extra", "dep:headers"]
 tracing = ["dep:tracing"]
 all-lane-positions = [
     "lane-position-0",

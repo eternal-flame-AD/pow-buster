@@ -7,7 +7,8 @@ use criterion::{Criterion, criterion_group, criterion_main};
 
 use sha2::Digest;
 use sha2::digest::generic_array::sequence::GenericSequence;
-use simd_mcaptcha::{DoubleBlockSolver, SingleBlockSolver, Solver, compute_target};
+use simd_mcaptcha::message::{DoubleBlockMessage, SingleBlockMessage};
+use simd_mcaptcha::{DoubleBlockSolver, SingleBlockSolver, compute_target, solver::Solver};
 
 struct ProofKey {
     difficulty: u32,
@@ -159,8 +160,9 @@ pub fn bench_proof(c: &mut Criterion) {
                                 COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                             let mut prefix = [0; 64];
                             prefix[..8].copy_from_slice(&counter.to_ne_bytes());
-                            let mut solver: SingleBlockSolver =
-                                SingleBlockSolver::new((), &prefix).expect("solver is None");
+                            let mut solver: SingleBlockSolver = SingleBlockSolver::from(
+                                SingleBlockMessage::new(&prefix, 0).expect("solver is None"),
+                            );
                             core::hint::black_box(
                                 solver.solve::<true>(target_u32s).expect("solver failed"),
                             );
@@ -192,8 +194,9 @@ pub fn bench_proof(c: &mut Criterion) {
                                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                                     .to_ne_bytes(),
                             );
-                            let mut solver =
-                                DoubleBlockSolver::new((), &prefix).expect("solver is None");
+                            let mut solver = DoubleBlockSolver::from(
+                                DoubleBlockMessage::new(&prefix, 0).expect("solver is None"),
+                            );
                             core::hint::black_box(
                                 solver.solve::<true>(target_u32s).expect("solver failed"),
                             );
@@ -219,13 +222,15 @@ pub fn bench_proof(c: &mut Criterion) {
                     let start = std::time::Instant::now();
                     for _ in 0..iters {
                         for _ in 0..10 {
-                            let mut solver = simd_mcaptcha::safe::SingleBlockSolver::new(
-                                (),
-                                &(COUNTER
-                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                                    .to_ne_bytes()),
-                            )
-                            .expect("solver is None");
+                            let mut solver = simd_mcaptcha::solver::safe::SingleBlockSolver::from(
+                                SingleBlockMessage::new(
+                                    &COUNTER
+                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                                        .to_ne_bytes(),
+                                    0,
+                                )
+                                .expect("solver is None"),
+                            );
                             core::hint::black_box(
                                 solver.solve::<true>(target_u32s).expect("solver failed"),
                             );
@@ -343,8 +348,9 @@ pub fn bench_proof_rayon(c: &mut Criterion) {
                     .map(|addend| {
                         let mut prefix = [0; 64];
                         prefix[..8].copy_from_slice(&(addend + start).to_ne_bytes());
-                        let mut solver =
-                            SingleBlockSolver::new((), &prefix).expect("solver is None");
+                        let mut solver = SingleBlockSolver::from(
+                            SingleBlockMessage::new(&prefix, 0).expect("solver is None"),
+                        );
 
                         let start = std::time::Instant::now();
                         solver.solve::<true>(target_u32s).expect("solver failed");
@@ -371,8 +377,9 @@ pub fn bench_proof_rayon(c: &mut Criterion) {
                     .map(|addend| {
                         let mut prefix: [u8; 48] = [0; 48];
                         prefix[..8].copy_from_slice(&(addend + start).to_ne_bytes());
-                        let mut solver =
-                            DoubleBlockSolver::new((), &prefix).expect("solver is None");
+                        let mut solver = DoubleBlockSolver::from(
+                            DoubleBlockMessage::new(&prefix, 0).expect("solver is None"),
+                        );
 
                         let start = std::time::Instant::now();
                         solver.solve::<true>(target_u32s).expect("solver failed");
@@ -397,11 +404,11 @@ pub fn bench_proof_rayon(c: &mut Criterion) {
                 (0..1024)
                     .into_par_iter()
                     .map(|addend| {
-                        use simd_mcaptcha::GoAwaySolver;
+                        use simd_mcaptcha::{GoAwaySolver, message::GoAwayMessage};
 
                         let mut prefix = [0; 32];
                         prefix[..8].copy_from_slice(&(addend + start).to_ne_bytes());
-                        let mut solver = GoAwaySolver::new((), &prefix).expect("solver is None");
+                        let mut solver = GoAwaySolver::from(GoAwayMessage::new_bytes(&prefix));
 
                         let start = std::time::Instant::now();
                         solver.solve::<true>(target_u32s).expect("solver failed");

@@ -3,7 +3,7 @@ use core::num::NonZeroU8;
 
 use wasm_bindgen::prelude::*;
 
-use crate::Solver;
+use crate::solver::Solver;
 
 #[wasm_bindgen(js_namespace = console)]
 extern "C" {
@@ -49,19 +49,14 @@ pub fn solve_anubis(input: &[u8], difficulty_factor: u8) -> Option<AnubisRespons
         target as u32,
     ];
     log(&format!("target_u32s: {:?}", target_u32s));
-    let ((nonce, result), attempted_nonces) = match crate::SingleBlockSolver::new((), input) {
-        Some(mut solver) => (
-            solver.solve::<false>(target_u32s)?,
-            solver.get_attempted_nonces(),
-        ),
-        None => {
-            let mut solver = crate::DoubleBlockSolver::new((), input)?;
-            (
+    let ((nonce, result), attempted_nonces) = crate::message::DecimalMessage::new(input, 0)
+        .and_then(|message| {
+            let mut solver = crate::DecimalSolver::from(message);
+            Some((
                 solver.solve::<false>(target_u32s)?,
                 solver.get_attempted_nonces(),
-            )
-        }
-    };
+            ))
+        })?;
 
     let mut response = [0u8; 64];
     crate::encode_hex(&mut response, result);

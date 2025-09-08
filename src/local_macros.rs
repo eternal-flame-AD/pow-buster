@@ -1,4 +1,5 @@
 #[rustfmt::skip]
+#[allow(unused_macros)]
 macro_rules! repeat64 {
     ($i:ident, $b:block) => {
         let $i = 0; $b; let $i = 1; $b; let $i = 2; $b; let $i = 3; $b;

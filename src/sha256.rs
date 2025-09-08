@@ -1,7 +1,10 @@
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 pub mod avx512;
 
-#[cfg(all(target_arch = "x86_64", target_feature = "sha"))]
+#[cfg(all(
+    any(target_arch = "x86_64", target_arch = "x86"),
+    target_feature = "sha"
+))]
 pub mod sha_ni;
 
 #[cfg(target_arch = "wasm32")]
@@ -66,40 +69,12 @@ pub(crate) fn digest_block(state: &mut [u32; 8], block: &[u32; 16]) {
 /// ingest a message prefix into the state
 #[inline(always)]
 pub(crate) fn ingest_message_prefix<const LEN: usize>(state: &mut [u32; 8], w: [u32; LEN]) {
-    sha2_arx::<0, LEN>(state, w);
+    sha2_arx::<0>(state, &w);
 }
 
 /// scalar sha2 rounds for hotstart taken verbatim from sha2 crate
 #[inline(always)]
-pub(crate) fn sha2_arx<const START: usize, const LEN: usize>(state: &mut [u32; 8], w: [u32; LEN]) {
-    let [a, b, c, d, e, f, g, h] = &mut *state;
-
-    for i in 0..LEN {
-        let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
-        let ch = (*e & *f) ^ ((!*e) & *g);
-        let t1 = s1
-            .wrapping_add(ch)
-            .wrapping_add(K32[START + i])
-            .wrapping_add(w[i])
-            .wrapping_add(*h);
-        let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
-        let maj = (*a & *b) ^ (*a & *c) ^ (*b & *c);
-        let t2 = s0.wrapping_add(maj);
-
-        *h = *g;
-        *g = *f;
-        *f = *e;
-        *e = d.wrapping_add(t1);
-        *d = *c;
-        *c = *b;
-        *b = *a;
-        *a = t1.wrapping_add(t2);
-    }
-}
-
-/// scalar sha2 rounds for hotstart taken verbatim from sha2 crate
-#[inline(always)]
-pub(crate) fn sha2_arx_slice<const START: usize>(state: &mut [u32; 8], w: &[u32]) {
+pub(crate) fn sha2_arx<const START: usize>(state: &mut [u32; 8], w: &[u32]) {
     let [a, b, c, d, e, f, g, h] = &mut *state;
 
     for i in 0..w.len() {

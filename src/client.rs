@@ -1,13 +1,13 @@
-use core::num::NonZeroU8;
 use std::fmt::Write;
 
 use reqwest::Client;
-use sha2::Digest;
 
 use crate::{
-    Align16, Solver,
+    Align16,
     adapter::{AnubisChallengeDescriptor, GoAwayConfig},
     compute_target, compute_target_goaway,
+    message::{DecimalMessage, GoAwayMessage},
+    solver::Solver,
 };
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
@@ -29,6 +29,8 @@ pub struct Work<'a> {
 pub enum SolveError {
     #[error("unknown algorithm: {0}")]
     UnknownAlgorithm(String),
+    #[error("unexpected challenge format")]
+    UnexpectedChallengeFormat,
     #[error("not implemented")]
     NotImplemented,
     #[error("cookie not found")]
@@ -107,20 +109,20 @@ pub async fn solve_mcaptcha_ex(
     let (nonce, result) = if really_solve {
         let (tx, rx) = tokio::sync::oneshot::channel();
 
-        // these length needs to be double-hashed
-        if (47..=52).contains(&prefix.len()) {
-            pool.spawn(move || {
-                let mut solver = crate::DoubleBlockSolver::new((), &prefix).unwrap();
-                let result = solver.solve::<true>(target_u32s);
-                tx.send(result).ok();
-            });
-        } else {
-            pool.spawn(move || {
-                let mut solver = crate::SingleBlockSolver::new((), &prefix).unwrap();
-                let result = solver.solve::<true>(target_u32s);
-                tx.send(result).ok();
-            });
-        }
+        pool.spawn(move || {
+            let mut result = None;
+            for search_bank in 0.. {
+                let Some(message) = DecimalMessage::new(&prefix, search_bank) else {
+                    break;
+                };
+                let mut solver: crate::DecimalSolver = message.into();
+                result = solver.solve::<true>(target_u32s);
+                if result.is_some() {
+                    break;
+                }
+            }
+            tx.send(result).ok();
+        });
 
         rx.await.unwrap().ok_or(SolveError::SolverFailed)?
     } else {
@@ -328,7 +330,6 @@ pub async fn solve_goaway_js_pow_sha256(
     }
     let config: GoAwayConfig = res.json().await?;
 
-    let mut solver = crate::GoAwaySolver::new((), &config.challenge().as_bytes()).unwrap();
     let target_bytes = compute_target_goaway(config.difficulty()).to_be_bytes();
     let target_u32s = core::array::from_fn(|i| {
         let i = i * 4;
@@ -345,6 +346,23 @@ pub async fn solve_goaway_js_pow_sha256(
     let (nonce, result) = if really_solve {
         tokio::task::block_in_place(|| {
             let solve_begin = std::time::Instant::now();
+            let mut solver = crate::GoAwaySolver::from(
+                config
+                    .challenge()
+                    .as_bytes()
+                    .try_into()
+                    .ok()
+                    .and_then(GoAwayMessage::new_hex)
+                    .or_else(|| {
+                        config
+                            .challenge()
+                            .as_bytes()
+                            .try_into()
+                            .ok()
+                            .map(GoAwayMessage::new_bytes)
+                    })
+                    .ok_or(SolveError::UnexpectedChallengeFormat)?,
+            );
             let result = solver.solve::<false>(target_u32s);
             let Some(result) = result else {
                 return Err(SolveError::SolverFailed);

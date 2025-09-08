@@ -2,7 +2,11 @@
 
 // these are mainly adapted from the sha2 crate as well,
 // the core logic is verbatim, but shuffling and batch message loading overhead is removed
+#[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
+
+#[cfg(target_arch = "x86")]
+use core::arch::x86::*;
 
 use crate::Align16;
 use crate::sha256::K32;
@@ -28,14 +32,13 @@ const K32X4: [[u32; 4]; 16] = [
     [K32[63], K32[62], K32[61], K32[60]],
 ];
 
-#[inline(always)]
-unsafe fn schedule(v0: __m128i, v1: __m128i, v2: __m128i, v3: __m128i) -> __m128i {
-    unsafe {
-        let t1 = _mm_sha256msg1_epu32(v0, v1);
-        let t2 = _mm_alignr_epi8(v3, v2, 4);
+macro_rules! schedule {
+    ($v0:expr, $v1:expr, $v2:expr, $v3:expr) => {{
+        let t1 = _mm_sha256msg1_epu32($v0, $v1);
+        let t2 = _mm_alignr_epi8($v3, $v2, 4);
         let t3 = _mm_add_epi32(t1, t2);
-        _mm_sha256msg2_epu32(t3, v3)
-    }
+        _mm_sha256msg2_epu32(t3, $v3)
+    }};
 }
 
 #[inline(always)]
@@ -56,9 +59,13 @@ pub(crate) fn prepare_state(state: &Align16<[u32; 8]>) -> [__m128i; 2] {
 
 #[allow(unused_variables)]
 pub trait Plucker {
+    #[inline(always)]
     fn pluck_qword0(&mut self, lane: usize, w: &mut __m128i) {}
+    #[inline(always)]
     fn pluck_qword1(&mut self, lane: usize, w: &mut __m128i) {}
+    #[inline(always)]
     fn pluck_qword2(&mut self, lane: usize, w: &mut __m128i) {}
+    #[inline(always)]
     fn pluck_qword3(&mut self, lane: usize, w: &mut __m128i) {}
 }
 
@@ -93,7 +100,7 @@ pub(crate) fn multiway_arx_abef_cdgh<
             $w0:expr, $w1:expr, $w2:expr, $w3:expr, $w4:expr,
             $i: expr
         ) => {{
-                $w4 = core::array::from_fn(|i| schedule($w0[i], $w1[i], $w2[i], $w3[i]));
+                $w4 = core::array::from_fn(|i| schedule!($w0[i], $w1[i], $w2[i], $w3[i]));
                 rounds4!($abef, $cdgh, $w4, $i);
             }};
         }
@@ -106,27 +113,17 @@ pub(crate) fn multiway_arx_abef_cdgh<
         let w2_t = _mm_load_si128(block_template.as_ptr().cast::<u32>().add(8).cast());
         let w3_t = _mm_load_si128(block_template.as_ptr().cast::<u32>().add(12).cast());
 
-        let mut w0: [_; LANES] = core::array::from_fn(|i| {
-            let mut w = w0_t;
-            plucker.pluck_qword0(i, &mut w);
-            w
-        });
-        let mut w1: [_; LANES] = core::array::from_fn(|i| {
-            let mut w = w1_t;
-            plucker.pluck_qword1(i, &mut w);
-            w
-        });
-        let mut w2: [_; LANES] = core::array::from_fn(|i| {
-            let mut w = w2_t;
-            plucker.pluck_qword2(i, &mut w);
-            w
-        });
-        let mut w3: [_; LANES] = core::array::from_fn(|i| {
-            let mut w = w3_t;
-            plucker.pluck_qword3(i, &mut w);
-            w
-        });
-        let mut w4: [_; LANES] = core::array::from_fn(|i| schedule(w0[i], w1[i], w2[i], w3[i]));
+        let mut w0: [_; LANES] = [w0_t; LANES];
+        let mut w1: [_; LANES] = [w1_t; LANES];
+        let mut w2: [_; LANES] = [w2_t; LANES];
+        let mut w3: [_; LANES] = [w3_t; LANES];
+        for i in 0..LANES {
+            plucker.pluck_qword0(i, &mut w0[i]);
+            plucker.pluck_qword1(i, &mut w1[i]);
+            plucker.pluck_qword2(i, &mut w2[i]);
+            plucker.pluck_qword3(i, &mut w3[i]);
+        }
+        let mut w4: [_; LANES] = core::array::from_fn(|i| schedule!(w0[i], w1[i], w2[i], w3[i]));
 
         macro_rules! gate_rnds {
             ($cutoff: literal, $($body:tt)*) => {
@@ -246,7 +243,7 @@ mod tests {
         crate::sha256::do_message_schedule(&mut full_message_schedule);
 
         let mut reference_state = Align16(crate::sha256::IV);
-        crate::sha256::sha2_arx::<0, 64>(&mut reference_state, full_message_schedule);
+        crate::sha256::sha2_arx::<0>(&mut reference_state, &full_message_schedule);
 
         assert_eq!(a, reference_state[0]);
         assert_eq!(b, reference_state[1]);

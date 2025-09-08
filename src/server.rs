@@ -75,7 +75,7 @@ async fn serve_wasm(axum::extract::Path(file): axum::extract::Path<String>) -> R
 }
 
 #[cfg(not(feature = "server-wasm"))]
-async fn serve_wasm(axum::extract::Path(file): axum::extract::Path<String>) -> Response {
+async fn serve_wasm(axum::extract::Path(_file): axum::extract::Path<String>) -> Response {
     (axum::http::StatusCode::NOT_FOUND, "404 Not Found").into_response()
 }
 
@@ -274,7 +274,7 @@ async fn solve_goaway(
         });
     }
 
-    let (result, elapsed) = {
+    let ((result, attempted_nonces), elapsed) = {
         let _permit = state.semaphore.acquire().await.unwrap();
 
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -290,7 +290,7 @@ async fn solve_goaway(
 
     let (nonce, result) = result.ok_or(SolveError::SolverFailed {
         limit: state.limit,
-        attempted: u64::MAX,
+        attempted: attempted_nonces,
     })?;
 
     let plausible_time = nonce / 1024;
