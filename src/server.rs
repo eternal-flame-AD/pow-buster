@@ -10,6 +10,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
+use axum_extra::response::JavaScript;
 use tokio::sync::Semaphore;
 
 use crate::{
@@ -47,6 +48,10 @@ mod assets {
 
 async fn index() -> Html<&'static str> {
     Html(include_str!("static/index.html"))
+}
+
+async fn serve_worker() -> JavaScript<&'static str> {
+    JavaScript(include_str!("static/worker.js"))
 }
 
 #[derive(Clone)]
@@ -105,6 +110,7 @@ impl AppState {
     pub fn router(&self) -> Router {
         Router::new()
             .route("/", get(index))
+            .route("/worker.js", get(serve_worker))
             .route("/solve", post(solve_generic))
             .route("/pkg/{*file}", get(serve_wasm))
             .layer(tower_http::limit::RequestBodyLimitLayer::new(128 << 10))

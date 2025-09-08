@@ -44,6 +44,7 @@ I personally don't like some projects put themselves at the ethical high ground 
 - SHA-2 hotstarting with round-level granularity
 - Fully unrolled and monomorphic core friendly to pipelining and ternary logic instruction lowering
 - Short-circuiting comparison with $H_1 \to H_7$ feedback elision with optional 64-bit support
+- Switch to octal nonces when success rate is overwhelming
 
 ## Building
 
@@ -241,9 +242,9 @@ For us we have single thread:
 
 | Workload                         | AVX-512 [log](time.txt) | SHA-NI [log](time_sha-ni.txt) | Chromium SIMD128 [log](time_simd128.txt) |
 | -------------------------------- | ----------------------- | ----------------------------- | ---------------------------------------- |
-| SingleBlock/Anubis               | 85.75 MH/s              | 62.19 MH/s                    | 14.74 MH/s                               |
-| DoubleBlock (mCaptcha edge case) | 52.30 MH/s              | 42.55 MH/s                    | Not Tested                               |
-| go-away (16 bytes)               | 97.87 MH/s              | 78.10 MH/s                    | Not Tested                               |
+| SingleBlock/Anubis               | 89.16 MH/s              | 62.19 MH/s                    | 14.74 MH/s                               |
+| DoubleBlock (mCaptcha edge case) | 53.28 MH/s              | 42.55 MH/s                    | Not Tested                               |
+| go-away (16 bytes)               | 98.42 MH/s              | 78.10 MH/s                    | Not Tested                               |
 
 The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and about 20% of that on Firefox, this is corroborated by Anubis's own accounts in their code comments using 7950X3D empirical testing. Empirical throughput of WASM-based mCaptcha is unreliable due to lack of official benchmark tools, but should be around 2-4 MH/s, corroborated with the author's CACM paper.
 

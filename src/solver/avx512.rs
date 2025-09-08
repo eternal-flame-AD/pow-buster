@@ -8,15 +8,21 @@ use core::arch::x86_64::*;
 static LANE_ID_MSB_STR: Align16<[u8; 5 * 16]> =
     Align16(*b"11111111112222222222333333333344444444445555555555666666666677777777778888888888");
 
+static LANE_ID_MSB_STR_0: Align16<[u8; 6 * 16]> =
+    Align16(*b"000000000011111111112222222222333333333344444444445555555555666666666677777777778888888888999999");
+
 static LANE_ID_LSB_STR: Align16<[u8; 5 * 16]> =
     Align16(*b"01234567890123456789012345678901234567890123456789012345678901234567890123456789");
+
+static LANE_ID_LSB_STR_0: Align16<[u8; 6 * 16]> =
+    Align16(*b"012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345");
 
 #[cfg(feature = "compare-64bit")]
 const INDEX_REMAP_PUNPCKLDQ: [usize; 16] = [0, 1, 4, 5, 8, 9, 12, 13, 2, 3, 6, 7, 10, 11, 14, 15];
 
 #[inline(always)]
-fn load_lane_id_epi32(src: &Align16<[u8; 5 * 16]>, set_idx: usize) -> __m512i {
-    debug_assert!(set_idx < 5);
+fn load_lane_id_epi32<const N: usize>(src: &Align16<[u8; N]>, set_idx: usize) -> __m512i {
+    debug_assert!(set_idx * 16 < N);
     unsafe { _mm512_cvtepi8_epi32(_mm_load_si128(src.as_ptr().add(set_idx * 16).cast())) }
 }
 
@@ -58,6 +64,10 @@ impl SingleBlockSolver {
     }
 }
 
+const MUTATION_TYPE_UNALIGNED: u8 = 0;
+const MUTATION_TYPE_ALIGNED: u8 = 1;
+const MUTATION_TYPE_ALIGNED_OCTAL: u8 = MUTATION_TYPE_ALIGNED | 2;
+
 impl crate::solver::Solver for SingleBlockSolver {
     fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
         if self.attempted_nonces >= self.limit {
@@ -88,7 +98,7 @@ impl crate::solver::Solver for SingleBlockSolver {
             const DIGIT_WORD_IDX0: usize,
             const DIGIT_WORD_IDX1_INCREMENT: bool,
             const UPWARDS: bool,
-            const ON_REGISTER_BOUNDARY: bool,
+            const MUTATION_TYPE: u8,
         >(
             this: &mut SingleBlockSolver,
             #[cfg(not(feature = "compare-64bit"))] target: u32,
@@ -112,16 +122,37 @@ impl crate::solver::Solver for SingleBlockSolver {
             let lane_id_0_byte_idx = this.message.digit_index % 4;
             let lane_id_1_byte_idx = (this.message.digit_index + 1) % 4;
             let mut inner_key_buf = Align16(*b"0000\x80000");
-            for prefix_set_index in 0..5 {
+
+            for prefix_set_index in 0..(if MUTATION_TYPE == MUTATION_TYPE_ALIGNED_OCTAL {
+                6
+            } else {
+                5
+            }) {
                 unsafe {
-                    let lane_id_0_or_value = _mm512_sll_epi32(
-                        load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index),
-                        _mm_set1_epi64x(((3 - lane_id_0_byte_idx) * 8) as _),
-                    );
-                    let lane_id_1_or_value = _mm512_sll_epi32(
-                        load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index),
-                        _mm_set1_epi64x(((3 - lane_id_1_byte_idx) * 8) as _),
-                    );
+                    let (lane_id_0_or_value, lane_id_1_or_value) =
+                        if MUTATION_TYPE == MUTATION_TYPE_ALIGNED_OCTAL {
+                            let lane_id_0_or_value = _mm512_sll_epi32(
+                                load_lane_id_epi32(&LANE_ID_MSB_STR_0, prefix_set_index),
+                                _mm_set1_epi64x(((3 - lane_id_0_byte_idx) * 8) as _),
+                            );
+                            let lane_id_1_or_value = _mm512_sll_epi32(
+                                load_lane_id_epi32(&LANE_ID_LSB_STR_0, prefix_set_index),
+                                _mm_set1_epi64x(((3 - lane_id_1_byte_idx) * 8) as _),
+                            );
+
+                            (lane_id_0_or_value, lane_id_1_or_value)
+                        } else {
+                            let lane_id_0_or_value = _mm512_sll_epi32(
+                                load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index),
+                                _mm_set1_epi64x(((3 - lane_id_0_byte_idx) * 8) as _),
+                            );
+                            let lane_id_1_or_value = _mm512_sll_epi32(
+                                load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index),
+                                _mm_set1_epi64x(((3 - lane_id_1_byte_idx) * 8) as _),
+                            );
+
+                            (lane_id_0_or_value, lane_id_1_or_value)
+                        };
 
                     let lane_id_0_or_value_v = if !DIGIT_WORD_IDX1_INCREMENT {
                         _mm512_or_epi32(lane_id_0_or_value, lane_id_1_or_value)
@@ -129,10 +160,16 @@ impl crate::solver::Solver for SingleBlockSolver {
                         lane_id_0_or_value
                     };
 
-                    let inner_iteration_end = if remaining_limit < 10_000_000 {
-                        remaining_limit as u32
+                    let max_iterations = if MUTATION_TYPE == MUTATION_TYPE_ALIGNED_OCTAL {
+                        0o10_000_000
                     } else {
                         10_000_000
+                    };
+
+                    let inner_iteration_end = if remaining_limit < max_iterations as u64 {
+                        remaining_limit as u32
+                    } else {
+                        max_iterations
                     };
                     remaining_limit -= inner_iteration_end as u64;
 
@@ -155,11 +192,15 @@ impl crate::solver::Solver for SingleBlockSolver {
                                         _mm512_set1_epi32(this.message.message[$idx] as _),
                                         lane_id_1_or_value,
                                     )
-                                } else if ON_REGISTER_BOUNDARY && $idx == DIGIT_WORD_IDX0 + 1 {
+                                } else if (MUTATION_TYPE_ALIGNED & MUTATION_TYPE != 0)
+                                    && $idx == DIGIT_WORD_IDX0 + 1
+                                {
                                     _mm512_set1_epi32(
                                         (inner_key_buf.as_ptr().cast::<u32>().read()) as _,
                                     )
-                                } else if ON_REGISTER_BOUNDARY && $idx == DIGIT_WORD_IDX0 + 2 {
+                                } else if (MUTATION_TYPE_ALIGNED & MUTATION_TYPE != 0)
+                                    && $idx == DIGIT_WORD_IDX0 + 2
+                                {
                                     _mm512_set1_epi32(
                                         (inner_key_buf.as_ptr().add(4).cast::<u32>().read()) as _,
                                     )
@@ -269,9 +310,12 @@ impl crate::solver::Solver for SingleBlockSolver {
                             let success_lane_idx = INDEX_REMAP_PUNPCKLDQ
                                 [_tzcnt_u16(met_target_high << 8 | met_target_lo) as usize];
 
-                            let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
+                            let mut nonce_prefix = 16 * prefix_set_index + success_lane_idx;
+                            if MUTATION_TYPE != MUTATION_TYPE_ALIGNED_OCTAL {
+                                nonce_prefix += 10;
+                            }
 
-                            if ON_REGISTER_BOUNDARY {
+                            if MUTATION_TYPE_ALIGNED & MUTATION_TYPE != 0 {
                                 this.message.message[DIGIT_WORD_IDX0 + 1] =
                                     inner_key_buf.as_ptr().cast::<u32>().read();
                                 this.message.message[DIGIT_WORD_IDX0 + 2] =
@@ -290,15 +334,29 @@ impl crate::solver::Solver for SingleBlockSolver {
                                 ) = (nonce_prefix % 10) as u8 + b'0';
                             }
 
+                            let mut decimal_inner_key = next_inner_key as u64 - 1;
+                            if MUTATION_TYPE == MUTATION_TYPE_ALIGNED_OCTAL {
+                                decimal_inner_key = 0;
+                                let mut key_octal = next_inner_key - 1;
+                                for m in (0..7u32).map(|i| 10u64.pow(i)) {
+                                    let output = key_octal % 8;
+                                    key_octal /= 8;
+                                    decimal_inner_key += output as u64 * m;
+                                }
+                            }
+
                             // the nonce is the 7 digits in the message, plus the first two digits recomputed from the lane index
-                            return Some(
-                                nonce_prefix as u64 * 10u64.pow(7) + next_inner_key as u64 - 1,
-                            );
+                            return Some(nonce_prefix as u64 * 10u64.pow(7) + decimal_inner_key);
                         }
 
                         this.attempted_nonces += 16;
 
-                        if ON_REGISTER_BOUNDARY {
+                        if MUTATION_TYPE == MUTATION_TYPE_ALIGNED_OCTAL {
+                            crate::strings::to_octal_7::<true, 0x80>(
+                                &mut inner_key_buf,
+                                next_inner_key,
+                            )
+                        } else if MUTATION_TYPE == MUTATION_TYPE_ALIGNED {
                             crate::strings::simd_itoa8::<7, true, 0x80>(
                                 &mut inner_key_buf,
                                 next_inner_key,
@@ -339,9 +397,24 @@ impl crate::solver::Solver for SingleBlockSolver {
         macro_rules! dispatch {
             ($idx0:literal, $idx1_inc:literal) => {
                 if self.message.digit_index % 4 == 2 {
-                    solve_inner::<$idx0, $idx1_inc, UPWARDS, true>(self, compact_target)
+                    // if we have to much search space it doesn't matter
+                    // use the octal kernel
+                    if self.message.approx_working_set_count.get() >= 100 {
+                        solve_inner::<$idx0, $idx1_inc, UPWARDS, MUTATION_TYPE_ALIGNED_OCTAL>(
+                            self,
+                            compact_target,
+                        )
+                    } else {
+                        solve_inner::<$idx0, $idx1_inc, UPWARDS, MUTATION_TYPE_ALIGNED>(
+                            self,
+                            compact_target,
+                        )
+                    }
                 } else {
-                    solve_inner::<$idx0, $idx1_inc, UPWARDS, false>(self, compact_target)
+                    solve_inner::<$idx0, $idx1_inc, UPWARDS, MUTATION_TYPE_UNALIGNED>(
+                        self,
+                        compact_target,
+                    )
                 }
             };
             ($idx0:literal) => {
@@ -444,18 +517,20 @@ impl crate::solver::Solver for DoubleBlockSolver {
         crate::sha256::do_message_schedule_k_w(&mut terminal_message_schedule);
 
         let mut itoa_buf = Align16(*b"0000\x80000");
-        for prefix_set_index in 0..5 {
+        // the addend is definitely not zero for double block solver, so we can start at 0
+        // to recoup some lost search space from using octal digits
+        for prefix_set_index in 0..(LANE_ID_LSB_STR_0.len() / 16) {
             unsafe {
                 let lane_id_0_or_value =
-                    _mm512_slli_epi32(load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index), 8);
-                let lane_id_1_or_value = load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index);
+                    _mm512_slli_epi32(load_lane_id_epi32(&LANE_ID_MSB_STR_0, prefix_set_index), 8);
+                let lane_id_1_or_value = load_lane_id_epi32(&LANE_ID_LSB_STR_0, prefix_set_index);
 
                 let lane_index_value_v = _mm512_or_epi32(
                     _mm512_set1_epi32(self.message.message[13] as _),
                     _mm512_or_epi32(lane_id_0_or_value, lane_id_1_or_value),
                 );
 
-                for next_inner_key in 1..=10_000_000 {
+                for next_inner_key in 1..=0o10_000_000 {
                     let cum0 = itoa_buf.as_ptr().cast::<u32>().read();
                     let cum1 = itoa_buf.as_ptr().add(4).cast::<u32>().read();
 
@@ -558,7 +633,7 @@ impl crate::solver::Solver for DoubleBlockSolver {
                         let success_lane_idx = INDEX_REMAP_PUNPCKLDQ
                             [_tzcnt_u16(met_target_high << 8 | met_target_lo) as usize];
 
-                        let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
+                        let nonce_prefix = 16 * prefix_set_index + success_lane_idx;
 
                         self.message.message[14] = cum0;
                         self.message.message[15] = cum1;
@@ -583,9 +658,17 @@ impl crate::solver::Solver for DoubleBlockSolver {
                         terminal_message[15] = (self.message.message_length * 8) as u32;
                         crate::sha256::digest_block(&mut final_sha_state, &terminal_message);
 
-                        let computed_nonce =
-                            nonce_prefix as u64 * 10u64.pow(7) + next_inner_key as u64 - 1
-                                + self.message.nonce_addend;
+                        let mut decimal_inner_key = 0;
+                        let mut key_octal = next_inner_key - 1;
+                        for m in (0..7u32).map(|i| 10u64.pow(i)) {
+                            let output = key_octal % 8;
+                            key_octal /= 8;
+                            decimal_inner_key += output as u64 * m;
+                        }
+
+                        let computed_nonce = nonce_prefix as u64 * 10u64.pow(7)
+                            + decimal_inner_key
+                            + self.message.nonce_addend;
 
                         // the nonce is the 8 digits in the message, plus the first two digits recomputed from the lane index
                         return Some((computed_nonce, *final_sha_state));
@@ -597,7 +680,7 @@ impl crate::solver::Solver for DoubleBlockSolver {
                         return None;
                     }
 
-                    crate::strings::simd_itoa8::<7, true, 0x80>(&mut itoa_buf, next_inner_key);
+                    crate::strings::to_octal_7::<true, 0x80>(&mut itoa_buf, next_inner_key);
                 }
             }
         }

@@ -14,6 +14,8 @@ pub struct SingleBlockMessage {
     pub digit_index: usize,
 
     pub nonce_addend: u64,
+
+    pub approx_working_set_count: core::num::NonZeroU64,
 }
 
 impl SingleBlockMessage {
@@ -22,6 +24,7 @@ impl SingleBlockMessage {
         let mut prefix_state = sha256::IV;
         let mut nonce_addend = 0u64;
         let mut complete_blocks_before = 0;
+        let mut approx_working_set_count = 1;
 
         // first consume all full blocks, this is shared so use scalar reference implementation
         while prefix.len() >= 64 {
@@ -46,6 +49,7 @@ impl SingleBlockMessage {
                 is_fitst_digit = false;
                 1u8
             } else {
+                approx_working_set_count *= 10;
                 let digit = working_set % 10;
                 working_set /= 10;
                 digit as u8
@@ -168,6 +172,7 @@ impl SingleBlockMessage {
             prefix_state,
             digit_index,
             nonce_addend,
+            approx_working_set_count: approx_working_set_count.try_into().unwrap(),
         })
     }
 }
@@ -242,6 +247,15 @@ impl DoubleBlockMessage {
             nonce_addend += pad as u64;
             *message.get_mut(ptr)? = b'0' + pad;
             ptr += 1;
+        }
+        if working_set == 0 {
+            debug_assert!(
+                nonce_addend >= 10,
+                concat!(
+                    "using octal nonces shrink search space",
+                    ", thus at least 10x available set of padding nonces must be available to compensate."
+                )
+            );
         }
         nonce_addend *= 1_000_000_000;
 

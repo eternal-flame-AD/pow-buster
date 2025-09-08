@@ -81,6 +81,54 @@
     <script type="module">
         import init, { solve_anubis_json } from "/pkg/simd_mcaptcha.js";
 
+        let solver = null;
+        let worker = null;
+        let solutionResolver = null;
+
+        const moduleLoadedEl = document.getElementById("module-loaded-value");
+        const loadPromise = new Promise((resolve, reject) => {
+            worker = new Worker("/worker.js", { type: "module" });
+            worker.onmessage = (e) => {
+                switch (e.data.type) {
+                    case "ready":
+                        moduleLoadedEl.innerText = "YES (WebWorker)";
+                        solver = (json) => {
+                            return new Promise((resolve, reject) => {
+                                solutionResolver = resolve;
+                                worker.postMessage({
+                                    type: "solve",
+                                    json,
+                                });
+                            });
+                        };
+                        resolve();
+                        break;
+                    case "solution":
+                        solutionResolver({ ...e.data.solution, "method": "webworker" });
+                        break;
+                    case "error":
+                        reject(e.data.message);
+                        break;
+                }
+            };
+        });
+
+        try {
+            await loadPromise;
+        } catch (e) {
+            console.error("error loading solver with webworker", e);
+            try {
+                init();
+                moduleLoadedEl.innerText = "YES (Sync WASM)";
+                solver = async (json) => {
+                    return { ...solve_anubis_json(json), "method": "sync wasm" };
+                };
+            } catch (e) {
+                moduleLoadedEl.innerText = "ERROR: " + e;
+                throw e;
+            }
+        }
+
         function copyToClipboard(text) {
             const textArea = document.createElement("textarea");
             textArea.value = text;
@@ -92,17 +140,9 @@
 
         const encoder = new TextEncoder();
 
-        const moduleLoadedEl = document.getElementById("module-loaded-value");
         const wasmErrorEl = document.getElementById("wasm-error-value");
         const wasmResultsInnerEl = document.getElementById("wasm-results-inner");
 
-        try {
-            init();
-            moduleLoadedEl.innerText = "YES";
-        } catch (e) {
-            moduleLoadedEl.innerText = "ERROR: " + e;
-            throw e;
-        }
 
         const passChallengeLinkEl = document.getElementById("pass-challenge-link-value");
 
@@ -130,44 +170,44 @@
             }
         }
 
-        // window.location.replace("/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime=100&response=0000e5564f23364476dfb44492f0fb969f10f03d25c1a9d7547a288bf820c3d1&nonce=11111111130000867&redir=" + encodeURIComponent(window.location.href));
-
         const solveButton = document.getElementById("solve-wasm");
         solveButton.addEventListener("click", () => {
             let json = findJson(challengeEl.value);
             if (json) {
+                solveButton.disabled = true;
+                solveButton.innerText = "Busy...";
                 const start = performance.now();
                 console.log("solving anubis json", json);
 
-                try {
-                    const result = solve_anubis_json(json);
+                solver(json).then((result) => {
                     const end = performance.now();
                     const duration = end - start;
 
                     console.log("result", result);
-
                     console.log("duration", duration);
-                    console.log("delay", result.delay);
 
                     setTimeout(() => {
                         let finalUrl = "/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime=" + result.delay + "&response=" + result.response + "&nonce=" + result.nonce + "&redir=/";
                         console.log("final url", finalUrl);
                         passChallengeLinkEl.innerText = finalUrl;
                         attemptedNoncesEl.innerText = result.attempted_nonces;
+                        hashRateEl.innerText = "N/A";
                         if (duration >= 50) {
                             latencyEl.innerText = duration.toFixed(1) + "ms";
-                            hashRateEl.innerText = duration > 0 ? (result.attempted_nonces / duration / 1024).toFixed(3) + " MH/s" : "N/A";
+                            hashRateEl.innerText = (Number(result.attempted_nonces) / duration / 1024).toFixed(3) + " MH/s";
                         } else {
                             latencyEl.innerText = "<50ms";
-                            hashRateEl.innerText = "N/A";
                         }
                         wasmResultsInnerEl.classList.remove("hidden");
                     }, Math.max(0, result.delay - duration));
-                } catch (e) {
+                }).catch((e) => {
                     console.error("error in wasm solver", e);
                     wasmErrorEl.innerText = "ERROR: " + e;
                     wasmResultsInnerEl.classList.remove("hidden");
-                }
+                }).finally(() => {
+                    solveButton.disabled = false;
+                    solveButton.innerText = "Solve in WASM";
+                });
             }
         });
         solveButton.disabled = false;

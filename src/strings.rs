@@ -405,9 +405,66 @@ pub(crate) fn simd_itoa8<const N: usize, const REGISTER_BSWAP: bool, const PLACE
     }
 }
 
+#[cfg(not(target_feature = "avx512f"))]
+pub(crate) fn to_octal_7<const REGISTER_BSWAP: bool, const PLACEHOLDER: u8>(
+    out: &mut Align16<[u8; 8]>,
+    mut input: u32,
+) {
+    out.fill(PLACEHOLDER);
+    for i in (0..7).rev() {
+        out[i] = ((input & 0b111) as u8) + b'0';
+        input >>= 3;
+    }
+    if REGISTER_BSWAP {
+        let mut out_ptr = out.as_mut_ptr().cast::<u32>();
+        unsafe {
+            *out_ptr = (*out_ptr).swap_bytes();
+            out_ptr = out_ptr.add(1);
+            *out_ptr = (*out_ptr).swap_bytes();
+        }
+    }
+}
+
+#[cfg(target_feature = "avx512f")]
+pub(crate) fn to_octal_7<const REGISTER_BSWAP: bool, const PLACEHOLDER: u8>(
+    out: &mut Align16<[u8; 8]>,
+    input: u32,
+) {
+    use core::arch::x86_64::*;
+
+    unsafe {
+        let mut x = _mm256_set1_epi32(input as _);
+        if REGISTER_BSWAP {
+            x = _mm256_srlv_epi32(x, _mm256_setr_epi32(9, 12, 15, 18, 0, 0, 3, 6));
+        } else {
+            x = _mm256_srlv_epi32(x, _mm256_setr_epi32(18, 15, 12, 9, 6, 3, 0, 0));
+        }
+        x = _mm256_and_si256(x, _mm256_set1_epi32(0b111));
+        x = _mm256_or_epi32(x, _mm256_set1_epi32(b'0' as _));
+        let mut d = _mm256_cvtepi32_epi8(x);
+        if REGISTER_BSWAP {
+            d = _mm_insert_epi8(d, PLACEHOLDER as _, 4);
+        } else {
+            d = _mm_insert_epi8(d, PLACEHOLDER as _, 7);
+        }
+        let val = _mm_cvtsi128_si64(d) as u64;
+        out.as_mut_ptr().cast::<u64>().write(val);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_to_octal_7() {
+        let i = 0o1234567;
+        let mut buf = Align16([0u8; 8]);
+        to_octal_7::<false, 0x80>(&mut buf, i);
+        assert_eq!(buf, Align16(*b"1234567\x80"));
+        to_octal_7::<true, 0x80>(&mut buf, i);
+        assert_eq!(buf, Align16(*b"4321\x80765"));
+    }
 
     #[test]
     fn test_itoa() {
