@@ -47,6 +47,8 @@ I personally don't like some projects put themselves at the ethical high ground 
 
 ## Building
 
+MSRV: Rust 1.89+.
+
 Requires AVX-512 (cpuid: `avx512f`) or SHA-NI+SSE4.1 (cpuid: `sha`, `sse4_1`) CPU or SIMD128 on WASM. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard). There is a pure Rust scalar fallback that should make the code compile and work regardless.
 
 Recommended CPU feature flags in order of preference:
