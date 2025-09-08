@@ -184,6 +184,10 @@ pub const fn compute_target_64(difficulty_factor: u64) -> u128 {
 
 /// Compute the target for an Anubis PoW
 pub const fn compute_target_anubis(difficulty_factor: NonZeroU8) -> u128 {
+    // some people misconfigure with difficulty 0
+    if difficulty_factor.get() == 0 {
+        return u128::MAX;
+    }
     1u128 << (128 - difficulty_factor.get() * 4)
 }
 

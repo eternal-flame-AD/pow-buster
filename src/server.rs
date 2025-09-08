@@ -14,8 +14,11 @@ use axum_extra::response::JavaScript;
 use tokio::sync::Semaphore;
 
 use crate::{
-    Align16,
+    Align16, DecimalSolver,
     adapter::{AnubisChallengeDescriptor, GoAwayConfig},
+    compute_target_anubis,
+    message::DecimalMessage,
+    solver::Solver,
 };
 
 #[cfg(feature = "server-wasm")]
@@ -113,6 +116,7 @@ impl AppState {
             .route("/worker.js", get(serve_worker))
             .route("/solve", post(solve_generic))
             .route("/pkg/{*file}", get(serve_wasm))
+            .route("/api/anubis_offload", post(anubis_offload_api))
             .layer(tower_http::limit::RequestBodyLimitLayer::new(128 << 10))
             .layer(
                 tower_http::trace::TraceLayer::new_for_http()
@@ -373,6 +377,154 @@ async fn solve_goaway(
     output.extend_from_slice(b" + encodeURIComponent(window.location.href));");
 
     Ok(String::from_utf8(output).unwrap())
+}
+
+#[derive(serde::Serialize)]
+struct OffloadResponseMeta {
+    elapsed: u64,
+    attempted_nonces: u64,
+}
+
+#[derive(serde::Serialize)]
+struct OffloadResponse {
+    hash: String,
+    data: String,
+    difficulty: u8,
+    nonce: String,
+    #[serde(rename = "_meta")]
+    meta: OffloadResponseMeta,
+}
+
+#[derive(serde::Deserialize)]
+struct OffloadForm {
+    data: String,
+    difficulty: u8,
+}
+
+#[tracing::instrument(skip(state, form), name = "offload_api")]
+async fn anubis_offload_api(
+    State(state): State<AppState>,
+    form: Json<OffloadForm>,
+) -> Result<Json<OffloadResponse>, SolveError> {
+    let form = form.0;
+
+    let estimated_workload = 16u64.pow(form.difficulty as u32);
+    if estimated_workload > state.effective_limit() {
+        return Err(SolveError::EstimatedWorkloadGreaterThanLimit {
+            limit: state.effective_limit(),
+            estimated: estimated_workload,
+        });
+    }
+
+    let target = compute_target_anubis(form.difficulty.try_into().unwrap());
+    let target_bytes = target.to_be_bytes();
+    let target_u32s = core::array::from_fn(|i| {
+        u32::from_be_bytes([
+            target_bytes[i * 4],
+            target_bytes[i * 4 + 1],
+            target_bytes[i * 4 + 2],
+            target_bytes[i * 4 + 3],
+        ])
+    });
+
+    let ((result, attempted_nonces), elapsed) = if form.difficulty
+        <= if cfg!(target_feature = "avx512f") {
+            5
+        } else {
+            4
+        }
+    /* 4096 or 65535, takes more cycles to acquire the semaphore than just get the result */
+    {
+        let start = std::time::Instant::now();
+        let mut solver = DecimalSolver::from(
+            DecimalMessage::new(form.data.as_bytes(), 0).ok_or(SolveError::InvalidChallenge)?,
+        );
+        solver.set_limit(state.limit);
+        let result = solver.solve::<false>(target_u32s);
+        let elapsed = start.elapsed();
+        ((result, solver.get_attempted_nonces()), elapsed)
+    } else {
+        let _permit = state.semaphore.acquire().await.unwrap();
+
+        let data_clone = form.data.clone();
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let mut message =
+            DecimalMessage::new(data_clone.as_bytes(), 0).ok_or(SolveError::InvalidChallenge)?;
+        state.pool.spawn(move || {
+            let start = std::time::Instant::now();
+            let mut total_attempted_nonces = 0;
+            for next_search_bank in 1.. {
+                if state.limit <= total_attempted_nonces {
+                    tx.send(((None, total_attempted_nonces), start.elapsed()))
+                        .ok();
+                    return;
+                }
+
+                let mut solver = DecimalSolver::from(message);
+                solver.set_limit(state.limit);
+                let result = solver.solve::<false>(target_u32s);
+                total_attempted_nonces += solver.get_attempted_nonces();
+                if let Some((result, hash)) = result {
+                    tx.send((
+                        (Some((result, hash)), total_attempted_nonces),
+                        start.elapsed(),
+                    ))
+                    .ok();
+                    return;
+                }
+                message = match DecimalMessage::new(data_clone.as_bytes(), next_search_bank) {
+                    Some(message) => message,
+                    None => {
+                        tx.send(((None, total_attempted_nonces), start.elapsed()))
+                            .ok();
+                        return;
+                    }
+                };
+            }
+            tx.send(((None, total_attempted_nonces), start.elapsed()))
+                .ok();
+        });
+
+        rx.await.map_err(|_| SolveError::SolverFatal)?
+    };
+
+    let Some((nonce, hash)) = result else {
+        return Err(SolveError::SolverFailed {
+            limit: state.limit,
+            attempted: attempted_nonces,
+        });
+    };
+
+    let mut hash_hex = vec![0u8; 64];
+    for i in 0..8 {
+        let bytes = hash[i].to_be_bytes();
+        for j in 0..4 {
+            let high_nibble = bytes[j] >> 4;
+            let low_nibble = bytes[j] & 0x0f;
+            hash_hex[i * 8 + j * 2] = if high_nibble < 10 {
+                b'0' + high_nibble
+            } else {
+                b'a' + high_nibble - 10
+            };
+            hash_hex[i * 8 + j * 2 + 1] = if low_nibble < 10 {
+                b'0' + low_nibble
+            } else {
+                b'a' + low_nibble - 10
+            };
+        }
+    }
+
+    Ok(Json(OffloadResponse {
+        meta: OffloadResponseMeta {
+            elapsed: elapsed.as_millis() as u64,
+            attempted_nonces,
+        },
+        hash: String::from_utf8_lossy(&hash_hex).to_string(),
+        data: form.data.clone(),
+        difficulty: form.difficulty,
+        nonce: nonce.to_string(),
+    }))
 }
 
 #[tracing::instrument(skip(state, descriptor), name = "solve_anubis")]

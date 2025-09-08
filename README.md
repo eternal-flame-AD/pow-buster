@@ -45,6 +45,7 @@ I personally don't like some projects put themselves at the ethical high ground 
 - Fully unrolled and monomorphic core friendly to pipelining and ternary logic instruction lowering
 - Short-circuiting comparison with $H_1 \to H_7$ feedback elision with optional 64-bit support
 - Switch to octal nonces when success rate is overwhelming
+- An API compatible with [anubis_offload](https://github.com/DavidBuchanan314/anubis_offload/) but doesn't need a GPU to run.
 
 ## Building
 

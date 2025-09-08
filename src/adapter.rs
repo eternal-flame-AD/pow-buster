@@ -133,9 +133,9 @@ pub struct AnubisRules {
 }
 
 impl AnubisRules {
-    // if the instant is instantly solved and not worth task spawning
+    // if the instant is instantly or almost instantly solved and not worth task spawning
     pub fn instant(&self) -> bool {
-        return self.algorithm == "preact";
+        return self.algorithm == "preact" || self.difficulty < 4;
     }
 
     pub fn algorithm(&self) -> &str {
