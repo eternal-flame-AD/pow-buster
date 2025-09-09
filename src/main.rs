@@ -528,9 +528,9 @@ fn main() {
                                         failed_clone.fetch_add(1, Ordering::Relaxed);
                                     }
                                 };
-                                let mut packed_time = start.elapsed().as_micros() as u64 / 10;
-                                packed_time <<=32;
-                                packed_time += iotime as u64 / 10;
+                                let mut packed_time = start.elapsed().as_micros() as u64 / 16;
+                                packed_time <<= 32;
+                                packed_time += iotime as u64 / 16;
                                 packed_time_clone.fetch_add(packed_time, Ordering::Relaxed);
                             },
                         }
