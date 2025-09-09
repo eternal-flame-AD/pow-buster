@@ -528,9 +528,9 @@ fn main() {
                                         failed_clone.fetch_add(1, Ordering::Relaxed);
                                     }
                                 };
-                                let mut packed_time = start.elapsed().as_micros() as u64;
+                                let mut packed_time = start.elapsed().as_micros() as u64 / 10;
                                 packed_time <<=32;
-                                packed_time += iotime as u64;
+                                packed_time += iotime as u64 / 10;
                                 packed_time_clone.fetch_add(packed_time, Ordering::Relaxed);
                             },
                         }
@@ -554,7 +554,7 @@ fn main() {
                     let total = (packed_time >> 32) as u32;
 
                     eprintln!(
-                        "[{:.1}s] proofs accepted: {}, failed: {}, 5s: {:.1}pps, 5s_failed: {:.1}rps, {:.2}% iowait",
+                        "[{:.1}s] proofs accepted: {}, failed: {}, 5s: {:.1}pps, 5s_failed: {:.1}rps, {:.2}% http_wait",
                         elapsed.as_secs_f32(),
                         succeeded,
                         failed,
