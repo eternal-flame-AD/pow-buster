@@ -109,119 +109,126 @@ pub(crate) mod tests {
     >(
         mut factory: F,
     ) {
-        const SALT: &str = "z";
+        #[cfg(debug_assertions)]
+        let salts = [b'A'];
+        #[cfg(not(debug_assertions))]
+        let salts = *b"Ax_?"; // test a variety of salts in optimized builds
+        for salt in salts {
+            for phrase_len in 0..64 {
+                let mut concatenated_prefix = vec![salt];
+                let phrase_str = String::from_iter(std::iter::repeat('a').take(phrase_len));
+                concatenated_prefix.extend_from_slice(&bincode::serialize(&phrase_str).unwrap());
 
-        for phrase_len in 0..64 {
-            let mut concatenated_prefix = SALT.as_bytes().to_vec();
-            let phrase_str = String::from_iter(std::iter::repeat('a').take(phrase_len));
-            concatenated_prefix.extend_from_slice(&bincode::serialize(&phrase_str).unwrap());
-
-            let config = pow_sha256::Config { salt: SALT.into() };
-            const DIFFICULTY: u32 = 100_000;
-            const ANUBIS_DIFFICULTY: NonZeroU8 = NonZeroU8::new(4).unwrap();
-
-            for search_space in [0, 1, 9, 10, 11] {
-                let Some(mut solver) = factory(&concatenated_prefix, search_space) else {
-                    assert_ne!(
-                        search_space, 0,
-                        "solver is None for search_space: {}",
-                        search_space
-                    );
-                    break;
+                let config = pow_sha256::Config {
+                    salt: String::from_utf8(vec![salt]).unwrap(),
                 };
-                let Some(mut anubis_solver) = factory(&concatenated_prefix, search_space) else {
-                    assert_ne!(
-                        search_space, 0,
-                        "anubis solver is None for search_space: {}",
-                        search_space
-                    );
-                    break;
-                };
+                const DIFFICULTY: u32 = 100_000;
+                const ANUBIS_DIFFICULTY: NonZeroU8 = NonZeroU8::new(4).unwrap();
 
-                let target_bytes = compute_target(DIFFICULTY).to_be_bytes();
-                let target_u32s = core::array::from_fn(|i| {
-                    u32::from_be_bytes([
-                        target_bytes[i * 4],
-                        target_bytes[i * 4 + 1],
-                        target_bytes[i * 4 + 2],
-                        target_bytes[i * 4 + 3],
-                    ])
-                });
-                let target_anubis = compute_target_anubis(ANUBIS_DIFFICULTY);
-                let target_anubis_bytes = target_anubis.to_be_bytes();
-                let target_anubis_u32s = core::array::from_fn(|i| {
-                    u32::from_be_bytes([
-                        target_anubis_bytes[i * 4],
-                        target_anubis_bytes[i * 4 + 1],
-                        target_anubis_bytes[i * 4 + 2],
-                        target_anubis_bytes[i * 4 + 3],
-                    ])
-                });
-                let (nonce, result) = solver.solve::<true>(target_u32s).expect("solver failed");
-                let result_128 = extract128_be(result);
-                let (anubis_nonce, anubis_result) = anubis_solver
-                    .solve::<false>(target_anubis_u32s)
-                    .expect("solver failed");
-                let anubis_result_128 = extract128_be(anubis_result);
-                let anubis_result_bytes = anubis_result_128.to_be_bytes();
-                assert!(
-                    target_anubis > anubis_result_128,
-                    "[{}] target_anubis: {:016x} <= anubis_result: {:016x} (solver: {}, search_space: {})",
-                    core::any::type_name::<S>(),
-                    target_anubis,
-                    anubis_result_128,
-                    core::any::type_name::<S>(),
-                    search_space
-                );
+                for search_space in [0, 1, 9, 10, 11] {
+                    let Some(mut solver) = factory(&concatenated_prefix, search_space) else {
+                        assert_ne!(
+                            search_space, 0,
+                            "solver is None for search_space: {}",
+                            search_space
+                        );
+                        break;
+                    };
+                    let Some(mut anubis_solver) = factory(&concatenated_prefix, search_space)
+                    else {
+                        assert_ne!(
+                            search_space, 0,
+                            "anubis solver is None for search_space: {}",
+                            search_space
+                        );
+                        break;
+                    };
 
-                let test_response = pow_sha256::PoWBuilder::default()
-                    .nonce(nonce)
-                    .result(result_128.to_string())
-                    .build()
-                    .unwrap();
-                assert_eq!(
-                    config.calculate(&test_response, &phrase_str).unwrap(),
-                    result_128,
-                    "test_response: {:?} (solver: {}, search_space: {})",
-                    test_response,
-                    core::any::type_name::<S>(),
-                    search_space
-                );
-
-                assert!(
-                    config.is_valid_proof(&test_response, &phrase_str),
-                    "{} is not valid proof (solver: {})",
-                    result_128,
-                    core::any::type_name::<S>()
-                );
-
-                assert!(
-                    config.is_sufficient_difficulty(&test_response, DIFFICULTY),
-                    "{:016x} is not sufficient difficulty, expected {:016x} (solver: {})",
-                    result_128,
-                    compute_target(DIFFICULTY),
-                    core::any::type_name::<S>()
-                );
-
-                let anubis_test_response =
-                    HashcashValidator::new_decimal(&concatenated_prefix, target_anubis);
-
-                assert!(anubis_test_response.validate(anubis_nonce, Some(&anubis_result)));
-
-                // based on proof-of-work.mjs
-                for i in 0..ANUBIS_DIFFICULTY.get() as usize {
-                    let byte_index = i / 2;
-                    let nibble_index = (1 - i % 2) as u8;
-
-                    let nibble = (anubis_result_bytes[byte_index] >> (nibble_index * 4)) & 0x0f;
-                    assert_eq!(
-                        nibble,
-                        0,
-                        "{:08x} is not valid anubis proof (solver: {}, nibble: {})",
+                    let target_bytes = compute_target(DIFFICULTY).to_be_bytes();
+                    let target_u32s = core::array::from_fn(|i| {
+                        u32::from_be_bytes([
+                            target_bytes[i * 4],
+                            target_bytes[i * 4 + 1],
+                            target_bytes[i * 4 + 2],
+                            target_bytes[i * 4 + 3],
+                        ])
+                    });
+                    let target_anubis = compute_target_anubis(ANUBIS_DIFFICULTY);
+                    let target_anubis_bytes = target_anubis.to_be_bytes();
+                    let target_anubis_u32s = core::array::from_fn(|i| {
+                        u32::from_be_bytes([
+                            target_anubis_bytes[i * 4],
+                            target_anubis_bytes[i * 4 + 1],
+                            target_anubis_bytes[i * 4 + 2],
+                            target_anubis_bytes[i * 4 + 3],
+                        ])
+                    });
+                    let (nonce, result) = solver.solve::<true>(target_u32s).expect("solver failed");
+                    let result_128 = extract128_be(result);
+                    let (anubis_nonce, anubis_result) = anubis_solver
+                        .solve::<false>(target_anubis_u32s)
+                        .expect("solver failed");
+                    let anubis_result_128 = extract128_be(anubis_result);
+                    let anubis_result_bytes = anubis_result_128.to_be_bytes();
+                    assert!(
+                        target_anubis > anubis_result_128,
+                        "[{}] target_anubis: {:016x} <= anubis_result: {:016x} (solver: {}, search_space: {})",
+                        core::any::type_name::<S>(),
+                        target_anubis,
                         anubis_result_128,
                         core::any::type_name::<S>(),
-                        i
+                        search_space
                     );
+
+                    let test_response = pow_sha256::PoWBuilder::default()
+                        .nonce(nonce)
+                        .result(result_128.to_string())
+                        .build()
+                        .unwrap();
+                    assert_eq!(
+                        config.calculate(&test_response, &phrase_str).unwrap(),
+                        result_128,
+                        "test_response: {:?} (solver: {}, search_space: {})",
+                        test_response,
+                        core::any::type_name::<S>(),
+                        search_space
+                    );
+
+                    assert!(
+                        config.is_valid_proof(&test_response, &phrase_str),
+                        "{} is not valid proof (solver: {})",
+                        result_128,
+                        core::any::type_name::<S>()
+                    );
+
+                    assert!(
+                        config.is_sufficient_difficulty(&test_response, DIFFICULTY),
+                        "{:016x} is not sufficient difficulty, expected {:016x} (solver: {})",
+                        result_128,
+                        compute_target(DIFFICULTY),
+                        core::any::type_name::<S>()
+                    );
+
+                    let anubis_test_response =
+                        HashcashValidator::new_decimal(&concatenated_prefix, target_anubis);
+
+                    assert!(anubis_test_response.validate(anubis_nonce, Some(&anubis_result)));
+
+                    // based on proof-of-work.mjs
+                    for i in 0..ANUBIS_DIFFICULTY.get() as usize {
+                        let byte_index = i / 2;
+                        let nibble_index = (1 - i % 2) as u8;
+
+                        let nibble = (anubis_result_bytes[byte_index] >> (nibble_index * 4)) & 0x0f;
+                        assert_eq!(
+                            nibble,
+                            0,
+                            "{:08x} is not valid anubis proof (solver: {}, nibble: {})",
+                            anubis_result_128,
+                            core::any::type_name::<S>(),
+                            i
+                        );
+                    }
                 }
             }
         }
