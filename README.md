@@ -247,6 +247,14 @@ For us we have single thread:
 | DoubleBlock (mCaptcha edge case) | 53.28 MH/s              | 42.55 MH/s                    | Not Tested                               |
 | go-away (16 bytes)               | 98.42 MH/s              | 78.10 MH/s                    | Not Tested                               |
 
+On a mobile CPU (i7-11370H), similar performance can be achieved (at a higher IPC due to Intel having faster register rotations):
+
+| Workload                         | AVX-512        |
+| -------------------------------- | -------------- | 
+| SingleBlock/Anubis               | 72.30 MH/s     | 
+| DoubleBlock (mCaptcha edge case) | 44.84 MH/s     | 
+| go-away (16 bytes)               | 80.53 MH/s     | 
+
 The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and about 20% of that on Firefox, this is corroborated by Anubis's own accounts in their code comments using 7950X3D empirical testing. Empirical throughput of WASM-based mCaptcha is unreliable due to lack of official benchmark tools, but should be around 2-4 MH/s, corroborated with the author's CACM paper.
 
 #### Multi Threaded
