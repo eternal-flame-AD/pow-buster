@@ -87,30 +87,36 @@
 
         const moduleLoadedEl = document.getElementById("module-loaded-value");
         const loadPromise = new Promise((resolve, reject) => {
-            worker = new Worker("/worker.js", { type: "module" });
-            worker.onmessage = (e) => {
-                switch (e.data.type) {
-                    case "ready":
-                        moduleLoadedEl.innerText = "YES (WebWorker)";
-                        solver = (json) => {
-                            return new Promise((resolve, reject) => {
-                                solutionResolver = resolve;
-                                worker.postMessage({
-                                    type: "solve",
-                                    json,
+            try {
+                worker = new Worker("/worker.js", { type: "module" });
+
+                worker.onmessage = (e) => {
+                    switch (e.data.type) {
+                        case "ready":
+                            moduleLoadedEl.innerText = "YES (WebWorker)";
+                            solver = (json) => {
+                                return new Promise((resolve, reject) => {
+                                    solutionResolver = resolve;
+                                    worker.postMessage({
+                                        type: "solve",
+                                        json,
+                                    });
                                 });
-                            });
-                        };
-                        resolve();
-                        break;
-                    case "solution":
-                        solutionResolver({ ...e.data.solution, "method": "webworker" });
-                        break;
-                    case "error":
-                        reject(e.data.message);
-                        break;
-                }
-            };
+                            };
+                            resolve();
+                            break;
+                        case "solution":
+                            solutionResolver({ ...e.data.solution, "method": "webworker" });
+                            break;
+                        case "error":
+                            reject(e.data.message);
+                            break;
+                    }
+                };
+            } catch (e) {
+                console.error("error loading solver with webworker", e);
+                reject(e);
+            }
         });
 
         try {
