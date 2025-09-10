@@ -318,9 +318,9 @@ pub fn bench_proof_rayon(c: &mut Criterion) {
     group.sample_size(50);
     group.warm_up_time(Duration::from_secs(8));
     group.measurement_time(Duration::from_secs(15));
-    group.throughput(Throughput::Elements(1024 * 5_000_000));
+    group.throughput(Throughput::Elements(1024 * 1_000_000));
 
-    let target = compute_target(5_000_000);
+    let target = compute_target(1_000_000);
     let target_bytes = target.to_be_bytes();
     let target_u32s = core::array::from_fn(|i| {
         u32::from_be_bytes([
