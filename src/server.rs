@@ -631,8 +631,55 @@ async fn solve_anubis(
     Ok(String::from_utf8(output).unwrap())
 }
 
+static SERVER_HEADER_VALUE_BUF_LEN: ([u8; 256], usize) = {
+    let mut buf = [0u8; 256];
+    let mut i = 0;
+    let cargo_pkg_name = env!("CARGO_PKG_NAME").as_bytes();
+    let mut j = 0;
+    while i < 256 && j < cargo_pkg_name.len() {
+        buf[i] = cargo_pkg_name[j];
+        j += 1;
+        i += 1;
+    }
+    buf[i] = b'/';
+    i += 1;
+    j = 0;
+    let cargo_pkg_version = env!("CARGO_PKG_VERSION").as_bytes();
+    while i < 256 && j < cargo_pkg_version.len() {
+        buf[i] = cargo_pkg_version[j];
+        j += 1;
+        i += 1;
+    }
+    buf[i] = b' ';
+    i += 1;
+    buf[i] = b'(';
+    i += 1;
+    j = 0;
+    let solver_name = crate::SOLVER_NAME.as_bytes();
+    while i < 256 && j < solver_name.len() {
+        buf[i] = solver_name[j];
+        j += 1;
+        i += 1;
+    }
+    buf[i] = b')';
+    i += 1;
+    (buf, i)
+};
+
 async fn add_headers(req: Request<Body>, next: Next) -> Response {
-    let response = next.run(req).await;
+    let mut response = next.run(req).await;
+    response.headers_mut().insert(
+        "Server",
+        HeaderValue::from_static(unsafe {
+            std::str::from_utf8_unchecked(
+                &SERVER_HEADER_VALUE_BUF_LEN.0[..SERVER_HEADER_VALUE_BUF_LEN.1],
+            )
+        }),
+    );
+    response.headers_mut().insert(
+        "X-Content-Type-Options",
+        HeaderValue::from_static("nosniff"),
+    );
     response
 }
 

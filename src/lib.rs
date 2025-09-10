@@ -130,16 +130,19 @@ cfg_if::cfg_if! {
         pub type DoubleBlockSolver = crate::solver::avx512::DoubleBlockSolver;
         pub type DecimalSolver = crate::solver::avx512::DecimalSolver;
         pub type GoAwaySolver = crate::solver::avx512::GoAwaySolver;
+        pub const SOLVER_NAME: &str = "AVX-512";
     } else if #[cfg(target_feature = "sha")] {
         pub type SingleBlockSolver = crate::solver::sha_ni::SingleBlockSolver;
         pub type DoubleBlockSolver = crate::solver::sha_ni::DoubleBlockSolver;
         pub type DecimalSolver = crate::solver::sha_ni::DecimalSolver;
         pub type GoAwaySolver = crate::solver::sha_ni::GoAwaySolver;
+        pub const SOLVER_NAME: &str = "SHA-NI";
     } else {
         pub type SingleBlockSolver = crate::solver::safe::SingleBlockSolver;
         pub type DoubleBlockSolver = crate::solver::safe::DoubleBlockSolver;
         pub type DecimalSolver = crate::solver::safe::DecimalSolver;
         pub type GoAwaySolver = crate::solver::safe::GoAwaySolver;
+        pub const SOLVER_NAME: &str = "Fallback";
     }
 }
 
@@ -150,11 +153,13 @@ cfg_if::cfg_if! {
         pub type DoubleBlockSolver = crate::solver::simd128::DoubleBlockSolver;
         pub type DecimalSolver = crate::solver::simd128::DecimalSolver;
         pub type GoAwaySolver = crate::solver::simd128::GoAwaySolver;
+        pub const SOLVER_NAME: &str = "SIMD128";
     } else {
         pub type SingleBlockSolver = crate::solver::safe::SingleBlockSolver;
         pub type DoubleBlockSolver = crate::solver::safe::DoubleBlockSolver;
         pub type DecimalSolver = crate::solver::safe::DecimalSolver;
         pub type GoAwaySolver = crate::solver::safe::GoAwaySolver;
+        pub const SOLVER_NAME: &str = "Fallback";
     }
 }
 
