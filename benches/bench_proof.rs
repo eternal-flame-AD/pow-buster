@@ -1,5 +1,3 @@
-#![feature(random)]
-
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Throughput};
