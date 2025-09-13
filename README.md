@@ -340,9 +340,8 @@ These findings suggest that both designing and adopting a PoW-based CAPTCHA syst
 
 Contributions are welcome, roughly in priority order we want:
 
-0. A "Solver-as-a-Service" API so I can use it in a UserScript instead of manually "emulating" a solution.
 1. General profiling and further optimization.
-2. Would be nice to have a real WebGPU solution that runs side-by-side with the current real Captcha widget.
+2. Would be nice to have a WebGPU solution that can be used in a UserScript.
 3. An AVX-2 solution and corresponding benchmark. (low priority as this isn't really a "product")
 
 ## License and Acknowledgments
