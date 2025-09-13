@@ -165,6 +165,40 @@ pub fn bench_proof(c: &mut Criterion) {
         );
         group.bench_with_input(
             BenchmarkId::new(
+                "proof (capjs)",
+                ProofKey {
+                    difficulty,
+                    solver_type: "native",
+                },
+            ),
+            &difficulty,
+            |b, &_difficulty| {
+                static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+                b.iter_custom(|iters| {
+                    let start = std::time::Instant::now();
+                    for _ in 0..iters {
+                        for _ in 0..10 {
+                            let counter =
+                                COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let mut prefix = [0; 32]; // CapJS has a 32-byte prefix
+                            prefix[..8].copy_from_slice(&counter.to_ne_bytes());
+                            let mut solver: SingleBlockSolver = SingleBlockSolver::from(
+                                SingleBlockMessage::new(&prefix, 0).expect("solver is None"),
+                            );
+                            core::hint::black_box(
+                                solver
+                                    .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                                    .expect("solver failed"),
+                            );
+                        }
+                    }
+                    start.elapsed() / 10
+                })
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new(
                 "proof (double block)",
                 ProofKey {
                     difficulty,
@@ -413,11 +447,114 @@ pub fn bench_proof_rayon(c: &mut Criterion) {
     });
 }
 
+mod capjs_verbatim {
+    // license: Apache-2.0
+    // author: Tiago
+    // source: https://github.com/tiagozip/cap/blob/main/wasm/src/rust/src/lib.rs
+    use sha2::{Digest, Sha256};
+
+    pub fn solve_pow(salt: String, target: String) -> u64 {
+        let salt_bytes = salt.as_bytes();
+
+        let target_bytes = parse_hex_target(&target);
+        let target_bits = target.len() * 4; // each hex char = 4 bits
+
+        let mut nonce_buffer = [0u8; 20]; // u64::MAX has at most 20 digits
+
+        for nonce in 0..u64::MAX {
+            let nonce_len = write_u64_to_buffer(nonce, &mut nonce_buffer);
+            let nonce_bytes = &nonce_buffer[..nonce_len];
+
+            let mut hasher = Sha256::new();
+            hasher.update(salt_bytes);
+            hasher.update(nonce_bytes);
+            let hash_result = hasher.finalize();
+
+            if hash_matches_target(&hash_result, &target_bytes, target_bits) {
+                return nonce;
+            }
+        }
+
+        unreachable!("Solution should be found before exhausting u64::MAX");
+    }
+
+    fn parse_hex_target(target: &str) -> Vec<u8> {
+        let mut padded_target = target.to_string();
+
+        if padded_target.len() % 2 != 0 {
+            padded_target.push('0');
+        }
+
+        (0..padded_target.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&padded_target[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    fn write_u64_to_buffer(mut value: u64, buffer: &mut [u8]) -> usize {
+        if value == 0 {
+            buffer[0] = b'0';
+            return 1;
+        }
+
+        let mut len = 0;
+        let mut temp = value;
+
+        while temp > 0 {
+            len += 1;
+            temp /= 10;
+        }
+
+        for i in (0..len).rev() {
+            buffer[i] = (value % 10) as u8 + b'0';
+            value /= 10;
+        }
+
+        len
+    }
+
+    fn hash_matches_target(hash: &[u8], target_bytes: &[u8], target_bits: usize) -> bool {
+        let full_bytes = target_bits / 8;
+        let remaining_bits = target_bits % 8;
+
+        if hash[..full_bytes] != target_bytes[..full_bytes] {
+            return false;
+        }
+
+        if remaining_bits > 0 && full_bytes < target_bytes.len() {
+            let mask = 0xFF << (8 - remaining_bits);
+            let hash_masked = hash[full_bytes] & mask;
+            let target_masked = target_bytes[full_bytes] & mask;
+            return hash_masked == target_masked;
+        }
+
+        true
+    }
+}
+
+pub fn bench_capjs_verbatim(c: &mut Criterion) {
+    let mut group = c.benchmark_group("bench_capjs_verbatim");
+    group.sample_size(50);
+    group.warm_up_time(Duration::from_secs(8));
+    group.measurement_time(Duration::from_secs(15));
+    group.throughput(Throughput::Elements(16u64.pow(5)));
+
+    let mut salt = 0u32;
+
+    group.bench_function("capjs_verbatim", |b| {
+        b.iter(|| {
+            capjs_verbatim::solve_pow(salt.to_string(), String::from("01234"));
+            salt += 1;
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_proof,
     bench_sha2_crate_single,
     bench_sha2_crate_bulk,
+    bench_capjs_verbatim,
 );
 #[cfg(feature = "rayon")]
 criterion_group!(benches_rayon, bench_proof_rayon);

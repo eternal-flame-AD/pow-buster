@@ -59,6 +59,9 @@ enum SubCommand {
         #[clap(short, long, default_value = "32")]
         n_workers: Option<u32>,
 
+        #[clap(short, long)]
+        n_threads: Option<u32>,
+
         #[clap(long)]
         do_control: bool,
     },
@@ -426,15 +429,20 @@ fn main() {
             host,
             site_key,
             n_workers,
+            n_threads,
             do_control,
         } => {
             let api_type: ApiType = api_type.parse().unwrap();
             let n_workers = n_workers.unwrap_or_else(|| num_cpus::get() as u32);
             eprintln!("You are hitting host {}, n_workers: {}", host, n_workers);
-            let pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(n_workers as usize)
-                .build()
-                .unwrap();
+
+            let mut pb = rayon::ThreadPoolBuilder::new();
+            if let Some(n_threads) = n_threads {
+                pb = pb.num_threads(n_threads as usize);
+            }
+
+            let pool = pb.build().unwrap();
+            let semaphore = Arc::new(tokio::sync::Semaphore::new(pool.current_num_threads()));
             let pool = Arc::new(pool);
 
             let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -521,6 +529,7 @@ fn main() {
                     let pool = pool.clone();
 
                     let api_type = api_type.clone();
+                    let semaphore = semaphore.clone();
                     tokio::spawn(async move {
                         let client = reqwest::ClientBuilder::new()
                             .gzip(api_type == ApiType::Anubis) // for some reason anubis requires gzip
@@ -579,7 +588,7 @@ fn main() {
                             ApiType::CapJs => loop {
                                 let mut iotime = 0;
                                 let start = Instant::now();
-                                match simd_mcaptcha::client::solve_capjs_worker(&pool, &client, &host_clone, &site_key_clone, &mut iotime)
+                                match simd_mcaptcha::client::solve_capjs_worker(&pool, &client, &host_clone, &site_key_clone, &mut iotime, &semaphore)
                                     .await {
                                         Ok(_) => {
                                             succeeded_clone.fetch_add(1, Ordering::Relaxed);

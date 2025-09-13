@@ -112,6 +112,7 @@ pub async fn solve_capjs_worker(
     base_url: &str,
     site_key: &str,
     time_iowait: &mut u32,
+    semaphore: &tokio::sync::Semaphore,
 ) -> Result<(CapJsResponse, SolveCapJsResponseMeta), SolveError> {
     static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
@@ -165,10 +166,13 @@ pub async fn solve_capjs_worker(
     *time_iowait += iotime.as_micros() as u32;
 
     let (tx, rx) = tokio::sync::oneshot::channel();
-    pool.spawn(move || {
-        let solution = challenge.solve();
-        tx.send(solution).unwrap();
-    });
+    {
+        let _permit = semaphore.acquire().await.unwrap();
+        pool.spawn(move || {
+            let solution = challenge.solve();
+            tx.send(solution).unwrap();
+        });
+    }
     let (result, _) = rx.await.unwrap();
     let Some(solution) = result else {
         return Err(SolveError::SolverFailed);
@@ -346,7 +350,7 @@ pub async fn solve_anubis_ex(
     }
     let (result, attempted_nonces) = if really_solve {
         // AFAIK as of now there is no way to configure Anubis to require the double solver
-        let (result, attempted_nonces) = challenge.solve();
+        let (result, attempted_nonces) = tokio::task::block_in_place(|| challenge.solve());
         (result, attempted_nonces)
     } else {
         (Some((0, [0; 8])), 0)
