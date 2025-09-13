@@ -1,7 +1,10 @@
 use crate::{
     Align16, PREFIX_OFFSET_TO_LANE_POSITION, SWAP_DWORD_BYTE_ORDER, decompose_blocks_mut,
     is_supported_lane_position,
-    message::{DecimalMessage, DoubleBlockMessage, GoAwayMessage, SingleBlockMessage},
+    message::{
+        DecimalMessage, DoubleBlockMessage, GoAwayMessage, GoToSocialMessage,
+        GotoSocialAoSoALUT16View, SingleBlockMessage,
+    },
 };
 use core::arch::x86_64::*;
 
@@ -962,8 +965,180 @@ impl crate::solver::Solver for GoAwaySolver {
     }
 }
 
+/// AVX-512 GoToSocial solver.
+///
+///
+/// Current implementation: 16 way SIMD with decimal Look-Up Table and 1-round hotstart granularity.
+pub struct GoToSocialSolver<'a> {
+    alut: GotoSocialAoSoALUT16View<'a>,
+    max_nonce: u64,
+    message: GoToSocialMessage,
+    attempted_nonces: u64,
+}
+
+impl<'a> GoToSocialSolver<'a> {
+    /// Create a new GoToSocial solver.
+    pub fn new(alut: GotoSocialAoSoALUT16View<'a>, message: GoToSocialMessage) -> Self {
+        Self {
+            max_nonce: alut.max_supported_nonce(),
+            alut,
+            message,
+            attempted_nonces: 0,
+        }
+    }
+
+    /// Set the max nonce.
+    pub fn set_max_nonce(&mut self, max_nonce: u64) {
+        self.max_nonce = max_nonce;
+    }
+
+    /// Get the attempted nonces.
+    pub fn get_attempted_nonces(&self) -> u64 {
+        self.attempted_nonces
+    }
+}
+
+impl<'a> GoToSocialSolver<'a> {
+    /// Extract the target from the image hex.
+    #[inline(always)]
+    pub fn extract_target(image_hex: &[u8]) -> Option<u64> {
+        crate::solver::safe::GoToSocialSolver::extract_target(image_hex)
+    }
+}
+
+impl crate::solver::Solver for GoToSocialSolver<'_> {
+    #[inline(never)]
+    fn solve<const TYPE: u8>(&mut self, target: u64, _mask: u64) -> Option<(u64, [u32; 8])> {
+        let seed_words = self.message.as_words();
+        let mut prefix_state = crate::sha256::IV;
+        crate::sha256::ingest_message_prefix(&mut prefix_state, seed_words);
+
+        const INDEX_D: usize = 3;
+        const INDEX_H: usize = 7;
+
+        let target_d = (target >> 32) as u32;
+        let target_h = target as u32;
+        let target_d_bias = target_d.wrapping_sub(crate::sha256::IV[INDEX_D]);
+        let target_h_bias = target_h.wrapping_sub(crate::sha256::IV[INDEX_H]);
+        for (nonce_base, data) in self.alut.iter_rev(self.max_nonce).unwrap() {
+            unsafe {
+                let mut msg = [
+                    _mm512_set1_epi32(seed_words[0] as _),
+                    _mm512_set1_epi32(seed_words[1] as _),
+                    _mm512_set1_epi32(seed_words[2] as _),
+                    _mm512_set1_epi32(seed_words[3] as _),
+                    _mm512_load_si512(data.word_2.as_ptr().cast()),
+                    _mm512_load_si512(data.word_3.as_ptr().cast()),
+                    _mm512_load_si512(data.word_4.as_ptr().cast()),
+                    _mm512_setzero_si512(),
+                    _mm512_setzero_si512(),
+                    _mm512_setzero_si512(),
+                    _mm512_setzero_si512(),
+                    _mm512_setzero_si512(),
+                    _mm512_setzero_si512(),
+                    _mm512_setzero_si512(),
+                    _mm512_setzero_si512(),
+                    _mm512_load_si512(data.msg_len.as_ptr().cast()),
+                ];
+                let mut state = core::array::from_fn(|i| _mm512_set1_epi32(prefix_state[i] as _));
+                crate::sha256::avx512::multiway_arx::<4>(&mut state, &mut msg);
+
+                let d_matched =
+                    _mm512_cmpeq_epu32_mask(state[INDEX_D], _mm512_set1_epi32(target_d_bias as _));
+                let h_matched =
+                    _mm512_cmpeq_epu32_mask(state[INDEX_H], _mm512_set1_epi32(target_h_bias as _));
+
+                if d_matched != 0 && h_matched != 0 {
+                    let success_lane_idx = _tzcnt_u16(d_matched & h_matched);
+                    let final_nonce = nonce_base + success_lane_idx as u64;
+
+                    let mut output_state = crate::sha256::IV;
+
+                    let mut output_block = [0; 16];
+                    output_block[0] = seed_words[0];
+                    output_block[1] = seed_words[1];
+                    output_block[2] = seed_words[2];
+                    output_block[3] = seed_words[3];
+                    output_block[4] = data.word_2[success_lane_idx as usize];
+                    output_block[5] = data.word_3[success_lane_idx as usize];
+                    output_block[6] = data.word_4[success_lane_idx as usize];
+                    output_block[15] = data.msg_len[success_lane_idx as usize];
+                    crate::sha256::digest_block(&mut output_state, &output_block);
+
+                    return Some((final_nonce, output_state));
+                }
+
+                self.attempted_nonces += 16;
+            }
+        }
+
+        None
+    }
+    #[inline(never)]
+    fn solve_nonce_only<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<u64> {
+        debug_assert_eq!(TYPE, crate::solver::SOLVE_TYPE_DH_PREIMAGE);
+        debug_assert_eq!(mask, u64::MAX);
+
+        let seed_words = crate::Align64::from(self.message.as_words());
+        let mut prefix_state = crate::sha256::IV;
+        crate::sha256::ingest_message_prefix(&mut prefix_state, *seed_words);
+
+        const INDEX_D: usize = 3;
+        const INDEX_H: usize = 7;
+
+        let target_d = (target >> 32) as u32;
+        let target_h = target as u32;
+        let target_d_bias = target_d.wrapping_sub(crate::sha256::IV[INDEX_D]);
+        let target_h_bias = target_h.wrapping_sub(crate::sha256::IV[INDEX_H]);
+        for (nonce_base, data) in self.alut.iter_rev(self.max_nonce).unwrap() {
+            unsafe {
+                let mut msg = [
+                    _mm512_set1_epi32(seed_words[0] as _),
+                    _mm512_set1_epi32(seed_words[1] as _),
+                    _mm512_set1_epi32(seed_words[2] as _),
+                    _mm512_set1_epi32(seed_words[3] as _),
+                    _mm512_load_si512(data.word_2.as_ptr().cast()),
+                    _mm512_load_si512(data.word_3.as_ptr().cast()),
+                    _mm512_load_si512(data.word_4.as_ptr().cast()),
+                    _mm512_setzero_si512(),
+                    _mm512_setzero_si512(),
+                    _mm512_setzero_si512(),
+                    _mm512_setzero_si512(),
+                    _mm512_setzero_si512(),
+                    _mm512_setzero_si512(),
+                    _mm512_setzero_si512(),
+                    _mm512_setzero_si512(),
+                    _mm512_load_si512(data.msg_len.as_ptr().cast()),
+                ];
+                let mut state = core::array::from_fn(|i| _mm512_set1_epi32(prefix_state[i] as _));
+                crate::sha256::avx512::multiway_arx::<4>(&mut state, &mut msg);
+
+                // vpcmpeqd
+                let d_res =
+                    _mm512_cmpeq_epu32_mask(state[INDEX_D], _mm512_set1_epi32(target_d_bias as _));
+                let h_res =
+                    _mm512_cmpeq_epu32_mask(state[INDEX_H], _mm512_set1_epi32(target_h_bias as _));
+
+                // ktest
+                if d_res != 0 && h_res != 0 {
+                    let success_lane_idx = _tzcnt_u16(d_res & h_res);
+                    let final_nonce = nonce_base + success_lane_idx as u64;
+
+                    return Some(final_nonce);
+                }
+
+                self.attempted_nonces += 16;
+            }
+        }
+
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use crate::{message::GotoSocialAoSoALUT16, solver::Solver};
+
     use super::*;
 
     #[test]
@@ -975,6 +1150,32 @@ mod tests {
                 DoubleBlockMessage::new(prefix, search_space).map(Into::into)
             }
         });
+    }
+
+    #[test]
+    fn test_solve_go_to_social() {
+        let test_seed = *b"0f0314853c035207";
+        let known_solution = 498330;
+        let mut lut = GotoSocialAoSoALUT16::new();
+        lut.build(100000);
+        let image = b"9c1351f7b40f2babe4e1b02c481ec94a2e14d91164da0925ca03845035891271";
+
+        let target = GoToSocialSolver::extract_target(image).unwrap();
+
+        let message = GoToSocialMessage::new(test_seed);
+        let mut solver = GoToSocialSolver::new(lut.view(), message);
+
+        let solution = solver
+            .solve::<{ crate::solver::SOLVE_TYPE_DH_PREIMAGE }>(target, u64::MAX)
+            .unwrap();
+        let solutoin_nonce_only = solver
+            .solve_nonce_only::<{ crate::solver::SOLVE_TYPE_DH_PREIMAGE }>(target, u64::MAX)
+            .unwrap();
+        assert_eq!(solution.0, known_solution);
+        assert_eq!(solutoin_nonce_only, known_solution);
+        let mut solution_hex = [0u8; 64];
+        crate::encode_hex(&mut solution_hex, solution.1);
+        assert_eq!(&solution_hex, image);
     }
 
     #[test]

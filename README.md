@@ -23,7 +23,7 @@
   - [License and Acknowledgments](#license-and-acknowledgments)
   - [AI Disclaimer](#ai-disclaimer)
 
-A fast, adversarially implemented mCaptcha/Anubis/go-away/Cap.js PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features without wasting energy in the browser.
+A fast, adversarially implemented mCaptcha/Anubis/go-away/Cap.js/NolLamas PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features without wasting energy in the browser.
 
 The benchmarks demonstrate a significant performance gap between browser-based JavaScript execution and native implementations (both optimized CPU and unoptimized GPU), suggesting fundamental challenges for PoW-based browser CAPTCHA systems.
 
@@ -42,6 +42,7 @@ I personally don't like some projects (a subset of the schemes I supported, not 
 
 ## Features
 
+- 4 searching modes: Prefix greater than (mCaptcha), prefix less than (Anubis/go-away), prefix mask test (Cap.js), and preimage finding (GoToSocial/NolLamas).
 - Greedy padding logic with 64-bit integer and floating point nonce stretching
 - Efficient outer loop and SIMD nonce encoding
 - SHA-2 hotstarting with round-level granularity
@@ -103,6 +104,7 @@ We assume you have a relatively modern and powerful platform, specifically:
 
 - A cold optimized build with end-to-end features may take up to 5 minutes as this program aggressively generates specialized kernels and build time isn't my priority.
 - For Anubis target, this assumes the server is 64-bit (i.e. is able to accept a signed 64-bit nonce).
+- Mode 4 (Preimage finding) optimizations are currently only implemented for AVX-512.
 - AVX-512 build requires Rust 1.89 or later.
 - All solvers are single-threaded and are intended to be scaled up using multiple workers optionally pinned to specific cores.
 - This is designed for "low", practical-for-a-website difficulty settings, A worst-case $1 - P_{geom}(80e7, 1/\text{difficulty})$ chance of failure for any particular messaeg offset with most offset cases almost guaranteed to succeed eventually, which for 1e8 (takes about 10 seconds on a browser for mCaptcha and an eternity for Anubis) is about 0.03%. Go-away solver explores the full solution space and guarantees a solution if one exists.

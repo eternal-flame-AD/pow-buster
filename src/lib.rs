@@ -2,6 +2,10 @@
 #![doc = include_str!("../README.md")]
 #![warn(missing_docs)]
 
+use sha2::digest::{
+    consts::{B1, U0, U16, U64},
+    typenum::{IsGreater, PowerOfTwo, Unsigned},
+};
 #[cfg(feature = "wasm-bindgen")]
 use wasm_bindgen::prelude::*;
 
@@ -59,10 +63,45 @@ compile_error!(concat!(
     "alternatively pass --features ignore-target-feature-checks to build a slow reference implementation."
 ));
 
+/// A trait for a trivial aligner that has no function except setting the alignment and transparently holding a value of type `T`.
+///
+/// # Safety
+///
+/// Implementor must ensure their memory layout is valid.
+pub unsafe trait AlignerTo<T>:
+    core::ops::Deref<Target = T> + core::ops::DerefMut<Target = T> + From<T>
+{
+    /// The alignment of the aligner.
+    type Alignment: Unsigned + PowerOfTwo + IsGreater<U0, Output = B1>;
+    /// The type of the aligner.
+    type Output;
+
+    /// Create a `core::alloc::Layout` for the aligner.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the request memory size is rejected by the allocator API.
+    fn create_layout() -> core::alloc::Layout;
+}
+
 #[repr(align(16))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Align to 16 bytes
 pub struct Align16<T>(pub T);
+
+unsafe impl<T> AlignerTo<T> for Align16<T> {
+    type Alignment = U16;
+    type Output = T;
+    fn create_layout() -> core::alloc::Layout {
+        core::alloc::Layout::new::<Align16<T>>()
+    }
+}
+
+impl<T> From<T> for Align16<T> {
+    fn from(value: T) -> Self {
+        Align16(value)
+    }
+}
 
 impl<T> core::ops::Deref for Align16<T> {
     type Target = T;
@@ -81,6 +120,20 @@ impl<T> core::ops::DerefMut for Align16<T> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Align to 64 bytes
 pub struct Align64<T>(pub T);
+
+unsafe impl<T> AlignerTo<T> for Align64<T> {
+    type Alignment = U64;
+    type Output = T;
+    fn create_layout() -> core::alloc::Layout {
+        core::alloc::Layout::new::<Align64<T>>()
+    }
+}
+
+impl<T> From<T> for Align64<T> {
+    fn from(value: T) -> Self {
+        Align64(value)
+    }
+}
 
 // Ref downcast to Align16
 impl<'a, T> From<&'a Align64<T>> for &'a Align16<T> {

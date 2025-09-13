@@ -53,6 +53,10 @@ rand = { version = "0.9", default-features = false, features = ["small_rng"] }
 name = "bench_proof"
 harness = false
 
+[[bench]]
+name = "bench_go_to_social"
+harness = false
+
 [features]
 default = ["std", "all-lane-positions"]
 alloc = []

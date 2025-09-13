@@ -1,6 +1,12 @@
 #![allow(clippy::inconsistent_digit_grouping)]
 #![allow(clippy::collapsible_if)]
-use crate::{Align16, Align64, is_supported_lane_position, sha256};
+use sha2::digest::{
+    consts::{B0, U16},
+    generic_array::{ArrayLength, GenericArray},
+    typenum::UInt,
+};
+
+use crate::{Align16, Align64, AlignerTo, is_supported_lane_position, sha256};
 
 /// Solves an mCaptcha/Anubis/Cap.js SHA256 PoW where the SHA-256 message is a single block (512 bytes minus padding).
 ///
@@ -645,6 +651,277 @@ impl GoAwayMessage {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// A Look-Up Table for the GoToSocial algorithm
+///
+///
+/// Type Parameters:
+/// - T: How many items per SoA element
+/// - A: The aligner
+pub struct GoToSocialAoSoALUTOwned<
+    T: ArrayLength<u32>, // how many nonces per SoA element
+    A: AlignerTo<GenericArray<u32, T>, Alignment = Time4<T>>,
+> {
+    data: Vec<GoToSocialSoALUTEntry<T, A>>,
+}
+
+/// A view of the GoToSocial AoS OA LUT
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GotoSocialAoSoALUTView<
+    'a,
+    T: ArrayLength<u32>,
+    A: AlignerTo<GenericArray<u32, T>, Alignment = Time4<T>>,
+> {
+    data: &'a [GoToSocialSoALUTEntry<T, A>],
+}
+
+// supports difficulties up to 500K
+#[cfg(target_feature = "avx512f")]
+const BUILT_IN_LUT_16_LEN: usize = 500000 / 16;
+
+#[cfg(target_feature = "avx512f")]
+#[allow(long_running_const_eval)]
+static BUILT_IN_LUT_16_BUF: [GoToSocialSoALUTEntry<U16, Align64<GenericArray<u32, U16>>>;
+    BUILT_IN_LUT_16_LEN] = {
+    let mut result: [GoToSocialSoALUTEntry<U16, Align64<GenericArray<u32, U16>>>;
+        BUILT_IN_LUT_16_LEN] = unsafe { core::mem::zeroed() };
+    let mut i = 0;
+    let mut digits = [0; 8];
+    while i < BUILT_IN_LUT_16_LEN {
+        let mut di = 0;
+        let mut word_2s: GenericArray<u32, U16> = unsafe { core::mem::zeroed() };
+        let mut word_3s: GenericArray<u32, U16> = unsafe { core::mem::zeroed() };
+        let mut msg_lens: GenericArray<u32, U16> = unsafe { core::mem::zeroed() };
+        while di < 16 {
+            let mut copy = i as u64 * 16 + di as u64;
+            let mut j = 8;
+            loop {
+                j -= 1;
+                digits[j] = (copy % 10) as u8 + b'0';
+                copy /= 10;
+                if copy == 0 {
+                    break;
+                }
+            }
+            let mut output_bytes = [0; 3 * 4];
+            let mut k = j;
+            while k < 8 {
+                output_bytes[k - j] = digits[k];
+                k += 1;
+            }
+            output_bytes[k - j] = 0x80;
+            let msg_len = ((k - j) as u32 + GoToSocialMessage::SEED_LEN) * 8;
+            unsafe {
+                core::ptr::addr_of_mut!(word_2s)
+                    .cast::<u32>()
+                    .add(di)
+                    .write(u32::from_be_bytes([
+                        output_bytes[0],
+                        output_bytes[1],
+                        output_bytes[2],
+                        output_bytes[3],
+                    ]));
+                core::ptr::addr_of_mut!(word_3s)
+                    .cast::<u32>()
+                    .add(di)
+                    .write(u32::from_be_bytes([
+                        output_bytes[4],
+                        output_bytes[5],
+                        output_bytes[6],
+                        output_bytes[7],
+                    ]));
+                core::ptr::addr_of_mut!(msg_lens)
+                    .cast::<u32>()
+                    .add(di)
+                    .write(msg_len);
+            }
+
+            di += 1;
+        }
+        result[i] = GoToSocialSoALUTEntry {
+            word_2: Align64(word_2s),
+            word_3: Align64(word_3s),
+            word_4: unsafe { core::mem::zeroed() },
+            msg_len: Align64(msg_lens),
+            _phantom: core::marker::PhantomData,
+        };
+        i += 1;
+    }
+
+    result
+};
+
+#[cfg(target_feature = "avx512f")]
+
+/// A built-in view of the GoToSocial AoS OA LUT with 16 items per SoA element that should handle all difficulties up to 500K
+pub static BUILT_IN_LUT_16_BUF_VIEW: GotoSocialAoSoALUTView<U16, Align64<GenericArray<u32, U16>>> =
+    GotoSocialAoSoALUTView {
+        data: &BUILT_IN_LUT_16_BUF,
+    };
+
+impl<'a, T: ArrayLength<u32>, A: AlignerTo<GenericArray<u32, T>, Alignment = Time4<T>>>
+    GotoSocialAoSoALUTView<'a, T, A>
+{
+    /// Get the maximum supported nonce
+    pub fn max_supported_nonce(&self) -> u64 {
+        (self.data.len() as u64 * T::USIZE as u64).saturating_sub(1)
+    }
+
+    /// Iterate over the entries in reverse order
+    pub fn iter_rev(
+        &'a self,
+        max_nonce: u64,
+    ) -> Option<
+        impl Iterator<
+            Item = (
+                u64, // which nonce was this based from?
+                &'a GoToSocialSoALUTEntry<T, A>,
+            ),
+        >,
+    > {
+        let last_index = max_nonce / T::U64;
+        if last_index > self.data.len() as u64 {
+            return None;
+        }
+        let base_nonce = last_index * T::USIZE as u64;
+        Some(
+            self.data[..=last_index as usize]
+                .iter()
+                .rev()
+                .enumerate()
+                .map(move |(i, entry)| (base_nonce - i as u64 * T::U64, entry)),
+        )
+    }
+}
+
+/// A Look-Up Table for the GoToSocial algorithm with 16 items per SoA element
+pub type GotoSocialAoSoALUT16 = GoToSocialAoSoALUTOwned<U16, Align64<GenericArray<u32, U16>>>;
+
+/// A view of the GoToSocial AoS OA LUT with 16 items per SoA element
+pub type GotoSocialAoSoALUT16View<'a> =
+    GotoSocialAoSoALUTView<'a, U16, Align64<GenericArray<u32, U16>>>;
+
+impl<T: ArrayLength<u32>, A: AlignerTo<GenericArray<u32, T>, Alignment = Time4<T>>>
+    GoToSocialAoSoALUTOwned<T, A>
+{
+    /// Create a new Lookup Table
+    pub fn new() -> Self {
+        Self { data: Vec::new() }
+    }
+
+    /// Get a view of the Lookup Table  
+    #[inline(always)]
+    pub fn view(&self) -> GotoSocialAoSoALUTView<'_, T, A> {
+        GotoSocialAoSoALUTView { data: &self.data }
+    }
+
+    /// Build the Lookup Table
+    pub fn build(&mut self, max_nonce_by_alignment: u32) {
+        if self.data.len() >= max_nonce_by_alignment as usize {
+            return;
+        }
+        let additional_entries = max_nonce_by_alignment as usize - self.data.len();
+        self.data.reserve(additional_entries);
+        for i in self.data.len()..max_nonce_by_alignment as usize {
+            let mut digits = [0; 10];
+
+            let mut word_2s = GenericArray::default();
+            let mut word_3s = GenericArray::default();
+            let mut word_4s = GenericArray::default();
+            let mut msg_lens = GenericArray::default();
+            for di in 0..T::USIZE {
+                let mut copy = i as u64 * T::USIZE as u64 + di as u64;
+                let mut j = 10;
+                loop {
+                    j -= 1;
+                    digits[j] = (copy % 10) as u8 + b'0';
+                    copy /= 10;
+                    if copy == 0 {
+                        break;
+                    }
+                }
+                let itoa_buf = &digits[j..];
+                // max 10 digits from u32, one more digit from alignment multipler, then 0x80, 12 bytes fit
+                let mut output_bytes = [0; 3 * 4];
+                output_bytes[..itoa_buf.len()].copy_from_slice(itoa_buf);
+                output_bytes[itoa_buf.len()] = 0x80;
+                let msg_len = (itoa_buf.len() as u32 + GoToSocialMessage::SEED_LEN) * 8;
+                msg_lens[di] = msg_len;
+                word_2s[di] = u32::from_be_bytes([
+                    output_bytes[0],
+                    output_bytes[1],
+                    output_bytes[2],
+                    output_bytes[3],
+                ]);
+                word_3s[di] = u32::from_be_bytes([
+                    output_bytes[4],
+                    output_bytes[5],
+                    output_bytes[6],
+                    output_bytes[7],
+                ]);
+                word_4s[di] = u32::from_be_bytes([
+                    output_bytes[8],
+                    output_bytes[9],
+                    output_bytes[10],
+                    output_bytes[11],
+                ]);
+            }
+            self.data.push(GoToSocialSoALUTEntry {
+                word_2: A::from(word_2s),
+                word_3: A::from(word_3s),
+                word_4: A::from(word_4s),
+                msg_len: A::from(msg_lens),
+                _phantom: core::marker::PhantomData,
+            });
+        }
+    }
+}
+
+type Time4<T> = UInt<UInt<T, B0>, B0>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A single entry in the GoToSocial SoA LUT
+///
+///
+/// Type Parameters:
+/// - T: How many items per SoA element
+/// - A: The aligner
+pub struct GoToSocialSoALUTEntry<
+    T: ArrayLength<u32>,
+    A: AlignerTo<GenericArray<u32, T>, Alignment = Time4<T>>,
+> {
+    pub(crate) word_2: A,
+    pub(crate) word_3: A,
+    pub(crate) word_4: A,
+    pub(crate) msg_len: A,
+    _phantom: core::marker::PhantomData<T>,
+}
+
+/// A message in the GoToSocial format
+pub struct GoToSocialMessage {
+    seed: [u8; 16],
+}
+
+impl GoToSocialMessage {
+    /// The length of the seed in bytes
+    pub const SEED_LEN: u32 = 16;
+
+    /// creates a new go-to-social message
+    pub fn new(seed: [u8; 16]) -> Self {
+        Self { seed }
+    }
+
+    /// Get the seed as words
+    pub fn as_words(&self) -> [u32; 4] {
+        [
+            u32::from_be_bytes([self.seed[0], self.seed[1], self.seed[2], self.seed[3]]),
+            u32::from_be_bytes([self.seed[4], self.seed[5], self.seed[6], self.seed[7]]),
+            u32::from_be_bytes([self.seed[8], self.seed[9], self.seed[10], self.seed[11]]),
+            u32::from_be_bytes([self.seed[12], self.seed[13], self.seed[14], self.seed[15]]),
+        ]
+    }
+}
+
 /// A shared precomputed state for expanding CapJS batch challenges
 pub struct CapJSEmitter {
     seed: u32,
@@ -732,6 +1009,16 @@ impl CapJSEmitter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_go_to_social_aosoa_lut() {
+        let mut alut = GotoSocialAoSoALUT16::new();
+        alut.build(BUILT_IN_LUT_16_LEN as u32);
+        assert_eq!(
+            alut.data[..BUILT_IN_LUT_16_LEN],
+            BUILT_IN_LUT_16_BUF[..BUILT_IN_LUT_16_LEN]
+        );
+    }
 
     #[test]
     fn test_double_block_addend_f64_safe() {

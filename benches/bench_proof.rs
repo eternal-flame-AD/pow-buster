@@ -559,6 +559,7 @@ criterion_group!(
     bench_sha2_crate_bulk,
     bench_capjs_verbatim,
 );
+
 #[cfg(feature = "rayon")]
 criterion_group!(benches_rayon, bench_proof_rayon);
 

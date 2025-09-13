@@ -25,6 +25,8 @@ pub const SOLVE_TYPE_LT: u8 = 1;
 pub const SOLVE_TYPE_GT: u8 = 2;
 /// Mask test (such as Cap.js)
 pub const SOLVE_TYPE_MASK: u8 = 4;
+/// DH preimage test when the complete image is given (such as GoToSocial), target is (H_4 << 32 | H_7)
+pub const SOLVE_TYPE_DH_PREIMAGE: u8 = 8;
 
 /// A generic solver trait
 pub trait Solver {

@@ -273,7 +273,94 @@ async fn solve_generic(
             .map(IntoResponse::into_response);
     }
 
+    if let Ok(config) = serde_json::from_str(challenge) {
+        return solve_gotosocial(remote_addr, x_forwarded_for, state, config)
+            .await
+            .map(IntoResponse::into_response);
+    }
+
     Err(SolveError::InvalidChallenge)
+}
+
+#[cfg(target_feature = "avx512f")]
+#[derive(Debug, serde::Deserialize)]
+/// A GoToSocial challenge descriptor
+pub struct GoToSocialChallengeDescriptor {
+    #[serde(rename = "nollamas_seed")]
+    seed: String,
+    #[serde(rename = "nollamas_challenge")]
+    challenge: String,
+}
+
+#[cfg(target_feature = "avx512f")]
+#[tracing::instrument(skip(state, config), name = "solve_gotosocial")]
+async fn solve_gotosocial(
+    remote_addr: axum::extract::ConnectInfo<std::net::SocketAddr>,
+    x_forwarded_for: axum_extra::TypedHeader<XForwardedFor>,
+    State(state): State<AppState>,
+    config: GoToSocialChallengeDescriptor,
+) -> Result<String, SolveError> {
+    use crate::solver::avx512::GoToSocialSolver;
+    tracing::info!("solving gotosocial challenge {:?}", config);
+    use crate::message::GoToSocialMessage;
+
+    let Ok(seed) = config.seed.as_bytes().try_into() else {
+        return Err(SolveError::InvalidChallenge);
+    };
+
+    let message = GoToSocialMessage::new(seed);
+    let target = GoToSocialSolver::extract_target(config.challenge.as_bytes()).unwrap();
+    let _permit = state.semaphore.acquire().await.unwrap();
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    state.pool.spawn(move || {
+        let start = std::time::Instant::now();
+        // this is limited to 500k supported nonces, takes about 5ms tops on AVX512
+        let mut solver = GoToSocialSolver::new(crate::message::BUILT_IN_LUT_16_BUF_VIEW, message);
+        let solution =
+            solver.solve_nonce_only::<{ crate::solver::SOLVE_TYPE_DH_PREIMAGE }>(target, u64::MAX);
+        let elapsed = start.elapsed();
+        tx.send((solution, solver.get_attempted_nonces(), elapsed))
+            .ok();
+    });
+
+    let (solution, attempted_nonces, elapsed) = rx.await.unwrap();
+
+    let Some(solution) = solution else {
+        return Err(SolveError::SolverFailed {
+            limit: state
+                .limit
+                .min(crate::message::BUILT_IN_LUT_16_BUF_VIEW.max_supported_nonce()),
+            attempted: attempted_nonces,
+        });
+    };
+
+    let mut response = String::new();
+    writeln!(
+        response,
+        "// elapsed time: {}ms; attempted nonces: {}; {:.2} MH/s; {:.2}% limit used",
+        elapsed.as_millis(),
+        attempted_nonces,
+        attempted_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0,
+        attempted_nonces as f32 / state.limit as f32 * 100.0
+    )
+    .unwrap();
+    writeln!(
+        response,
+        "const redirectURL = new URL(window.location.href);"
+    )
+    .unwrap();
+
+    writeln!(
+        response,
+        "redirectURL.searchParams.set('nollamas_solution', '{}');",
+        solution
+    )
+    .unwrap();
+
+    writeln!(response, "window.location.replace(redirectURL.toString());").unwrap();
+
+    Ok(response)
 }
 
 #[tracing::instrument(skip(state, config), name = "solve_capjs")]
