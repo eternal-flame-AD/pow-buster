@@ -10,8 +10,8 @@ use std::{
 use clap::{Parser, Subcommand};
 
 use simd_mcaptcha::{
-    DecimalSolver, DoubleBlockSolver, GoAwaySolver, SingleBlockSolver, compute_target_mcaptcha,
-    compute_target_anubis,
+    DecimalSolver, DoubleBlockSolver, GoAwaySolver, SingleBlockSolver, compute_target_anubis,
+    compute_target_mcaptcha,
     message::{DecimalMessage, GoAwayMessage},
     solver::Solver,
 };
@@ -128,10 +128,6 @@ enum SubCommand {
     Time {
         #[clap(short, long, default_value = "10000000")]
         difficulty: u64,
-
-        #[cfg(feature = "official")]
-        #[clap(long)]
-        test_official: bool,
     },
 }
 
@@ -156,7 +152,7 @@ fn main() {
                 );
                 let target = compute_target_mcaptcha(difficulty);
                 let result = solver
-                    .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                    .solve_nonce_only::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
                     .expect("solver failed");
                 core::hint::black_box(result);
             }
@@ -196,7 +192,9 @@ fn main() {
                         );
 
                         let result = solver
-                            .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                            .solve_nonce_only::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(
+                                target, !0,
+                            )
                             .expect("solver failed");
                         counter.fetch_add(1, Ordering::Relaxed);
                         core::hint::black_box(result);
@@ -269,11 +267,7 @@ fn main() {
                 println!();
             });
         }
-        SubCommand::Time {
-            difficulty,
-            #[cfg(feature = "official")]
-            test_official,
-        } => {
+        SubCommand::Time { difficulty } => {
             let target = compute_target_mcaptcha(difficulty);
             let begin = Instant::now();
             let mut total_nonces = 0;
@@ -285,8 +279,8 @@ fn main() {
                     DecimalMessage::new(&prefix_bytes, 0).expect("solver is None"),
                 );
                 let inner_begin = Instant::now();
-                let (nonce, _) = solver
-                    .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                let nonce = solver
+                    .solve_nonce_only::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
                     .expect("solver failed");
                 eprintln!(
                     "[{}]: in {:.3} seconds ({})",
@@ -312,8 +306,8 @@ fn main() {
                 let mut solver =
                     DecimalSolver::from(DecimalMessage::new(&prefix, 0).expect("solver is None"));
                 let inner_begin = Instant::now();
-                let (nonce, _) = solver
-                    .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                let nonce = solver
+                    .solve_nonce_only::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
                     .expect("solver failed");
                 eprintln!(
                     "[{}]: in {:.3} seconds ({})",
@@ -338,8 +332,8 @@ fn main() {
                 prefix[0] = i;
                 let mut solver = GoAwaySolver::from(GoAwayMessage::new_bytes(&prefix));
                 let inner_begin = Instant::now();
-                let (nonce, _) = solver
-                    .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                let nonce = solver
+                    .solve_nonce_only::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
                     .expect("solver failed");
                 eprintln!(
                     "[{}]: in {:.3} seconds ({})",
@@ -357,30 +351,6 @@ fn main() {
                 difficulty,
                 total_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0
             );
-            #[cfg(feature = "official")]
-            if test_official && let Ok(difficulty) = difficulty.try_into() {
-                let solver = pow_sha256::ConfigBuilder::default()
-                    .salt("x".to_string())
-                    .build()
-                    .unwrap();
-                let begin = Instant::now();
-                for i in 0..10u64 {
-                    let inner_begin = Instant::now();
-                    let result = solver.prove_work(&i.to_string(), difficulty).unwrap();
-                    eprintln!(
-                        "official: in {:.3} seconds {:?}",
-                        inner_begin.elapsed().as_secs_f32(),
-                        result
-                    );
-                }
-                let elapsed = begin.elapsed();
-                println!(
-                    "official: {} seconds at difficulty {} ({:.2} MH/s)",
-                    elapsed.as_secs_f32() / 10.0,
-                    difficulty,
-                    difficulty as f32 / elapsed.as_secs_f32() * 10.0 / 1024.0 / 1024.0
-                );
-            }
         }
         #[cfg(feature = "client")]
         SubCommand::Anubis { url } => {

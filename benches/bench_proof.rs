@@ -5,8 +5,11 @@ use criterion::{Criterion, criterion_group, criterion_main};
 
 use sha2::Digest;
 use sha2::digest::generic_array::sequence::GenericSequence;
-use simd_mcaptcha::message::{DoubleBlockMessage, SingleBlockMessage};
-use simd_mcaptcha::{DoubleBlockSolver, SingleBlockSolver, compute_target, solver::Solver};
+use simd_mcaptcha::{
+    DoubleBlockSolver, SingleBlockSolver, compute_target_mcaptcha,
+    message::{DoubleBlockMessage, SingleBlockMessage},
+    solver::Solver,
+};
 
 struct ProofKey {
     difficulty: u32,
@@ -128,7 +131,7 @@ pub fn bench_proof(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(30));
     for difficulty in [50_000, 100_000, 1_000_000, 4_000_000, 10_000_000] {
         group.throughput(Throughput::Elements(difficulty as u64));
-        let target = compute_target(difficulty);
+        let target = compute_target_mcaptcha(difficulty as u64);
         group.bench_with_input(
             BenchmarkId::new(
                 "proof",
@@ -351,7 +354,7 @@ pub fn bench_proof_rayon(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(15));
     group.throughput(Throughput::Elements(1024 * 1_000_000));
 
-    let target = compute_target(1_000_000);
+    let target = compute_target_mcaptcha(1_000_000);
 
     group.bench_function("proof_rayon", |b| {
         let mut counter = 0u64;

@@ -310,7 +310,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(feature = "wasm-bindgen", wasm_bindgen_test::wasm_bindgen_test)]
     fn test_encode_hex() {
         let mut out = [0u8; 64];
         encode_hex(
@@ -327,7 +326,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(feature = "wasm-bindgen", wasm_bindgen_test::wasm_bindgen_test)]
     fn test_compute_target_anubis() {
         assert_eq!(
             compute_target_anubis(NonZeroU8::new(1).unwrap()),
@@ -344,7 +342,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(feature = "wasm-bindgen", wasm_bindgen_test::wasm_bindgen_test)]
     fn test_bincode_string_serialize() {
         let string = "hello";
         let mut homegrown = Vec::new();
