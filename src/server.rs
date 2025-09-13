@@ -474,13 +474,8 @@ async fn anubis_offload_api(
     let target_bytes = target.to_be_bytes();
     let target_u64 = u64::from_be_bytes(target_bytes[..8].try_into().unwrap());
 
-    let ((result, attempted_nonces), elapsed) = if form.difficulty
-        <= if cfg!(target_feature = "avx512f") {
-            5
-        } else {
-            4
-        }
-    /* 4096 or 65535, takes more cycles to acquire the semaphore than just get the result */
+    let ((result, attempted_nonces), elapsed) = if form.difficulty <= 4
+    /* 65536, takes more cycles to acquire the semaphore than just get the result */
     {
         let start = std::time::Instant::now();
         let mut solver = DecimalSolver::from(
