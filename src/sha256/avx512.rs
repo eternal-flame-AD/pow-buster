@@ -3,7 +3,9 @@ use core::arch::x86_64::*;
 
 use super::*;
 
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/local_macros.rs"));
+#[macro_use]
+#[path = "loop_macros.rs"]
+mod loop_macros;
 
 // disable inline because without hardware AVX-512 this will explode in complexity and cause comptime to skyrocket
 // disable inline for debug_assertions because no one wants to wait for 5 minutes to run a unit test

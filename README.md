@@ -34,7 +34,7 @@ The benchmarks demonstrate a significant performance gap between browser-based J
 I personally don't like some projects (a subset of the schemes I supported, not all of them) put themselves at the ethical high ground of "protecting the website" when they:
 - Don't really protect the website better than heuristics (and this program serves as a proof of concept that it can be gamed using pure CPU).
 - Requires users to disable their anti fingerprinting protection like JShelter, and don't give users an opportunity to re-enable them before automatically redirecting them to the a website they have never been to before, which can very well hide fingerprinting scripts. This program emits solutions to these challenges fast without requiring JavaScript.
-- Justify the annoying friction by claiming the lack of a transparent spec and alternative manual solutions to be ["[good] taste [for] a 'security product'"](https://anubis.techaro.lol/docs/user/frequently-asked-questions), despite themselves not publishing sound security analysis to justify the friction. I did the reverse engineering that nobody should even have to do for an open source security product.
+- Justify the annoying friction by claiming the lack of a transparent spec and alternative manual solutions to be ["\[good\] taste \[for\] a 'security product'"](https://anubis.techaro.lol/docs/user/frequently-asked-questions), despite themselves not publishing sound security analysis to justify the friction. I did the reverse engineering that nobody should even have to do for an open source security product.
 
 [A longer blabbing post regarding this](https://mi.yumechi.jp/notes/aa223tk8c5ao02v9)
 
@@ -140,7 +140,7 @@ Results on AMD Ryzen 9 7950X, 32 cores, when supported, single-hash number comes
 (+) = SNA-NI and a standard SHA-256 implementation is used.
 
 [^1]: Represents a custom implementation using safe, externally-validated cryptographic abstractions only and no platform-specific optimizations.
-[^2]: Manivannan, A.; Sethuraman, S. C.; Vimala Sudhakaran, D. P. MCaptcha: Replacing Captchas with Rate Limiters to Improve Security and Accessibility. Communications of the ACM 2024, 67 (10), 70–80. https://doi.org/10.1145/3660628.
+[^2]: Manivannan, A.; Sethuraman, S. C.; Vimala Sudhakaran, D. P. MCaptcha: Replacing Captchas with Rate Limiters to Improve Security and Accessibility. Communications of the ACM 2024, 67 (10), 70–80. [https://doi.org/10.1145/3660628](https://doi.org/10.1145/3660628).
 
 ### End to End Benchmark
 
@@ -343,7 +343,7 @@ Contributions are welcome, roughly in priority order we want:
 
 ## License and Acknowledgments
 
-This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0. See the [LICENSE](/LICENSE) file for details.
 
 This project contains some copy pasted or minimally modified/transpiled code from:
 - the [sha2](https://crates.io/crates/sha2) crate, in the core SHA-2 routine in [sha256.rs](src/sha256.rs).

@@ -1,16 +1,14 @@
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(all(target_arch = "x86_64", any(doc, target_feature = "avx512f")))]
 pub mod avx512;
 
 #[cfg(all(
     any(target_arch = "x86_64", target_arch = "x86"),
-    target_feature = "sha"
+    any(doc, target_feature = "sha")
 ))]
 pub mod sha_ni;
 
 #[cfg(target_arch = "wasm32")]
 pub mod simd128;
-
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/local_macros.rs"));
 
 // Initial hash values for SHA-256
 pub(crate) const IV: [u32; 8] = [
@@ -33,27 +31,29 @@ const K32: [u32; 64] = [
 /// The first 16 words are the input block, the rest are computed from them
 #[inline(always)]
 pub(crate) const fn do_message_schedule(w: &mut [u32; 64]) {
-    repeat64!(i, {
-        if i >= 16 {
-            let w15 = w[i - 15];
-            let s0 = (w15.rotate_right(7)) ^ (w15.rotate_right(18)) ^ (w15 >> 3);
-            let w2 = w[i - 2];
-            let s1 = (w2.rotate_right(17)) ^ (w2.rotate_right(19)) ^ (w2 >> 10);
-            w[i] = w[i].wrapping_add(s0);
-            w[i] = w[i].wrapping_add(w[i - 7]);
-            w[i] = w[i].wrapping_add(s1);
-            w[i] = w[i].wrapping_add(w[i - 16]);
-        }
-    });
+    let mut i = 16;
+    while i < 64 {
+        let w15 = w[i - 15];
+        let s0 = (w15.rotate_right(7)) ^ (w15.rotate_right(18)) ^ (w15 >> 3);
+        let w2 = w[i - 2];
+        let s1 = (w2.rotate_right(17)) ^ (w2.rotate_right(19)) ^ (w2 >> 10);
+        w[i] = w[i].wrapping_add(s0);
+        w[i] = w[i].wrapping_add(w[i - 7]);
+        w[i] = w[i].wrapping_add(s1);
+        w[i] = w[i].wrapping_add(w[i - 16]);
+        i += 1;
+    }
 }
 
 /// pre-compute the message schedule for a single block, adding corresponding round constants
 #[inline(always)]
 pub(crate) const fn do_message_schedule_k_w(w: &mut [u32; 64]) {
     do_message_schedule(w);
-    repeat64!(i, {
+    let mut i = 0;
+    while i < 64 {
         w[i] = w[i].wrapping_add(K32[i]);
-    });
+        i += 1;
+    }
 }
 
 /// A reference software implementation of SHA-256 compression function from sha2 crate
@@ -100,18 +100,19 @@ pub(crate) fn sha2_arx<const START: usize>(state: &mut [u32; 8], w: &[u32]) {
     }
 }
 
-/// scalar sha2 rounds for hotstart taken verbatim from sha2 crate, but without constants
+/// scalar sha2 rounds for hotstart taken verbatim from sha2 crate, but without adding constants
 #[inline(always)]
-pub(crate) fn sha2_arx_without_constants<const START: usize, const LEN: usize>(
+pub(crate) const fn sha2_arx_without_constants<const START: usize, const LEN: usize>(
     state: &mut [u32; 8],
-    w: [u32; LEN],
+    ws: [u32; LEN],
 ) {
     let [a, b, c, d, e, f, g, h] = &mut *state;
 
-    for i in 0..LEN {
+    let mut i = 0;
+    while i < LEN {
         let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
         let ch = (*e & *f) ^ ((!*e) & *g);
-        let t1 = s1.wrapping_add(ch).wrapping_add(w[i]).wrapping_add(*h);
+        let t1 = s1.wrapping_add(ch).wrapping_add(ws[i]).wrapping_add(*h);
         let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
         let maj = (*a & *b) ^ (*a & *c) ^ (*b & *c);
         let t2 = s0.wrapping_add(maj);
@@ -124,5 +125,6 @@ pub(crate) fn sha2_arx_without_constants<const START: usize, const LEN: usize>(
         *c = *b;
         *b = *a;
         *a = t1.wrapping_add(t2);
+        i += 1;
     }
 }

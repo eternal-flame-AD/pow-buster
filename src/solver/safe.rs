@@ -3,6 +3,10 @@ use crate::{
     message::{DecimalMessage, DoubleBlockMessage, GoAwayMessage, SingleBlockMessage},
 };
 
+/// Safe decimal nonce single block solver.
+///
+///
+/// Current implementation: generic sha2 crate fallback.
 pub struct SingleBlockSolver {
     pub(super) message: SingleBlockMessage,
 
@@ -22,10 +26,12 @@ impl From<SingleBlockMessage> for SingleBlockSolver {
 }
 
 impl SingleBlockSolver {
+    /// Set the limit.
     pub fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
 
+    /// Get the attempted nonces.
     pub fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
     }
@@ -58,7 +64,7 @@ impl SingleBlockSolver {
                         message_be.0[self.message.digit_index + i] = (key_copy % 10) as u8 + b'0';
                         key_copy /= 10;
                     }
-                    message_be.0[self.message.digit_index + 0] = b'0' + nonzero_digit as u8;
+                    message_be.0[self.message.digit_index] = b'0' + nonzero_digit as u8;
                 }
 
                 let mut state = self.message.prefix_state;
@@ -78,7 +84,7 @@ impl SingleBlockSolver {
                         transformed_key *= 10;
                         transformed_key += nonzero_digit;
                     } else {
-                        transformed_key += 1_00_000_000 * nonzero_digit;
+                        transformed_key += 100_000_000 * nonzero_digit;
                     }
                     return Some((transformed_key + self.message.nonce_addend, state));
                 }
@@ -99,6 +105,10 @@ impl crate::solver::Solver for SingleBlockSolver {
     }
 }
 
+/// Safe decimal nonce double block solver.
+///
+///
+/// Current implementation: generic sha2 crate fallback.
 pub struct DoubleBlockSolver {
     pub(super) message: DoubleBlockMessage,
     pub(super) attempted_nonces: u64,
@@ -117,10 +127,12 @@ impl From<DoubleBlockMessage> for DoubleBlockSolver {
 }
 
 impl DoubleBlockSolver {
+    /// Set the limit.
     pub fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
 
+    /// Get the attempted nonces.
     pub fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
     }
@@ -139,11 +151,11 @@ impl crate::solver::Solver for DoubleBlockSolver {
         }
 
         let mut buffer2: sha2::digest::crypto_common::Block<sha2::Sha256> = Default::default();
-        buffer2[56..].copy_from_slice(&(self.message.message_length as u64 * 8).to_be_bytes());
+        buffer2[56..].copy_from_slice(&(self.message.message_length * 8).to_be_bytes());
 
         let mut terminal_message_schedule = [0; 64];
-        terminal_message_schedule[14] = ((self.message.message_length as u64 * 8) >> 32) as u32;
-        terminal_message_schedule[15] = (self.message.message_length as u64 * 8) as u32;
+        terminal_message_schedule[14] = ((self.message.message_length * 8) >> 32) as u32;
+        terminal_message_schedule[15] = (self.message.message_length * 8) as u32;
         crate::sha256::do_message_schedule_k_w(&mut terminal_message_schedule);
 
         for key in (if self.message.nonce_addend == 0 {
@@ -206,61 +218,18 @@ impl crate::solver::Solver for DoubleBlockSolver {
     }
 }
 
-pub enum DecimalSolver {
-    SingleBlock(SingleBlockSolver),
-    DoubleBlock(DoubleBlockSolver),
-}
+#[macro_use]
+#[path = "impl_decimal_solver.rs"]
+mod impl_decimal_solver;
 
-impl DecimalSolver {
-    pub fn get_attempted_nonces(&self) -> u64 {
-        match self {
-            Self::SingleBlock(solver) => solver.get_attempted_nonces(),
-            Self::DoubleBlock(solver) => solver.get_attempted_nonces(),
-        }
-    }
+impl_decimal_solver!(
+    [SingleBlockSolver, DoubleBlockSolver] => DecimalSolver
+);
 
-    pub fn set_limit(&mut self, limit: u64) {
-        match self {
-            Self::SingleBlock(solver) => solver.set_limit(limit),
-            Self::DoubleBlock(solver) => solver.set_limit(limit),
-        }
-    }
-}
-
-impl From<SingleBlockMessage> for DecimalSolver {
-    fn from(message: SingleBlockMessage) -> Self {
-        Self::SingleBlock(SingleBlockSolver::from(message))
-    }
-}
-
-impl From<DoubleBlockMessage> for DecimalSolver {
-    fn from(message: DoubleBlockMessage) -> Self {
-        Self::DoubleBlock(DoubleBlockSolver::from(message))
-    }
-}
-
-impl From<DecimalMessage> for DecimalSolver {
-    fn from(message: DecimalMessage) -> Self {
-        match message {
-            DecimalMessage::SingleBlock(message) => {
-                Self::SingleBlock(SingleBlockSolver::from(message))
-            }
-            DecimalMessage::DoubleBlock(message) => {
-                Self::DoubleBlock(DoubleBlockSolver::from(message))
-            }
-        }
-    }
-}
-
-impl crate::solver::Solver for DecimalSolver {
-    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
-        match self {
-            Self::SingleBlock(solver) => solver.solve::<TYPE>(target, mask),
-            Self::DoubleBlock(solver) => solver.solve::<TYPE>(target, mask),
-        }
-    }
-}
-
+/// SHA-NI GoAway solver.
+///
+///
+/// Current implementation: generic sha2 crate fallback.
 pub struct GoAwaySolver {
     pub(super) challenge: [u32; 8],
     pub(super) attempted_nonces: u64,
@@ -280,10 +249,12 @@ impl From<GoAwayMessage> for GoAwaySolver {
 impl GoAwaySolver {
     const MSG_LEN: u32 = 10 * 4 * 8;
 
+    /// Set the limit.
     pub fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
 
+    /// Get the attempted nonces.
     pub fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
     }
@@ -299,7 +270,7 @@ impl crate::solver::Solver for GoAwaySolver {
             buffer[0][i * 4..i * 4 + 4].copy_from_slice(&self.challenge[i].to_be_bytes());
         }
         buffer[0][40] = 0x80;
-        buffer[0][60..64].copy_from_slice(&(Self::MSG_LEN as u32).to_be_bytes());
+        buffer[0][60..64].copy_from_slice(&(Self::MSG_LEN).to_be_bytes());
 
         for key in 0..=u64::MAX {
             unsafe {

@@ -9,6 +9,7 @@ use alloc::{string::String, vec::Vec};
 use sha2::Digest;
 
 #[derive(serde::Deserialize, Debug)]
+/// Anubis PoW challenge descriptor.
 pub struct AnubisChallengeDescriptor {
     challenge: ChallengeForm,
     rules: AnubisRules,
@@ -16,16 +17,22 @@ pub struct AnubisChallengeDescriptor {
 
 #[derive(serde::Deserialize, Debug)]
 #[serde(untagged)]
+/// Anubis PoW challenge form.
 pub enum ChallengeForm {
+    /// Plain challenge.
     Plain(String),
+    /// Id wrapped challenge.
     #[serde(rename_all = "camelCase")]
     IdWrapped {
+        /// The id.
         id: String,
+        /// The random data.
         random_data: String,
     },
 }
 
 impl ChallengeForm {
+    /// Get the id of an Anubis PoW challenge.
     pub fn id(&self) -> Option<&str> {
         match self {
             ChallengeForm::Plain(_) => None,
@@ -34,6 +41,7 @@ impl ChallengeForm {
     }
 }
 
+/// As reference to a string.
 impl AsRef<str> for ChallengeForm {
     fn as_ref(&self) -> &str {
         match self {
@@ -44,14 +52,17 @@ impl AsRef<str> for ChallengeForm {
 }
 
 impl AnubisChallengeDescriptor {
+    /// Estimate the workload of an Anubis PoW.
     pub fn estimated_workload(&self) -> u64 {
         16u64.saturating_pow(self.rules.difficulty.try_into().unwrap())
     }
 
+    /// Get the rules of an Anubis PoW.
     pub fn rules(&self) -> &AnubisRules {
         &self.rules
     }
 
+    /// Get the hash result key of an Anubis PoW.
     pub fn hash_result_key(&self) -> &str {
         if self.rules.algorithm == "preact" {
             "result"
@@ -60,21 +71,24 @@ impl AnubisChallengeDescriptor {
         }
     }
 
+    /// Get the challenge of an Anubis PoW.
     pub fn challenge(&self) -> &ChallengeForm {
         &self.challenge
     }
 
+    /// If the Anubis PoW is supported.
     pub fn supported(&self) -> bool {
         self.rules.algorithm == "fast"
             || self.rules.algorithm == "slow"
             || self.rules.algorithm == "preact"
     }
 
+    /// Solve an Anubis PoW.
     pub fn solve(&self) -> (Option<(u64, [u32; 8])>, u64) {
         self.solve_with_limit(u64::MAX)
     }
 
-    // delay to hold the solution before it will be accepted
+    /// Delay to hold the solution before it will be accepted.
     pub fn delay(&self) -> u64 {
         if self.rules.algorithm == "preact" {
             self.rules.difficulty as u64 * 100
@@ -83,6 +97,7 @@ impl AnubisChallengeDescriptor {
         }
     }
 
+    /// Solve an Anubis PoW with a limit.
     pub fn solve_with_limit(&self, limit: u64) -> (Option<(u64, [u32; 8])>, u64) {
         if self.rules.algorithm == "preact" {
             let hash = sha2::Sha256::digest(self.challenge.as_ref().as_bytes());
@@ -118,46 +133,57 @@ impl AnubisChallengeDescriptor {
 }
 
 #[derive(serde::Deserialize, Debug)]
+/// Anubis PoW challenge rules.
 pub struct AnubisRules {
+    /// The algorithm. (JSON key: `algorithm`)
     algorithm: String,
     difficulty: u8,
 }
 
 impl AnubisRules {
-    // if the instant is instantly or almost instantly solved and not worth task spawning
+    /// If the instant is instantly or almost instantly solved and not worth task spawning.
     pub fn instant(&self) -> bool {
         return self.algorithm == "preact" || self.difficulty < 4;
     }
 
+    /// Get the algorithm of an Anubis PoW.
     pub fn algorithm(&self) -> &str {
         &self.algorithm
     }
 }
 
 #[derive(serde::Deserialize, Debug)]
+/// GoAway "js-pow-sha256" PoW challenge configuration.
 pub struct GoAwayConfig {
+    /// The challenge. (JSON key: `challenge`)
     challenge: String,
+    /// The target. (JSON key: `target`)
     // target: String,
     difficulty: NonZeroU8,
 }
 
 impl GoAwayConfig {
+    /// Get the challenge of a GoAway "js-pow-sha256" PoW.
     pub fn challenge(&self) -> &str {
         &self.challenge
     }
 
+    /// Get the difficulty of a GoAway "js-pow-sha256" PoW.
     pub fn difficulty(&self) -> NonZeroU8 {
         self.difficulty
     }
 
+    /// Estimate the workload of a GoAway "js-pow-sha256" PoW.
     pub fn estimated_workload(&self) -> u64 {
         2u64.pow(self.difficulty.get().try_into().unwrap())
     }
 
+    /// Solve a GoAway "js-pow-sha256" PoW.
     pub fn solve(&self) -> (Option<(u64, [u32; 8])>, u64) {
         self.solve_with_limit(u64::MAX)
     }
 
+    /// Solve a GoAway "js-pow-sha256" PoW with a limit.
     pub fn solve_with_limit(&self, limit: u64) -> (Option<(u64, [u32; 8])>, u64) {
         let target = compute_target_goaway(self.difficulty);
 
@@ -181,23 +207,31 @@ impl GoAwayConfig {
 }
 
 #[derive(serde::Deserialize, Debug, Clone, Copy)]
+/// Cap.js PoW challenge rules.
 pub struct CapJsChallengeRules {
     #[serde(rename = "c")]
+    /// The count. (JSON key: `c`)
     pub count: usize,
     #[serde(rename = "s")]
+    /// The salt length. (JSON key: `s`)
     pub salt_length: usize,
     #[serde(rename = "d")]
+    /// The difficulty. (JSON key: `d`)
     pub difficulty: u8,
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
+/// Cap.js PoW challenge descriptor.
 pub struct CapJsChallengeDescriptor {
     #[serde(rename = "challenge")]
+    /// The rules. (JSON key: `challenge`)
     rules: CapJsChallengeRules,
+    /// The challenge token.
     pub token: String,
 }
 
 #[derive(serde::Serialize, Debug, Clone, Copy)]
+/// Cap.js PoW response meta data.
 pub struct SolveCapJsResponseMeta {
     #[cfg(feature = "std")]
     #[serde(rename = "elapsed_us")]
@@ -208,28 +242,36 @@ pub struct SolveCapJsResponseMeta {
 }
 
 #[derive(serde::Serialize, Debug, Clone)]
+/// Cap.js PoW response.
 pub struct SolveCapJsResponse {
     #[serde(rename = "_meta")]
+    /// The meta data.
     pub meta: SolveCapJsResponseMeta,
+    /// The token.
     pub token: String,
+    /// The solutions.
     pub solutions: Vec<f64>,
 }
 
 impl CapJsChallengeDescriptor {
+    /// Get the rules of a Cap.js PoW.
     pub fn rules(&self) -> &CapJsChallengeRules {
         &self.rules
     }
 
+    /// Solve a Cap.js PoW.
     pub fn solve(self) -> (Option<SolveCapJsResponse>, u64) {
         self.solve_with_limit(u64::MAX)
     }
 
+    /// Estimate the workload of a Cap.js PoW.
     pub fn estimated_workload(&self) -> u64 {
         16u64
             .saturating_pow(self.rules.difficulty as u32)
             .saturating_mul(self.rules.count as u64)
     }
 
+    /// Solve a Cap.js PoW with a limit in parallel.
     #[cfg(feature = "rayon")]
     pub fn solve_with_limit_parallel(
         self,
@@ -288,6 +330,7 @@ impl CapJsChallengeDescriptor {
         (Some(response), attempted_nonces)
     }
 
+    /// Solve a Cap.js PoW with a limit.
     pub fn solve_with_limit(self, limit: u64) -> (Option<SolveCapJsResponse>, u64) {
         let emitter = CapJSEmitter::new(self.token.as_bytes());
         let mut attempted_nonces = 0;
@@ -341,14 +384,23 @@ impl CapJsChallengeDescriptor {
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
+/// Cap.js PoW response.
 #[serde(untagged)]
 pub enum CapJsResponse {
+    /// The solutions response.
     Solutions(CapJsRedeemedToken),
-    Error { error: String },
+    /// The error response.
+    Error {
+        /// The error message.
+        error: String,
+    },
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Debug)]
+/// Cap.js PoW redeemed token.
 pub struct CapJsRedeemedToken {
+    /// The redeemed token.
     pub token: String,
+    /// The expiration time.
     pub expires: u64,
 }

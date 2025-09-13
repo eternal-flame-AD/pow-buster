@@ -11,7 +11,9 @@ use core::arch::x86::*;
 use crate::Align16;
 use crate::sha256::K32;
 
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/local_macros.rs"));
+#[macro_use]
+#[path = "loop_macros.rs"]
+mod loop_macros;
 
 const K32X4: [[u32; 4]; 16] = [
     [K32[3], K32[2], K32[1], K32[0]],

@@ -10,7 +10,7 @@ use std::{
 use clap::{Parser, Subcommand};
 
 use simd_mcaptcha::{
-    DecimalSolver, DoubleBlockSolver, GoAwaySolver, SingleBlockSolver, compute_target_64,
+    DecimalSolver, DoubleBlockSolver, GoAwaySolver, SingleBlockSolver, compute_target_mcaptcha,
     compute_target_anubis,
     message::{DecimalMessage, GoAwayMessage},
     solver::Solver,
@@ -61,9 +61,6 @@ enum SubCommand {
 
         #[clap(short, long)]
         n_threads: Option<u32>,
-
-        #[clap(long)]
-        do_control: bool,
     },
     #[cfg(feature = "client")]
     CapJs {
@@ -157,7 +154,7 @@ fn main() {
                     DecimalMessage::new(&prefix_bytes[..(prefix_length % 64)], 0)
                         .expect("solver is None"),
                 );
-                let target = compute_target_64(difficulty);
+                let target = compute_target_mcaptcha(difficulty);
                 let result = solver
                     .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
                     .expect("solver failed");
@@ -178,7 +175,7 @@ fn main() {
             let counter = Arc::new(AtomicU64::new(0));
 
             let (target, expected_iters) = if difficulty > 32 {
-                (compute_target_64(difficulty), difficulty)
+                (compute_target_mcaptcha(difficulty), difficulty)
             } else {
                 (
                     compute_target_anubis(NonZeroU8::new(difficulty as u8).unwrap()),
@@ -277,7 +274,7 @@ fn main() {
             #[cfg(feature = "official")]
             test_official,
         } => {
-            let target = compute_target_64(difficulty);
+            let target = compute_target_mcaptcha(difficulty);
             let begin = Instant::now();
             let mut total_nonces = 0;
             for i in 0..40u8 {
@@ -398,7 +395,7 @@ fn main() {
                     .redirect(reqwest::redirect::Policy::none())
                     .build()
                     .unwrap();
-                let response = simd_mcaptcha::client::solve_anubis(&client, &url, true)
+                let response = simd_mcaptcha::client::solve_anubis(&client, &url)
                     .await
                     .unwrap();
                 println!("set-cookie: {}", response);
@@ -416,10 +413,9 @@ fn main() {
                     .redirect(reqwest::redirect::Policy::none())
                     .build()
                     .unwrap();
-                let response =
-                    simd_mcaptcha::client::solve_goaway_js_pow_sha256(&client, &url, true)
-                        .await
-                        .unwrap();
+                let response = simd_mcaptcha::client::solve_goaway_js_pow_sha256(&client, &url)
+                    .await
+                    .unwrap();
                 println!("set-cookie: {}", response);
             });
         }
@@ -430,7 +426,6 @@ fn main() {
             site_key,
             n_workers,
             n_threads,
-            do_control,
         } => {
             let api_type: ApiType = api_type.parse().unwrap();
             let n_workers = n_workers.unwrap_or_else(|| num_cpus::get() as u32);
@@ -451,68 +446,6 @@ fn main() {
                 .unwrap();
 
             runtime.block_on(async move {
-                if do_control {
-                    let host = host.clone();
-                    let site_key = site_key.clone();
-                    let pool = pool.clone();
-                    tokio::spawn(async move {
-                        eprintln!("running 10 seconds of control sending random proofs");
-                        let client = reqwest::ClientBuilder::new()
-                            .gzip(api_type == ApiType::Anubis) // for some reason anubis requires gzip
-                            .redirect(reqwest::redirect::Policy::none())
-                            .build()
-                            .unwrap();
-                        let begin = Instant::now();
-                        let count = Arc::new(AtomicU64::new(0));
-                        let mut js = tokio::task::JoinSet::new();
-                        for _ in 0..n_workers {
-                            let count_clone = count.clone();
-                            let client = client.clone();
-                            let host = host.clone();
-                            let site_key = site_key.clone();
-                            let pool = pool.clone();
-                            js.spawn(async move {
-                                match api_type {
-                                    ApiType::Mcaptcha => {
-                                        while begin.elapsed() < Duration::from_secs(10) {
-                                            simd_mcaptcha::client::solve_mcaptcha(
-                                                &pool, &client, &host, &site_key, false,
-                                            )
-                                            .await
-                                            .expect_err(
-                                                "random proof should fail but somehow succeeded",
-                                            );
-                                            count_clone.fetch_add(1, Ordering::SeqCst);
-                                        }
-                                    }
-                                    ApiType::Anubis => {
-                                        while begin.elapsed() < Duration::from_secs(10) {
-                                            simd_mcaptcha::client::solve_anubis(
-                                                &client, &host, false,
-                                            )
-                                            .await
-                                            .expect_err(
-                                                "random proof should fail but somehow succeeded",
-                                            );
-                                            count_clone.fetch_add(1, Ordering::SeqCst);
-                                        }
-                                    }
-                                    ApiType::CapJs => {
-                                        unimplemented!("control tests for capjs are not implemented");
-                                    }
-                                }
-                            });
-                        }
-                        while let Some(Ok(_)) = js.join_next().await {}
-                        eprintln!(
-                            "Fake Proof Control: {} requests in {:.1} seconds, {:.1} rps",
-                            count.load(Ordering::SeqCst),
-                            begin.elapsed().as_secs_f32(),
-                            count.load(Ordering::SeqCst) as f32 / begin.elapsed().as_secs_f32()
-                        );
-                    });
-                }
-
                 let mut last_succeeded = 0;
                 let mut last_failed = 0;
                 let succeeded = Arc::new(AtomicU64::new(0));
@@ -567,7 +500,6 @@ fn main() {
                                 match simd_mcaptcha::client::solve_anubis_ex(
                                     &client,
                                     &host_clone,
-                                    true,
                                     &mut iotime,
                                 )
                                 .await

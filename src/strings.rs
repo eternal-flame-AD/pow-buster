@@ -354,10 +354,10 @@ pub(crate) fn simd_itoa8<const N: usize, const REGISTER_BSWAP: bool, const PLACE
                     let mut x2 = tmp;
                     let mut x3 = tmp >> 32;
 
-                    x0 = x0 & 0xffff;
-                    x1 = x1 & 0xffff;
-                    x2 = x2 & 0xffff;
-                    x3 = x3 & 0xffff;
+                    x0 &= 0xffff;
+                    x1 &= 0xffff;
+                    x2 &= 0xffff;
+                    x3 &= 0xffff;
 
                     (x0 << 48) | (x1 << 32) | (x2 << 16) | x3
                 };
@@ -392,7 +392,7 @@ pub(crate) fn simd_itoa8<const N: usize, const REGISTER_BSWAP: bool, const PLACE
 
     let out_ptr = out.as_mut_ptr().cast::<u64>();
     unsafe {
-        *out_ptr = *out_ptr | mask;
+        *out_ptr |= mask;
     }
 
     if REGISTER_BSWAP {

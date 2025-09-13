@@ -26,6 +26,10 @@ fn load_lane_id_epi32<const N: usize>(src: &Align16<[u8; N]>, set_idx: usize) ->
     unsafe { _mm512_cvtepi8_epi32(_mm_load_si128(src.as_ptr().add(set_idx * 16).cast())) }
 }
 
+/// AVX-512 decimal nonce single block solver.
+///
+///
+/// Current implementation: 16 way SIMD with 1-round hotstart granularity.
 pub struct SingleBlockSolver {
     message: SingleBlockMessage,
 
@@ -55,10 +59,12 @@ impl From<SingleBlockMessage> for SingleBlockSolver {
 }
 
 impl SingleBlockSolver {
+    /// Set the limit.
     pub fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
 
+    /// Get the attempted nonces.
     pub fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
     }
@@ -489,6 +495,10 @@ impl crate::solver::Solver for SingleBlockSolver {
     }
 }
 
+/// AVX-512 decimal nonce double block solver.
+///
+///
+/// Current implementation: 16 way SIMD with 1-round hotstart granularity.
 pub struct DoubleBlockSolver {
     message: DoubleBlockMessage,
     attempted_nonces: u64,
@@ -517,10 +527,12 @@ impl From<DoubleBlockMessage> for DoubleBlockSolver {
 }
 
 impl DoubleBlockSolver {
+    /// Set the limit.
     pub fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
 
+    /// Get the attempted nonces.
     pub fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
     }
@@ -552,8 +564,8 @@ impl crate::solver::Solver for DoubleBlockSolver {
         crate::sha256::sha2_arx::<0>(&mut partial_state, &self.message.message[..13]);
 
         let mut terminal_message_schedule = Align16([0; 64]);
-        terminal_message_schedule[14] = ((self.message.message_length as u64 * 8) >> 32) as u32;
-        terminal_message_schedule[15] = (self.message.message_length as u64 * 8) as u32;
+        terminal_message_schedule[14] = ((self.message.message_length * 8) >> 32) as u32;
+        terminal_message_schedule[15] = (self.message.message_length * 8) as u32;
         crate::sha256::do_message_schedule_k_w(&mut terminal_message_schedule);
 
         let mut itoa_buf = Align16(*b"1111\x80111");
@@ -745,61 +757,18 @@ impl crate::solver::Solver for DoubleBlockSolver {
     }
 }
 
-pub enum DecimalSolver {
-    SingleBlock(SingleBlockSolver),
-    DoubleBlock(DoubleBlockSolver),
-}
+#[macro_use]
+#[path = "impl_decimal_solver.rs"]
+mod impl_decimal_solver;
 
-impl DecimalSolver {
-    pub fn get_attempted_nonces(&self) -> u64 {
-        match self {
-            Self::SingleBlock(solver) => solver.get_attempted_nonces(),
-            Self::DoubleBlock(solver) => solver.get_attempted_nonces(),
-        }
-    }
+impl_decimal_solver!(
+    [SingleBlockSolver, DoubleBlockSolver] => DecimalSolver
+);
 
-    pub fn set_limit(&mut self, limit: u64) {
-        match self {
-            Self::SingleBlock(solver) => solver.set_limit(limit),
-            Self::DoubleBlock(solver) => solver.set_limit(limit),
-        }
-    }
-}
-
-impl From<SingleBlockMessage> for DecimalSolver {
-    fn from(message: SingleBlockMessage) -> Self {
-        Self::SingleBlock(SingleBlockSolver::from(message))
-    }
-}
-
-impl From<DoubleBlockMessage> for DecimalSolver {
-    fn from(message: DoubleBlockMessage) -> Self {
-        Self::DoubleBlock(DoubleBlockSolver::from(message))
-    }
-}
-
-impl From<DecimalMessage> for DecimalSolver {
-    fn from(message: DecimalMessage) -> Self {
-        match message {
-            DecimalMessage::SingleBlock(message) => {
-                Self::SingleBlock(SingleBlockSolver::from(message))
-            }
-            DecimalMessage::DoubleBlock(message) => {
-                Self::DoubleBlock(DoubleBlockSolver::from(message))
-            }
-        }
-    }
-}
-
-impl crate::solver::Solver for DecimalSolver {
-    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
-        match self {
-            Self::SingleBlock(solver) => solver.solve::<TYPE>(target, mask),
-            Self::DoubleBlock(solver) => solver.solve::<TYPE>(target, mask),
-        }
-    }
-}
-
+/// AVX-512 GoAway solver.
+///
+///
+/// Current implementation: 16 way SIMD with 1-round hotstart granularity.
 pub struct GoAwaySolver {
     challenge: [u32; 8],
     attempted_nonces: u64,
@@ -829,10 +798,12 @@ impl From<GoAwayMessage> for GoAwaySolver {
 impl GoAwaySolver {
     const MSG_LEN: u32 = 10 * 4 * 8;
 
+    /// Set the limit.
     pub fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
 
+    /// Get the attempted nonces.
     pub fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
     }
@@ -987,7 +958,7 @@ impl crate::solver::Solver for GoAwaySolver {
         let mut final_sha_state = crate::sha256::IV;
         crate::sha256::digest_block(&mut final_sha_state, &output_msg);
 
-        return Some((nonce, final_sha_state));
+        Some((nonce, final_sha_state))
     }
 }
 

@@ -2,7 +2,8 @@
 use super::*;
 use core::arch::wasm32::*;
 
-include!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/local_macros.rs"));
+#[macro_use]
+mod loop_macros;
 
 #[inline(always)]
 fn u32x4_ror(x: v128, shift: u32) -> v128 {

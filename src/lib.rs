@@ -1,5 +1,6 @@
 #![cfg_attr(not(any(test, feature = "std")), no_std)]
 #![doc = include_str!("../README.md")]
+#![warn(missing_docs)]
 
 #[cfg(feature = "wasm-bindgen")]
 use wasm_bindgen::prelude::*;
@@ -10,10 +11,11 @@ use core::num::NonZeroU8;
 extern crate alloc;
 
 #[cfg(feature = "client")]
-/// Web client for solving mCaptcha PoW
+/// Web client for end-to-end PoW solving
 pub mod client;
 
 #[cfg(feature = "server")]
+/// Server for end-to-end PoW solving
 pub mod server;
 
 #[cfg(feature = "wasm-bindgen")]
@@ -26,11 +28,14 @@ mod strings;
 /// SHA-256 primitives
 mod sha256;
 
+/// Message builders
 pub mod message;
 
+/// Solvers
 pub mod solver;
 
 #[cfg(feature = "adapter")]
+/// Adapters for end-to-end PoW solving
 pub mod adapter;
 
 #[cfg(all(
@@ -56,7 +61,8 @@ compile_error!(concat!(
 
 #[repr(align(16))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Align16<T>(T);
+/// Align to 16 bytes
+pub struct Align16<T>(pub T);
 
 impl<T> core::ops::Deref for Align16<T> {
     type Target = T;
@@ -73,19 +79,20 @@ impl<T> core::ops::DerefMut for Align16<T> {
 
 #[repr(align(64))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Align64<T>(T);
+/// Align to 64 bytes
+pub struct Align64<T>(pub T);
 
-//Ref downcast to Align16
-impl<'a, T> Into<&'a Align16<T>> for &'a Align64<T> {
-    fn into(self) -> &'a Align16<T> {
-        unsafe { core::mem::transmute(self) }
+// Ref downcast to Align16
+impl<'a, T> From<&'a Align64<T>> for &'a Align16<T> {
+    fn from(this: &'a Align64<T>) -> &'a Align16<T> {
+        unsafe { core::mem::transmute(this) }
     }
 }
 
-//Ref downcast to Align16
-impl<'a, T> Into<&'a mut Align16<T>> for &'a mut Align64<T> {
-    fn into(self) -> &'a mut Align16<T> {
-        unsafe { core::mem::transmute(self) }
+// Ref downcast to Align16
+impl<'a, T> From<&'a mut Align64<T>> for &'a mut Align16<T> {
+    fn from(this: &'a mut Align64<T>) -> &'a mut Align16<T> {
+        unsafe { core::mem::transmute(this) }
     }
 }
 
@@ -107,8 +114,9 @@ fn unlikely() {}
 
 #[cfg(feature = "wasm-bindgen")]
 #[wasm_bindgen]
+/// Convert a prefix offset to a lane position
 pub fn prefix_offset_to_lane_position(offset: usize) -> usize {
-    PREFIX_OFFSET_TO_LANE_POSITION[offset]
+    PREFIX_OFFSET_TO_LANE_POSITION[offset % 64]
 }
 
 const PREFIX_OFFSET_TO_LANE_POSITION: [usize; 64] = [
@@ -125,23 +133,38 @@ const SWAP_DWORD_BYTE_ORDER: [usize; 64] = [
 
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 cfg_if::cfg_if! {
-    if #[cfg(target_feature = "avx512f")] {
+    if #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))] {
+        /// Single block solver
         pub type SingleBlockSolver = crate::solver::avx512::SingleBlockSolver;
+        /// Double block solver
         pub type DoubleBlockSolver = crate::solver::avx512::DoubleBlockSolver;
+        /// Dynamic dispatching Decimal solver
         pub type DecimalSolver = crate::solver::avx512::DecimalSolver;
+        /// Go away solver
         pub type GoAwaySolver = crate::solver::avx512::GoAwaySolver;
+        /// Solver name
         pub const SOLVER_NAME: &str = "AVX-512";
     } else if #[cfg(target_feature = "sha")] {
+        /// Single block solver
         pub type SingleBlockSolver = crate::solver::sha_ni::SingleBlockSolver;
+        /// Double block solver
         pub type DoubleBlockSolver = crate::solver::sha_ni::DoubleBlockSolver;
+        /// Dynamic dispatching Decimal solver
         pub type DecimalSolver = crate::solver::sha_ni::DecimalSolver;
+        /// Go away solver
         pub type GoAwaySolver = crate::solver::sha_ni::GoAwaySolver;
+        /// Solver name
         pub const SOLVER_NAME: &str = "SHA-NI";
     } else {
+        /// Single block solver
         pub type SingleBlockSolver = crate::solver::safe::SingleBlockSolver;
+        /// Double block solver
         pub type DoubleBlockSolver = crate::solver::safe::DoubleBlockSolver;
+        /// Dynamic dispatching Decimal solver
         pub type DecimalSolver = crate::solver::safe::DecimalSolver;
+        /// Go away solver
         pub type GoAwaySolver = crate::solver::safe::GoAwaySolver;
+        /// Solver name
         pub const SOLVER_NAME: &str = "Fallback";
     }
 }
@@ -149,42 +172,44 @@ cfg_if::cfg_if! {
 #[cfg(not(any(target_arch = "x86_64", target_arch = "x86")))]
 cfg_if::cfg_if! {
     if #[cfg(target_arch = "wasm32")] {
+        /// Single block solver
         pub type SingleBlockSolver = crate::solver::simd128::SingleBlockSolver;
+        /// Double block solver
         pub type DoubleBlockSolver = crate::solver::simd128::DoubleBlockSolver;
+        /// Dynamic dispatching Decimal solver
         pub type DecimalSolver = crate::solver::simd128::DecimalSolver;
+        /// Go away solver
         pub type GoAwaySolver = crate::solver::simd128::GoAwaySolver;
+        /// Solver name
         pub const SOLVER_NAME: &str = "SIMD128";
     } else {
+        /// Single block solver
         pub type SingleBlockSolver = crate::solver::safe::SingleBlockSolver;
+        /// Double block solver
         pub type DoubleBlockSolver = crate::solver::safe::DoubleBlockSolver;
+        /// Dynamic dispatching Decimal solver
         pub type DecimalSolver = crate::solver::safe::DecimalSolver;
+        /// Go away solver
         pub type GoAwaySolver = crate::solver::safe::GoAwaySolver;
+        /// Solver name
         pub const SOLVER_NAME: &str = "Fallback";
     }
 }
 
-pub fn build_prefix<E: Extend<u8>>(out: &mut E, string: &str, salt: &str) {
+/// Build a prefix for mCaptcha PoW
+pub fn build_mcaptcha_prefix<E: Extend<u8>>(out: &mut E, string: &str, salt: &str) {
     out.extend(salt.as_bytes().iter().copied());
     out.extend((string.len() as u64).to_le_bytes());
     out.extend(string.as_bytes().iter().copied());
 }
 
-pub const fn decompose_blocks(inp: &[u32; 16]) -> &[u8; 64] {
-    unsafe { core::mem::transmute(inp) }
-}
-
-pub const fn decompose_blocks_mut(inp: &mut [u32; 16]) -> &mut [u8; 64] {
+pub(crate) const fn decompose_blocks_mut(inp: &mut [u32; 16]) -> &mut [u8; 64] {
     unsafe { core::mem::transmute(inp) }
 }
 
 /// Compute the target for an mCaptcha PoW
-pub const fn compute_target(difficulty_factor: u32) -> u64 {
-    u64::MAX - u64::MAX / difficulty_factor as u64
-}
-
-/// Compute the target for an mCaptcha PoW
-pub const fn compute_target_64(difficulty_factor: u64) -> u64 {
-    u64::MAX - u64::MAX / difficulty_factor as u64
+pub const fn compute_target_mcaptcha(difficulty_factor: u64) -> u64 {
+    u64::MAX - u64::MAX / difficulty_factor
 }
 
 /// Compute the target for an Anubis PoW
@@ -211,6 +236,8 @@ pub const fn extract64_be(inp: [u32; 8]) -> u64 {
     (inp[0] as u64) << 32 | (inp[1] as u64)
 }
 
+/// Check if a lane position is supported in the current build
+#[allow(clippy::match_like_matches_macro)]
 pub const fn is_supported_lane_position(lane_position: usize) -> bool {
     match lane_position {
         0 => cfg!(feature = "lane-position-0"),
@@ -234,6 +261,7 @@ pub const fn is_supported_lane_position(lane_position: usize) -> bool {
 }
 
 #[cfg(feature = "wasm-bindgen")]
+/// Check if a lane position is supported in the current build
 #[wasm_bindgen(js_name = "is_supported_lane_position")]
 pub fn is_supported_lane_position_wasm(lane_position: usize) -> bool {
     is_supported_lane_position(lane_position)
@@ -320,7 +348,7 @@ mod tests {
     fn test_bincode_string_serialize() {
         let string = "hello";
         let mut homegrown = Vec::new();
-        build_prefix(&mut homegrown, string, "z");
+        build_mcaptcha_prefix(&mut homegrown, string, "z");
         let mut official = Vec::new();
         build_prefix_official(&mut official, string, "z").unwrap();
         assert_eq!(homegrown, official);

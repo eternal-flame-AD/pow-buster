@@ -8,54 +8,80 @@ use crate::{
         AnubisChallengeDescriptor, CapJsChallengeDescriptor, CapJsResponse, GoAwayConfig,
         SolveCapJsResponseMeta,
     },
-    compute_target, compute_target_goaway,
+    compute_target_goaway, compute_target_mcaptcha,
     message::{DecimalMessage, GoAwayMessage},
     solver::{SOLVE_TYPE_GT, SOLVE_TYPE_LT, Solver},
 };
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
+/// mCaptcha PoW configuration
 pub struct PoWConfig {
+    /// the string to hash  
     pub string: String,
+    /// the difficulty factor
     pub difficulty_factor: u32,
+    /// the salt
     pub salt: String,
 }
 
 #[derive(Clone, serde::Serialize, Debug)]
+/// mCaptcha PoW work unit definition
 pub struct Work<'a> {
+    /// the string to hash
     pub string: String,
+    /// the result
     pub result: String,
+    /// the nonce
     pub nonce: u64,
+    /// the key
     pub key: &'a str,
 }
 
 #[derive(Debug, thiserror::Error)]
+/// mCaptcha PoW solve error
 pub enum SolveError {
     #[error("unknown algorithm: {0}")]
+    /// unknown algorithm
     UnknownAlgorithm(String),
     #[error("unexpected challenge format")]
+    /// unexpected challenge format
     UnexpectedChallengeFormat,
     #[error("not implemented")]
+    /// not implemented
     NotImplemented,
     #[error("cookie not found")]
+    /// cookie not found
     CookieNotFound,
     #[error("golden ticket not found")]
+    /// golden ticket not found
     GoldenTicketNotFound,
     #[error("solver failed")]
+    /// solver failed
     SolverFailed,
     #[error("scrape element not found: {0}")]
+    /// scrape element not found
     ScrapeElementNotFound(&'static str),
     #[error("invalid url: {0}")]
+    /// invalid url
     InvalidUrl(#[from] url::ParseError),
     #[error(transparent)]
+    /// json error
     Json(#[from] serde_json::Error),
     #[error(transparent)]
+    /// reqwest error
     Reqwest(#[from] reqwest::Error),
     #[error("unexpected status when requesting work: {0}: {1}")]
+    /// unexpected status when requesting work
     UnexpectedStatusRequest(reqwest::StatusCode, String),
     #[error("unexpected status when sending work: {0}: {1}")]
+    /// unexpected status when sending work
     UnexpectedStatusSend(reqwest::StatusCode, String),
 }
 
+/// Solve a mcaptcha live.
+///
+/// If `really_solve` is false, the solver will not be used and a dummy nonce and result will be returned.
+/// This is useful for testing and benchmarking.
 pub async fn solve_mcaptcha(
     pool: &rayon::ThreadPool,
     client: &Client,
@@ -66,6 +92,10 @@ pub async fn solve_mcaptcha(
     solve_mcaptcha_ex(pool, client, base_url, site_key, really_solve, &mut 0).await
 }
 
+/// Solve a Cap.js PoW.
+///
+/// If `really_solve` is false, the solver will not be used and a dummy nonce and result will be returned.
+/// This is useful for testing and benchmarking.
 pub async fn solve_capjs(
     pool: &rayon::ThreadPool,
     client: &Client,
@@ -106,6 +136,7 @@ pub async fn solve_capjs(
     ))
 }
 
+/// Solve a Cap.js PoW in a worker.
 pub async fn solve_capjs_worker(
     pool: &rayon::ThreadPool,
     client: &Client,
@@ -229,8 +260,8 @@ pub async fn solve_mcaptcha_ex(
     let config: PoWConfig = res.json().await?;
 
     let mut prefix = Vec::new();
-    crate::build_prefix(&mut prefix, &config.string, &config.salt);
-    let target = compute_target(config.difficulty_factor);
+    crate::build_mcaptcha_prefix(&mut prefix, &config.string, &config.salt);
+    let target = compute_target_mcaptcha(config.difficulty_factor as u64);
 
     let (nonce, result) = if really_solve {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -287,18 +318,20 @@ pub async fn solve_mcaptcha_ex(
     Ok(token.token)
 }
 
-pub async fn solve_anubis(
-    client: &Client,
-    base_url: &str,
-    really_solve: bool,
-) -> Result<String, SolveError> {
-    solve_anubis_ex(client, base_url, really_solve, &mut 0).await
+/// Solve an Anubis PoW.
+pub async fn solve_anubis(client: &Client, base_url: &str) -> Result<String, SolveError> {
+    solve_anubis_ex(client, base_url, &mut 0).await
 }
 
+/// Solve an Anubis PoW with extended functionality.
+///
+/// If `really_solve` is false, the solver will not be used and a dummy nonce and result will be returned.
+/// This is useful for testing and benchmarking.
+///
+/// `time_iowait` is a pointer to a u32 that will be incremented by the time spent waiting for the IO instead of solving the PoW.
 pub async fn solve_anubis_ex(
     client: &Client,
     base_url: &str,
-    really_solve: bool,
     time_iowait: &mut u32,
 ) -> Result<String, SolveError> {
     let url_parsed = url::Url::parse(base_url)?;
@@ -348,13 +381,8 @@ pub async fn solve_anubis_ex(
             challenge.rules().algorithm().to_string(),
         ));
     }
-    let (result, attempted_nonces) = if really_solve {
-        // AFAIK as of now there is no way to configure Anubis to require the double solver
-        let (result, attempted_nonces) = tokio::task::block_in_place(|| challenge.solve());
-        (result, attempted_nonces)
-    } else {
-        (Some((0, [0; 8])), 0)
-    };
+    // AFAIK as of now there is no way to configure Anubis to require the double solver
+    let (result, attempted_nonces) = tokio::task::block_in_place(|| challenge.solve());
 
     let (nonce, result) = result.ok_or(SolveError::SolverFailed)?;
 
@@ -432,10 +460,10 @@ pub async fn solve_anubis_ex(
     Ok(auth_cookie)
 }
 
+/// Solve a GoAway "js-pow-sha256" PoW.
 pub async fn solve_goaway_js_pow_sha256(
     client: &Client,
     base_url: &str,
-    really_solve: bool,
 ) -> Result<String, SolveError> {
     let base_url = url::Url::parse(base_url)?;
     let make_challenge_url = base_url.join("/.well-known/.git.gammaspectra.live/git/go-away/cmd/go-away/challenge/js-pow-sha256/make-challenge")?;
@@ -460,41 +488,28 @@ pub async fn solve_goaway_js_pow_sha256(
 
     let estimated_workload = 1u64 << config.difficulty().get();
 
-    let (nonce, result) = if really_solve {
-        tokio::task::block_in_place(|| {
-            let solve_begin = std::time::Instant::now();
-            let mut solver = crate::GoAwaySolver::from(
-                config
-                    .challenge()
-                    .as_bytes()
-                    .try_into()
-                    .ok()
-                    .and_then(GoAwayMessage::new_hex)
-                    .or_else(|| {
-                        config
-                            .challenge()
-                            .as_bytes()
-                            .try_into()
-                            .ok()
-                            .map(GoAwayMessage::new_bytes)
-                    })
-                    .ok_or(SolveError::UnexpectedChallengeFormat)?,
-            );
-            let result = solver.solve::<{ SOLVE_TYPE_LT }>(target, !0);
-            let Some(result) = result else {
-                return Err(SolveError::SolverFailed);
-            };
-            let elapsed = solve_begin.elapsed();
-            eprintln!(
-                "solve time: {:?} ({:.2} MH/s)",
-                elapsed,
-                result.0 as f64 / elapsed.as_secs_f64() / 1024.0 / 1024.0
-            );
-            Ok(result)
-        })?
-    } else {
-        Default::default()
-    };
+    let (nonce, result) = tokio::task::block_in_place(|| {
+        let mut solver = crate::GoAwaySolver::from(
+            config
+                .challenge()
+                .as_bytes()
+                .try_into()
+                .ok()
+                .and_then(GoAwayMessage::new_hex)
+                .or_else(|| {
+                    config
+                        .challenge()
+                        .as_bytes()
+                        .try_into()
+                        .ok()
+                        .map(GoAwayMessage::new_bytes)
+                })
+                .ok_or(SolveError::UnexpectedChallengeFormat)?,
+        );
+        solver
+            .solve::<{ SOLVE_TYPE_LT }>(target, !0)
+            .ok_or(SolveError::SolverFailed)
+    })?;
 
     let plausible_time = estimated_workload / 1024;
 

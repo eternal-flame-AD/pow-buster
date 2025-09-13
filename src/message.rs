@@ -1,34 +1,44 @@
+#![allow(clippy::inconsistent_digit_grouping)]
+#![allow(clippy::collapsible_if)]
 use crate::{Align16, Align64, is_supported_lane_position, sha256};
 
-// Solves an mCaptcha/Anubis SHA256 PoW where the SHA-256 message is a single block (512 bytes minus padding).
-//
-// Construct: Proof := (prefix || ASCII_DECIMAL(nonce))
+/// Solves an mCaptcha/Anubis/Cap.js SHA256 PoW where the SHA-256 message is a single block (512 bytes minus padding).
+///
+/// Construct: Proof := (prefix || ASCII_DECIMAL(nonce))
+///
+/// Currently the mutating part is always 9 digits long.
 #[derive(Debug, Clone)]
 pub struct SingleBlockMessage {
-    // the message template for the final block
+    /// the message template for the final block, pre-padded except for the mutating part
     pub message: Align64<[u32; 16]>,
 
-    // the SHA-256 state A-H for all prefix bytes
+    /// the SHA-256 midstate for the previous block
     pub prefix_state: [u32; 8],
 
+    /// the index of the mutating part of the digits in the message
     pub digit_index: usize,
 
+    /// the nonce addend
     pub nonce_addend: u64,
 
-    pub approx_working_set_count: core::num::NonZeroU64,
+    /// the approximate working set count
+    pub approx_working_set_count: core::num::NonZeroU32,
 
+    /// whether there are no trailing zeros
     pub no_trailing_zeros: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
+/// a prefix for stretching nonces that are accepted as IEEE 754 double precision floats
 pub struct IEEE754LosslessFixupPrefix {
     buf: [u8; 9],
     cut: usize,
 }
 
 impl IEEE754LosslessFixupPrefix {
+    /// fixes up a nonce before sending it to the server
     #[inline(always)]
-    pub fn fixup(&self, nonce: u64) -> f64 {
+    pub const fn fixup(&self, nonce: u64) -> f64 {
         let mut decimals = 0.00000_000_000_001 * nonce as f64;
         let tens = self.buf[1] - b'0';
         let ones = self.buf[2] - b'0';
@@ -47,6 +57,7 @@ impl AsRef<[u8]> for IEEE754LosslessFixupPrefix {
 }
 
 impl SingleBlockMessage {
+    /// creates a new single block message
     pub fn new(mut prefix: &[u8], mut working_set: u32) -> Option<Self> {
         // construct the message buffer
         let mut prefix_state = sha256::IV;
@@ -279,6 +290,7 @@ impl SingleBlockMessage {
             message[..pad_right.len()].copy_from_slice(pad_right);
             ptr += pad_right.len();
             working_set = 0;
+            approx_working_set_count = 32 - working_set;
             fixup_prefix = Some(padding);
         }
 
@@ -429,21 +441,30 @@ impl SingleBlockMessage {
     }
 }
 
+/// Solves an mCaptcha/Anubis/Cap.js SHA256 PoW where the SHA-256 message is a double block (1024 bytes minus padding).
+///
+/// Construct: Proof := (prefix || '1' * k || ASCII_DECIMAL(nonce) || '\x80') | ('\0' * 56 + length)
+///
+/// Currently the mutating part is always 9 digits long.
 pub struct DoubleBlockMessage {
-    // the message template for the final block
+    /// the message template for the final block, pre-padded except for the mutating part
     pub message: Align64<[u32; 16]>,
 
-    // the SHA-256 state A-H for all prefix bytes
+    /// the SHA-256 midstate for the previous block
     pub prefix_state: Align16<[u32; 8]>,
 
+    /// the length of the message in bytes
     pub message_length: u64,
 
+    /// the nonce addend
     pub nonce_addend: u64,
 }
 
 impl DoubleBlockMessage {
+    /// the index of the mutating part of the digits in the message
     pub const DIGIT_IDX: u64 = 54;
 
+    /// creates a new double block message
     pub fn new(mut prefix: &[u8], mut working_set: u32) -> Option<Self> {
         if !is_supported_lane_position(Self::DIGIT_IDX as usize / 4) {
             return None;
@@ -491,7 +512,7 @@ impl DoubleBlockMessage {
         // pad with ones until we are on a 64-bit boundary minus 2 byte
         // we have much more leeway here as we are committed to a double block solver, using more bytes is fine, there is nothing useful to be traded off
         // so we will construct and solve exactly this format, for lane 12 and nonce 3456789:
-        // [prefix + '1' * k + '12' + '3456' + '789\x80'] | ['\0' * 12 + length]
+        // [prefix + '1' * k + '12' + '3456' + '789\x80'] | ['\0' * 56 + length]
         let mut nonce_addend = 0;
         while (ptr + 2) % 8 != 0 {
             nonce_addend *= 10;
@@ -541,18 +562,24 @@ impl DoubleBlockMessage {
     }
 }
 
+/// A wrapper that handles both cases for decimal nonces
 pub enum DecimalMessage {
+    /// A single block message
     SingleBlock(SingleBlockMessage),
+
+    /// A double block message
     DoubleBlock(DoubleBlockMessage),
 }
 
 impl DecimalMessage {
+    /// creates a new decimal message
     pub fn new(input: &[u8], working_set: u32) -> Option<Self> {
         SingleBlockMessage::new(input, working_set)
             .map(Self::SingleBlock)
             .or_else(|| DoubleBlockMessage::new(input, working_set).map(Self::DoubleBlock))
     }
 
+    /// creates a new decimal message using only IEEE 754 double precision floats that can stringify losslessly
     pub fn new_f64(
         input: &[u8],
         working_set: u32,
@@ -565,15 +592,21 @@ impl DecimalMessage {
     }
 }
 
+/// A message  in the go-away format
+///
+/// Construct: Proof := (prefix || U64(nonce)) where prefix is 32 bytes
 pub struct GoAwayMessage {
+    /// the challenge
     pub challenge: [u32; 8],
 }
 
 impl GoAwayMessage {
+    /// creates a new go-away message
     pub fn new(challenge: [u32; 8]) -> Self {
         Self { challenge }
     }
 
+    /// creates a new go-away message from a 32 byte challenge
     pub fn new_bytes(challenge: &[u8; 32]) -> Self {
         Self {
             challenge: core::array::from_fn(|i| {
@@ -587,21 +620,22 @@ impl GoAwayMessage {
         }
     }
 
+    /// creates a new go-away message from a 64 byte challenge
     pub fn new_hex(challenge: &[u8; 64]) -> Option<Self> {
         let mut prefix_fixed_up = [0; 32];
         for i in 0..32 {
             let byte_hex: [u8; 2] = challenge[i * 2..][..2].try_into().unwrap();
-            let high_nibble = if (b'a'..=b'f').contains(&byte_hex[0]) {
-                byte_hex[0] - b'a' + 10
-            } else if (b'0'..=b'9').contains(&byte_hex[0]) {
+            let high_nibble = if byte_hex[0].is_ascii_digit() {
                 byte_hex[0] - b'0'
+            } else if (b'a'..=b'f').contains(&byte_hex[0]) {
+                byte_hex[0] - b'a' + 10
             } else {
                 return None;
             };
-            let low_nibble = if (b'a'..=b'f').contains(&byte_hex[1]) {
-                byte_hex[1] - b'a' + 10
-            } else if (b'0'..=b'9').contains(&byte_hex[1]) {
+            let low_nibble = if byte_hex[1].is_ascii_digit() {
                 byte_hex[1] - b'0'
+            } else if (b'a'..=b'f').contains(&byte_hex[1]) {
+                byte_hex[1] - b'a' + 10
             } else {
                 return None;
             };
@@ -619,21 +653,19 @@ pub struct CapJSEmitter {
 #[inline(always)]
 const fn fnv1a(state: u32, data: u8) -> u32 {
     let state = state ^ data as u32;
-    let state = state
+    state
         .wrapping_add(state << 1)
         .wrapping_add(state << 4)
         .wrapping_add(state << 7)
         .wrapping_add(state << 8)
-        .wrapping_add(state << 24);
-    state
+        .wrapping_add(state << 24)
 }
 
 #[inline(always)]
 const fn capjs_lfsr(state: u32) -> u32 {
     let state = state ^ (state << 13);
     let state = state ^ (state >> 17);
-    let state = state ^ (state << 5);
-    state
+    state ^ (state << 5)
 }
 
 impl CapJSEmitter {

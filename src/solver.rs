@@ -1,38 +1,50 @@
 use alloc::string::ToString;
 use sha2::Digest;
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+/// AVX-512 solver
+#[cfg(all(target_arch = "x86_64", any(doc, target_feature = "avx512f")))]
 pub mod avx512;
 
 #[cfg(all(
     any(target_arch = "x86_64", target_arch = "x86"),
-    target_feature = "sha"
+    any(doc, target_feature = "sha")
 ))]
+/// SHA-NI solver
 pub mod sha_ni;
 
+/// SIMD128 solver
 #[cfg(target_arch = "wasm32")]
 pub mod simd128;
 
+/// Safe solver
 pub mod safe;
 
-// Less than test (such as Anubis and GoAway)
+/// Less than test (such as Anubis and GoAway)
 pub const SOLVE_TYPE_LT: u8 = 1;
-/// Greater than test (such as MCaptcha)
+/// Greater than test (such as mCaptcha)
 pub const SOLVE_TYPE_GT: u8 = 2;
 /// Mask test (such as Cap.js)
-pub const SOLVE_TYPE_MASK: u8 = 3;
+pub const SOLVE_TYPE_MASK: u8 = 4;
 
+/// A generic solver trait
 pub trait Solver {
-    // returns a valid nonce and "result" value
-    //
-    // mCaptcha uses an upwards comparison, Anubis uses a downwards comparison
-    //
-    // returns None when the solver cannot solve the prefix
-    // failure is usually because the key space is exhausted (or presumed exhausted)
-    // it should by design happen extremely rarely for common difficulty settings
+    /// Returns a valid nonce and its corresponding hash value.
+    ///
+    /// Supported schemes:
+    ///
+    /// - `SOLVE_TYPE_LT`: Less than test (such as Anubis and GoAway)
+    /// - `SOLVE_TYPE_GT`: Greater than test (such as mCaptcha)
+    /// - `SOLVE_TYPE_MASK`: Mask test (such as Cap.js)
+    ///
+    /// Currently bitmasking `SOLVE_TYPE_MASK` with `SOLVE_TYPE_GT` or `SOLVE_TYPE_LT` is not supported and may result in unexpected behavior.
+    ///
+    /// Returns None when the solver cannot solve the prefix.
+    ///
+    /// Failure is usually because the key space is exhausted (or presumed exhausted).
+    /// It should by design happen extremely rarely for common difficulty settings.
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])>;
 
-    /// returns a valid nonce without the actual hash
+    /// Returns a valid nonce without the actual hash.
     ///
     /// A trivial implementation is provided by default.
     fn solve_nonce_only<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<u64> {
@@ -42,7 +54,9 @@ pub trait Solver {
 
 /// A dyn-dispatching wrapper for Solver
 pub trait SolverDyn {
+    /// A dynamic dispatching wrapper for solve
     fn solve_dyn(&mut self, target: u64, ty: u8, mask: u64) -> Option<(u64, [u32; 8])>;
+    /// A dynamic dispatching wrapper for solve_nonce_only
     fn solve_nonce_only_dyn(&mut self, target: u64, ty: u8, mask: u64) -> Option<u64>;
 }
 
@@ -66,10 +80,13 @@ impl<S: Solver> SolverDyn for S {
     }
 }
 
+/// A validator trait
 pub trait Validator {
+    /// validates a nonce and its corresponding hash value
     fn validate(&self, nonce: u64, result: Option<&[u32; 8]>) -> bool;
 }
 
+/// A validator for Hashcash-style proofs
 pub struct HashcashValidator<'a> {
     prefix: &'a [u8],
     target: u64,
@@ -77,6 +94,7 @@ pub struct HashcashValidator<'a> {
 }
 
 impl<'a> HashcashValidator<'a> {
+    /// creates a new decimal validator
     pub fn new_decimal(prefix: &'a [u8], target: u64) -> Self {
         Self {
             prefix,
@@ -85,6 +103,7 @@ impl<'a> HashcashValidator<'a> {
         }
     }
 
+    /// creates a new binary validator
     pub fn new_bin(prefix: &'a [u8], target: u64) -> Self {
         Self {
             prefix,
@@ -95,14 +114,15 @@ impl<'a> HashcashValidator<'a> {
 }
 
 impl<'a> Validator for HashcashValidator<'a> {
+    /// validates a nonce and its corresponding hash value
     fn validate(&self, nonce: u64, result: Option<&[u32; 8]>) -> bool {
         let mut hasher = sha2::Sha256::default();
-        hasher.update(&self.prefix);
+        hasher.update(self.prefix);
         if self.decimal {
             let nonce_str = nonce.to_string();
-            hasher.update(&nonce_str.as_bytes());
+            hasher.update(nonce_str.as_bytes());
         } else {
-            hasher.update(&nonce.to_be_bytes());
+            hasher.update(nonce.to_be_bytes());
         }
         let hash = hasher.finalize();
         let hash_u64 = u64::from_be_bytes(hash.as_slice()[..8].try_into().unwrap());
@@ -130,8 +150,8 @@ pub(crate) mod tests {
     use sha2::Sha256;
 
     use crate::{
-        compute_target, compute_target_anubis, compute_target_goaway, extract64_be, extract128_be,
-        message::IEEE754LosslessFixupPrefix,
+        compute_target_anubis, compute_target_goaway, compute_target_mcaptcha, extract64_be,
+        extract128_be, message::IEEE754LosslessFixupPrefix,
     };
 
     use super::*;
@@ -185,7 +205,7 @@ pub(crate) mod tests {
                         break;
                     };
 
-                    let target_bytes = compute_target(DIFFICULTY).to_be_bytes();
+                    let target_bytes = compute_target_mcaptcha(DIFFICULTY as u64).to_be_bytes();
                     let target_u64 = u64::from_be_bytes(target_bytes[..8].try_into().unwrap());
                     let target_anubis = compute_target_anubis(ANUBIS_DIFFICULTY);
                     let target_anubis_bytes = target_anubis.to_be_bytes();
@@ -235,7 +255,7 @@ pub(crate) mod tests {
                         config.is_sufficient_difficulty(&test_response, DIFFICULTY),
                         "{:016x} is not sufficient difficulty, expected {:016x} (solver: {})",
                         result_u128,
-                        compute_target(DIFFICULTY),
+                        compute_target_mcaptcha(DIFFICULTY as u64),
                         core::any::type_name::<S>()
                     );
 

@@ -60,6 +60,7 @@ async fn serve_worker() -> JavaScript<&'static str> {
 }
 
 #[derive(Clone)]
+/// Server app state
 pub struct AppState {
     pool: Arc<rayon::ThreadPool>,
     semaphore: Arc<Semaphore>,
@@ -90,6 +91,7 @@ async fn serve_wasm(axum::extract::Path(_file): axum::extract::Path<String>) -> 
 }
 
 impl AppState {
+    /// creates a new app state
     pub fn new(n_threads: usize, limit: u64) -> Self {
         Self {
             pool: Arc::new(
@@ -104,6 +106,7 @@ impl AppState {
         }
     }
 
+    /// returns the effective limit clamped to supported range
     pub const fn effective_limit(&self) -> u64 {
         let cap = match cfg!(feature = "compare-64bit") {
             true => u64::MAX,
@@ -112,6 +115,7 @@ impl AppState {
         if self.limit > cap { cap } else { self.limit }
     }
 
+    /// returns the router
     pub fn router(&self) -> Router {
         Router::new()
             .route("/", get(index))
@@ -137,6 +141,7 @@ impl AppState {
             .with_state(self.clone())
     }
 
+    /// returns the router with origin check
     pub fn router_with_origin_check(&self, expected_origin: url::Url) -> Router {
         self.router().layer(axum::middleware::from_fn_with_state(
             Arc::new(expected_origin),
