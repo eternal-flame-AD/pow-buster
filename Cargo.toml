@@ -1,5 +1,11 @@
 [package]
-name = "simd-mcaptcha"
+name = "pow-buster"
+description = "A fast, adversarially implemented mCaptcha/Anubis/go-away/Cap.js PoW solver."
+license = "Apache-2.0"
+repository = "https://github.com/eternal-flame-AD/pow-buster"
+categories = ["cryptography"]
+keywords = ["sha-2", "captcha", "proof-of-work", "mining"]
+authors = ["Yumechi <yume@yumechi.jp>"]
 version = "0.1.0"
 edition = "2024"
 
@@ -99,6 +105,6 @@ server-wasm = ["server", "dep:rust-embed"]
 ignore-target-feature-checks = []
 
 [[bin]]
-name = "simd-mcaptcha"
+name = "pow-buster"
 path = "src/main.rs"
 required-features = ["cli"]

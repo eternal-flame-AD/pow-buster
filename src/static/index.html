@@ -15,6 +15,9 @@
 
 <body>
 
+    <h1>PoW Buster</h1>
+    <p>A fast, adversarially implemented mCaptcha/Anubis/go-away/Cap.js PoW solver.</p>
+
     <h1>How to use</h1>
     <p>
         Anubis/Go-away: You should find the challenge JSON in `head > script#anubis_challenge` or a network request
@@ -87,12 +90,12 @@
     <footer>
         <p>NOTICE: this is a public service limited to manageable load and limited concurrency, please do not abuse it.
             Run it on your own server if you need more resources.
-            <a href="https://github.com/eternal-flame-AD/simd-mcaptcha">Source Code</a>
+            <a href="https://github.com/eternal-flame-AD/pow-buster">Source Code</a>
         </p>
     </footer>
 
     <script type="module">
-        import init, { solve_anubis_json } from "/pkg/simd_mcaptcha.js";
+        import init, { solve_anubis_json } from "/pkg/pow_buster.js";
 
         let solver = null;
         let worker = null;

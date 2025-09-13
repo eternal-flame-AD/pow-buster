@@ -31,6 +31,8 @@ The benchmarks demonstrate a significant performance gap between browser-based J
 
 ## Why?
 
+This project was previously known as `simd-mcaptcha` and focused on mCaptcha. However since I discovered a systematic under-engineering of similar products, this is now renamed to `pow-buster` and handles multiple PoW systems.
+
 I personally don't like some projects (a subset of the schemes I supported, not all of them) put themselves at the ethical high ground of "protecting the website" when they:
 - Don't really protect the website better than heuristics (and this program serves as a proof of concept that it can be gamed using pure CPU).
 - Requires users to disable their anti fingerprinting protection like JShelter, and don't give users an opportunity to re-enable them before automatically redirecting them to the a website they have never been to before, which can very well hide fingerprinting scripts. This program emits solutions to these challenges fast without requiring JavaScript.
@@ -77,7 +79,7 @@ Optional Features:
 Demo:
 
 ```sh
-> time target/release/simd-mcaptcha anubis --url https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/diff/
+> time target/release/pow-buster anubis --url https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/diff/
 
 set-cookie: techaro.lol-anubis-auth=eyJeyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.ey<...>
 
@@ -88,7 +90,7 @@ Executed in  491.36 millis    fish           external
 ```
 
 ```sh
-> target/release/simd-mcaptcha server & # require `server` feature
+> target/release/pow-buster server & # require `server` feature
 > curl --data-urlencode challenge='{"rules":{"algorithm":"fast","difficulty":6,"report_as":6},"challenge":"xxxxxx"}' localhost:8080/solve
 
 // elapsed time: 29ms; attempted nonces: 2535920; 81.04 MH/s; 1.27% limit used
@@ -180,7 +182,7 @@ Fake Proof Control: 3732 requests in 10.1 seconds, 369.2 rps
 Anubis "extreme suspicion" (4, saturated Anubis Go runtime):
 
 ```sh
-> target/release/simd-mcaptcha live --api-type anubis --host http://localhost:8923/ \
+> target/release/pow-buster live --api-type anubis --host http://localhost:8923/ \
                                                     --n-workers 64
 
 You are hitting host http://localhost:8923/, n_workers: 64
@@ -202,7 +204,7 @@ You are hitting host http://localhost:8923/, n_workers: 64
 Anubis nightmare (6, doesn't exist in reality because it takes >1 hour on a 200kH/s browser solver, 256x harder than extreme suspicion):
 
 ```sh
-> target/release/simd-mcaptcha live --api-type anubis --host http://localhost:8923/ \
+> target/release/pow-buster live --api-type anubis --host http://localhost:8923/ \
                                                     --n-workers 32
 
 You are hitting host http://localhost:8923/, n_workers: 32
@@ -251,7 +253,7 @@ Tested with BrowserStack using the following configuration:
 We set up a local Cap.js server, set it to the same difficulty but 5000 subgoals instead of 50.
 
 ```sh
-> target/release/simd-mcaptcha cap-js --site-key 8b4574013b --url http://localhost:3000/
+> target/release/pow-buster cap-js --site-key 8b4574013b --url http://localhost:3000/
 
 challenge: CapJsChallengeDescriptor { rules: CapJsChallengeRules { count: 5000, salt_length: 32, difficulty: 4 }, token: "58c59bcc0395e2ee385ed2306581d2d5720079370967838c6b" }
 {

@@ -9,7 +9,7 @@ use std::{
 
 use clap::{Parser, Subcommand};
 
-use simd_mcaptcha::{
+use pow_buster::{
     DecimalSolver, DoubleBlockSolver, GoAwaySolver, SingleBlockSolver, compute_target_anubis,
     compute_target_mcaptcha,
     message::{DecimalMessage, GoAwayMessage},
@@ -152,7 +152,7 @@ fn main() {
                 );
                 let target = compute_target_mcaptcha(difficulty);
                 let result = solver
-                    .solve_nonce_only::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                    .solve_nonce_only::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)
                     .expect("solver failed");
                 core::hint::black_box(result);
             }
@@ -192,9 +192,7 @@ fn main() {
                         );
 
                         let result = solver
-                            .solve_nonce_only::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(
-                                target, !0,
-                            )
+                            .solve_nonce_only::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)
                             .expect("solver failed");
                         counter.fetch_add(1, Ordering::Relaxed);
                         core::hint::black_box(result);
@@ -243,14 +241,14 @@ fn main() {
             let pool = Arc::new(pool);
 
             runtime.block_on(async move {
-                use simd_mcaptcha::adapter::{CapJsResponse, SolveCapJsResponseMeta};
+                use pow_buster::adapter::{CapJsResponse, SolveCapJsResponseMeta};
 
                 let client = reqwest::ClientBuilder::new()
                     .redirect(reqwest::redirect::Policy::none())
                     .build()
                     .unwrap();
                 let (response, meta) =
-                    simd_mcaptcha::client::solve_capjs(&pool, &client, &url, &site_key)
+                    pow_buster::client::solve_capjs(&pool, &client, &url, &site_key)
                         .await
                         .unwrap();
 
@@ -280,7 +278,7 @@ fn main() {
                 );
                 let inner_begin = Instant::now();
                 let nonce = solver
-                    .solve_nonce_only::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                    .solve_nonce_only::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)
                     .expect("solver failed");
                 eprintln!(
                     "[{}]: in {:.3} seconds ({})",
@@ -307,7 +305,7 @@ fn main() {
                     DecimalSolver::from(DecimalMessage::new(&prefix, 0).expect("solver is None"));
                 let inner_begin = Instant::now();
                 let nonce = solver
-                    .solve_nonce_only::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                    .solve_nonce_only::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)
                     .expect("solver failed");
                 eprintln!(
                     "[{}]: in {:.3} seconds ({})",
@@ -333,7 +331,7 @@ fn main() {
                 let mut solver = GoAwaySolver::from(GoAwayMessage::new_bytes(&prefix));
                 let inner_begin = Instant::now();
                 let nonce = solver
-                    .solve_nonce_only::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                    .solve_nonce_only::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)
                     .expect("solver failed");
                 eprintln!(
                     "[{}]: in {:.3} seconds ({})",
@@ -365,7 +363,7 @@ fn main() {
                     .redirect(reqwest::redirect::Policy::none())
                     .build()
                     .unwrap();
-                let response = simd_mcaptcha::client::solve_anubis(&client, &url)
+                let response = pow_buster::client::solve_anubis(&client, &url)
                     .await
                     .unwrap();
                 println!("set-cookie: {}", response);
@@ -383,7 +381,7 @@ fn main() {
                     .redirect(reqwest::redirect::Policy::none())
                     .build()
                     .unwrap();
-                let response = simd_mcaptcha::client::solve_goaway_js_pow_sha256(&client, &url)
+                let response = pow_buster::client::solve_goaway_js_pow_sha256(&client, &url)
                     .await
                     .unwrap();
                 println!("set-cookie: {}", response);
@@ -444,7 +442,7 @@ fn main() {
                             ApiType::Mcaptcha => loop {
                                 let mut iotime = 0;
                                 let start = Instant::now();
-                                match simd_mcaptcha::client::solve_mcaptcha_ex(
+                                match pow_buster::client::solve_mcaptcha_ex(
                                     &pool,
                                     &client,
                                     &host_clone,
@@ -467,7 +465,7 @@ fn main() {
                             ApiType::Anubis => loop {
                                 let mut iotime = 0;
                                 let start = Instant::now();
-                                match simd_mcaptcha::client::solve_anubis_ex(
+                                match pow_buster::client::solve_anubis_ex(
                                     &client,
                                     &host_clone,
                                     &mut iotime,
@@ -490,7 +488,7 @@ fn main() {
                             ApiType::CapJs => loop {
                                 let mut iotime = 0;
                                 let start = Instant::now();
-                                match simd_mcaptcha::client::solve_capjs_worker(&pool, &client, &host_clone, &site_key_clone, &mut iotime, &semaphore)
+                                match pow_buster::client::solve_capjs_worker(&pool, &client, &host_clone, &site_key_clone, &mut iotime, &semaphore)
                                     .await {
                                         Ok(_) => {
                                             succeeded_clone.fetch_add(1, Ordering::Relaxed);
@@ -566,10 +564,10 @@ fn main() {
             let mut app = match check_origin {
                 Some(check_origin) => {
                     let expected_origin = url::Url::parse(&check_origin).unwrap();
-                    simd_mcaptcha::server::AppState::new(n_workers, limit)
+                    pow_buster::server::AppState::new(n_workers, limit)
                         .router_with_origin_check(expected_origin)
                 }
-                None => simd_mcaptcha::server::AppState::new(n_workers, limit).router(),
+                None => pow_buster::server::AppState::new(n_workers, limit).router(),
             };
 
             if timeout > 0 {

@@ -1,4 +1,4 @@
-import init, { solve_anubis_json } from "/pkg/simd_mcaptcha.js";
+import init, { solve_anubis_json } from "/pkg/pow_buster.js";
 
 onmessage = function (e) {
     switch (e.data.type) {
