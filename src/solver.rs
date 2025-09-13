@@ -32,13 +32,36 @@ pub trait Solver {
     // it should by design happen extremely rarely for common difficulty settings
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])>;
 
+    /// returns a valid nonce without the actual hash
+    ///
+    /// A trivial implementation is provided by default.
+    fn solve_nonce_only<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<u64> {
+        self.solve::<TYPE>(target, mask).map(|(nonce, _)| nonce)
+    }
+}
+
+/// A dyn-dispatching wrapper for Solver
+pub trait SolverDyn {
+    fn solve_dyn(&mut self, target: u64, ty: u8, mask: u64) -> Option<(u64, [u32; 8])>;
+    fn solve_nonce_only_dyn(&mut self, target: u64, ty: u8, mask: u64) -> Option<u64>;
+}
+
+impl<S: Solver> SolverDyn for S {
     // A dynamic dispatching wrapper for solve
-    #[inline(never)]
     fn solve_dyn(&mut self, target: u64, ty: u8, mask: u64) -> Option<(u64, [u32; 8])> {
         match ty {
             SOLVE_TYPE_LT => self.solve::<SOLVE_TYPE_LT>(target, mask),
             SOLVE_TYPE_GT => self.solve::<SOLVE_TYPE_GT>(target, mask),
             _ => self.solve::<SOLVE_TYPE_MASK>(target, mask),
+        }
+    }
+
+    // A dynamic dispatching wrapper for solve_nonce_only
+    fn solve_nonce_only_dyn(&mut self, target: u64, ty: u8, mask: u64) -> Option<u64> {
+        match ty {
+            SOLVE_TYPE_LT => self.solve_nonce_only::<SOLVE_TYPE_LT>(target, mask),
+            SOLVE_TYPE_GT => self.solve_nonce_only::<SOLVE_TYPE_GT>(target, mask),
+            _ => self.solve_nonce_only::<SOLVE_TYPE_MASK>(target, mask),
         }
     }
 }

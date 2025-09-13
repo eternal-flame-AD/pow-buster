@@ -71,7 +71,7 @@ const MUTATION_TYPE_ALIGNED_OCTAL: u8 = MUTATION_TYPE_ALIGNED | MUTATION_TYPE_OC
 const MUTATION_TYPE_UNALIGNED_OCTAL: u8 = MUTATION_TYPE_UNALIGNED | MUTATION_TYPE_OCTAL;
 
 impl crate::solver::Solver for SingleBlockSolver {
-    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+    fn solve_nonce_only<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<u64> {
         if self.attempted_nonces >= self.limit {
             return None;
         }
@@ -474,12 +474,18 @@ impl crate::solver::Solver for SingleBlockSolver {
             _ => unsafe { core::hint::unreachable_unchecked() },
         }?;
 
+        Some(nonce + self.message.nonce_addend)
+    }
+
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+        let nonce = self.solve_nonce_only::<TYPE>(target, mask)?;
+
         // recompute the hash from the beginning
         // this prevents the compiler from having to compute the final B-H registers alive in tight loops
         let mut final_sha_state = self.message.prefix_state;
         crate::sha256::digest_block(&mut final_sha_state, &self.message.message);
 
-        Some((nonce + self.message.nonce_addend, final_sha_state))
+        Some((nonce, final_sha_state))
     }
 }
 
@@ -833,7 +839,7 @@ impl GoAwaySolver {
 }
 
 impl crate::solver::Solver for GoAwaySolver {
-    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+    fn solve_nonce_only<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<u64> {
         unsafe {
             let lane_id_v = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
 
@@ -955,22 +961,9 @@ impl crate::solver::Solver for GoAwaySolver {
                         let success_lane_idx = INDEX_REMAP_PUNPCKLDQ
                             [_tzcnt_u16(met_target_high << 8 | met_target_lo) as usize];
 
-                        let mut output_msg: [u32; 16] = [0; 16];
-
                         let final_low_word = low_word | (success_lane_idx as u32);
-                        output_msg[..8].copy_from_slice(&self.challenge);
-                        output_msg[8] = high_word;
-                        output_msg[9] = final_low_word;
-                        output_msg[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
-                        output_msg[15] = Self::MSG_LEN as _;
 
-                        let mut final_sha_state = crate::sha256::IV;
-                        crate::sha256::digest_block(&mut final_sha_state, &output_msg);
-
-                        return Some((
-                            (high_word as u64) << 32 | final_low_word as u64,
-                            final_sha_state,
-                        ));
+                        return Some((high_word as u64) << 32 | final_low_word as u64);
                     }
 
                     if self.attempted_nonces >= self.limit {
@@ -980,6 +973,21 @@ impl crate::solver::Solver for GoAwaySolver {
             }
         }
         None
+    }
+
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+        let mut output_msg = [0; 16];
+        let nonce = self.solve_nonce_only::<TYPE>(target, mask)?;
+        output_msg[..8].copy_from_slice(&self.challenge);
+        output_msg[8] = (nonce >> 32) as u32;
+        output_msg[9] = nonce as u32;
+        output_msg[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
+        output_msg[15] = Self::MSG_LEN as _;
+
+        let mut final_sha_state = crate::sha256::IV;
+        crate::sha256::digest_block(&mut final_sha_state, &output_msg);
+
+        return Some((nonce, final_sha_state));
     }
 }
 

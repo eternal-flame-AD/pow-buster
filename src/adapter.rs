@@ -260,10 +260,12 @@ impl CapJsChallengeDescriptor {
                         DecimalMessage::new_f64(&salt_buf, 0).expect("solver is None");
                     let mut solver = DecimalSolver::from(message);
                     solver.set_limit(limit_per_challenge);
-                    let Some((nonce, _hash)) = solver.solve::<{ crate::solver::SOLVE_TYPE_MASK }>(
-                        (targets[0] as u64) << 32 | targets[1] as u64,
-                        mask,
-                    ) else {
+                    let Some(nonce) = solver
+                        .solve_nonce_only::<{ crate::solver::SOLVE_TYPE_MASK }>(
+                            (targets[0] as u64) << 32 | targets[1] as u64,
+                            mask,
+                        )
+                    else {
                         return;
                     };
                     attempted_nonces.fetch_add(
@@ -314,7 +316,7 @@ impl CapJsChallengeDescriptor {
                 DecimalMessage::new_f64(&salt_buf, 0).expect("solver is None");
             let mut solver = DecimalSolver::from(message);
             solver.set_limit(limit.saturating_sub(attempted_nonces));
-            let Some((nonce, _hash)) = solver.solve::<{ crate::solver::SOLVE_TYPE_MASK }>(
+            let Some(nonce) = solver.solve_nonce_only::<{ crate::solver::SOLVE_TYPE_MASK }>(
                 (targets[0] as u64) << 32 | targets[1] as u64,
                 mask,
             ) else {
