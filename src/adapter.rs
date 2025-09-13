@@ -5,7 +5,7 @@ use crate::{
     message::{CapJSEmitter, DecimalMessage, GoAwayMessage},
     solver::{SOLVE_TYPE_LT, Solver},
 };
-use alloc::string::String;
+use alloc::{string::String, vec::Vec};
 use sha2::Digest;
 
 #[derive(serde::Deserialize, Debug)]
@@ -294,6 +294,7 @@ impl CapJsChallengeDescriptor {
                 #[cfg(feature = "std")]
                 elapsed: 0,
                 attempted_nonces,
+                #[cfg(feature = "std")]
                 hashrate: 0,
             },
             token: self.token,
@@ -305,7 +306,7 @@ impl CapJsChallengeDescriptor {
             if limit.saturating_sub(attempted_nonces) == 0 {
                 break;
             }
-            let mut salt_buf = vec![0u8; self.rules.salt_length];
+            let mut salt_buf = alloc::vec![0u8; self.rules.salt_length];
             let mut targets = [0; 2];
             emitter.emit(&mut salt_buf, &mut targets, i as u32 + 1);
             let mask = !0 << (64 - self.rules.difficulty as u64 * 4);
