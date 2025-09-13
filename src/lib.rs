@@ -113,8 +113,8 @@ pub fn prefix_offset_to_lane_position(offset: usize) -> usize {
 
 const PREFIX_OFFSET_TO_LANE_POSITION: [usize; 64] = [
     2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8, 9, 9, 9, 9,
-    8, 8, 8, 8, 9, 9, 9, 9, 10, 10, 10, 10, 11, 11, 11, 13, 13, 13, 13, 13, 13, 0, 0, 0, 0, 0, 0,
-    0, 1, 1, 1, 1,
+    10, 10, 10, 10, 9, 9, 9, 9, 10, 10, 10, 10, 11, 11, 11, 13, 13, 13, 13, 13, 13, 0, 0, 0, 0, 0,
+    0, 0, 1, 1, 1, 1,
 ];
 
 const SWAP_DWORD_BYTE_ORDER: [usize; 64] = [
@@ -178,32 +178,37 @@ pub const fn decompose_blocks_mut(inp: &mut [u32; 16]) -> &mut [u8; 64] {
 }
 
 /// Compute the target for an mCaptcha PoW
-pub const fn compute_target(difficulty_factor: u32) -> u128 {
-    u128::MAX - u128::MAX / difficulty_factor as u128
+pub const fn compute_target(difficulty_factor: u32) -> u64 {
+    u64::MAX - u64::MAX / difficulty_factor as u64
 }
 
 /// Compute the target for an mCaptcha PoW
-pub const fn compute_target_64(difficulty_factor: u64) -> u128 {
-    u128::MAX - u128::MAX / difficulty_factor as u128
+pub const fn compute_target_64(difficulty_factor: u64) -> u64 {
+    u64::MAX - u64::MAX / difficulty_factor as u64
 }
 
 /// Compute the target for an Anubis PoW
-pub const fn compute_target_anubis(difficulty_factor: NonZeroU8) -> u128 {
+pub const fn compute_target_anubis(difficulty_factor: NonZeroU8) -> u64 {
     // some people misconfigure with difficulty 0
     if difficulty_factor.get() == 0 {
-        return u128::MAX;
+        return u64::MAX;
     }
-    1u128 << (128 - difficulty_factor.get() * 4)
+    1u64 << (64 - difficulty_factor.get() * 4)
 }
 
 /// Compute the target for a GoAway PoW
-pub const fn compute_target_goaway(difficulty_factor: NonZeroU8) -> u128 {
-    1u128 << (128 - difficulty_factor.get())
+pub const fn compute_target_goaway(difficulty_factor: NonZeroU8) -> u64 {
+    1u64 << (64 - difficulty_factor.get())
 }
 
 /// Extract top 128 bits from a 64-bit word array
 pub const fn extract128_be(inp: [u32; 8]) -> u128 {
     (inp[0] as u128) << 96 | (inp[1] as u128) << 64 | (inp[2] as u128) << 32 | (inp[3] as u128)
+}
+
+/// Extract top 64 bits from a 64-bit word array
+pub const fn extract64_be(inp: [u32; 8]) -> u64 {
+    (inp[0] as u64) << 32 | (inp[1] as u64)
 }
 
 pub const fn is_supported_lane_position(lane_position: usize) -> bool {
@@ -298,15 +303,15 @@ mod tests {
     fn test_compute_target_anubis() {
         assert_eq!(
             compute_target_anubis(NonZeroU8::new(1).unwrap()),
-            0x10000000000000000000000000000000,
+            0x1000000000000000,
         );
         assert_eq!(
             compute_target_anubis(NonZeroU8::new(2).unwrap()),
-            0x01000000000000000000000000000000,
+            0x0100000000000000,
         );
         assert_eq!(
             compute_target_anubis(NonZeroU8::new(3).unwrap()),
-            0x00100000000000000000000000000000,
+            0x0010000000000000,
         );
     }
 

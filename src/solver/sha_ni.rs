@@ -49,15 +49,35 @@ impl SingleBlockSolver {
 }
 
 impl crate::solver::Solver for SingleBlockSolver {
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+        if self.message.no_trailing_zeros {
+            self.solve_impl::<TYPE, true>(target, mask)
+        } else {
+            self.solve_impl::<TYPE, false>(target, mask)
+        }
+    }
+}
+
+impl SingleBlockSolver {
+    fn solve_impl<const TYPE: u8, const NO_TRAILING_ZEROS: bool>(
+        &mut self,
+        target: u64,
+        mask: u64,
+    ) -> Option<(u64, [u32; 8])> {
         let lane_id_0_word_idx = self.message.digit_index / 4;
         if !is_supported_lane_position(lane_id_0_word_idx) {
             return None;
         }
 
-        for i in (self.message.digit_index as usize..).take(9) {
+        let target = target & mask;
+        {
             let message = decompose_blocks_mut(&mut self.message.message);
-            message[SWAP_DWORD_BYTE_ORDER[i]] = b'0';
+            for i in (self.message.digit_index as usize..).take(9) {
+                message[SWAP_DWORD_BYTE_ORDER[i]] = b'0';
+            }
+            if NO_TRAILING_ZEROS {
+                message[SWAP_DWORD_BYTE_ORDER[self.message.digit_index + 8]] = b'1';
+            }
         }
 
         let lane_id_1_word_idx = (self.message.digit_index + 1) / 4;
@@ -68,11 +88,13 @@ impl crate::solver::Solver for SingleBlockSolver {
             const DIGIT_WORD_IDX0_DIV_4: usize,
             const DIGIT_WORD_IDX0_MOD_4: usize,
             const DIGIT_WORD_IDX1_INC: bool,
-            const UPWARDS: bool,
+            const TYPE: u8,
+            const NO_TRAILING_ZEROS: bool,
             const ON_REGISTER_BOUNDARY: bool,
         >(
             this: &mut SingleBlockSolver,
             target: u64,
+            mask: u64,
         ) -> Option<u64> {
             let mut partial_state = Align16(this.message.prefix_state);
             crate::sha256::ingest_message_prefix::<{ DIGIT_WORD_IDX0_DIV_4_TIMES_4 }>(
@@ -228,9 +250,14 @@ impl crate::solver::Solver for SingleBlockSolver {
                     }
 
                     #[cfg(target_feature = "avx2")]
-                    let mut itoa_buf = Align16(*b"0000\x80000");
+                    let mut itoa_buf = if NO_TRAILING_ZEROS && ON_REGISTER_BOUNDARY {
+                        Align16(*b"0000\x80100")
+                    } else {
+                        Align16(*b"0000\x80000")
+                    };
 
-                    for next_inner_key in 1..=10_000_000 {
+                    let mut next_inner_key = if NO_TRAILING_ZEROS { 2 } else { 1 };
+                    while next_inner_key <= 10_000_000 {
                         let mut state0 = prepared_state;
                         let mut state1 = prepared_state;
                         let mut state2 = prepared_state;
@@ -259,6 +286,16 @@ impl crate::solver::Solver for SingleBlockSolver {
                         state2[0] = _mm_add_epi32(state2[0], feedback_ab);
                         state3[0] = _mm_add_epi32(state3[0], feedback_ab);
 
+                        let cmp_fn = |x: &u64, y: &u64| {
+                            if TYPE == crate::solver::SOLVE_TYPE_GT {
+                                x > y
+                            } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                                x < y
+                            } else {
+                                x & mask == y & mask
+                            }
+                        };
+
                         let success_lane_idx = {
                             let result_abs = [
                                 _mm_extract_epi64(state0[0], 1) as u64,
@@ -267,9 +304,7 @@ impl crate::solver::Solver for SingleBlockSolver {
                                 _mm_extract_epi64(state3[0], 1) as u64,
                             ];
 
-                            result_abs
-                                .iter()
-                                .position(|x| if UPWARDS { *x > target } else { *x < target })
+                            result_abs.iter().position(|x| cmp_fn(x, &target))
                         };
 
                         if let Some(success_lane_idx) = success_lane_idx {
@@ -289,7 +324,16 @@ impl crate::solver::Solver for SingleBlockSolver {
                                 ) = (nonce_prefix % 10) as u8 + b'0';
                             }
 
-                            return Some(nonce_prefix as u64 * 10u64.pow(7) + next_inner_key - 1);
+                            let mut prev_inner_key = next_inner_key - 1;
+                            if NO_TRAILING_ZEROS && prev_inner_key % 10 == 0 {
+                                prev_inner_key -= 1;
+                            }
+
+                            return Some(nonce_prefix as u64 * 10u64.pow(7) + prev_inner_key);
+                        }
+
+                        if NO_TRAILING_ZEROS && next_inner_key % 10 == 0 {
+                            next_inner_key += 1;
                         }
 
                         #[cfg(target_feature = "avx2")]
@@ -342,13 +386,12 @@ impl crate::solver::Solver for SingleBlockSolver {
                         if this.attempted_nonces >= this.limit {
                             return None;
                         }
+                        next_inner_key += 1;
                     }
                 }
             }
             None
         }
-
-        let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
 
         macro_rules! dispatch {
             ($idx0_0:literal, $idx0_1:literal, $idx0_2:literal, $lane_id_1_word_idx_inc:literal) => {
@@ -358,18 +401,20 @@ impl crate::solver::Solver for SingleBlockSolver {
                         { $idx0_1 },
                         { $idx0_2 },
                         { $lane_id_1_word_idx_inc },
-                        UPWARDS,
+                        TYPE,
+                        NO_TRAILING_ZEROS,
                         true,
-                    >(self, compact_target)
+                    >(self, target, mask)
                 } else {
                     solve_inner::<
                         { $idx0_0 },
                         { $idx0_1 },
                         { $idx0_2 },
                         { $lane_id_1_word_idx_inc },
-                        UPWARDS,
+                        TYPE,
+                        NO_TRAILING_ZEROS,
                         false,
-                    >(self, compact_target)
+                    >(self, target, mask)
                 }
             };
             ($idx0_0:literal, $idx0_1:literal, $idx0_2:literal) => {
@@ -444,7 +489,7 @@ impl DoubleBlockSolver {
 }
 
 impl crate::solver::Solver for DoubleBlockSolver {
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         if !is_supported_lane_position(DoubleBlockMessage::DIGIT_IDX as usize / 4) {
             return None;
         }
@@ -452,6 +497,8 @@ impl crate::solver::Solver for DoubleBlockSolver {
         if self.attempted_nonces >= self.limit {
             return None;
         }
+
+        let target = target & mask;
 
         for i in (DoubleBlockMessage::DIGIT_IDX as usize..).take(9) {
             let message = decompose_blocks_mut(&mut self.message.message);
@@ -480,8 +527,6 @@ impl crate::solver::Solver for DoubleBlockSolver {
                     to_ascii_u32(nonce_prefix_start + 2) | self.message.message[13],
                     to_ascii_u32(nonce_prefix_start + 3) | self.message.message[13],
                 ];
-
-                let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
 
                 for inner_key in 0..10_000_000 {
                     let mut states0 = prepared_state;
@@ -568,13 +613,17 @@ impl crate::solver::Solver for DoubleBlockSolver {
                         _mm_extract_epi64(states3[0], 1) as u64,
                     ];
 
-                    let success_lane_idx = final_abs.iter().position(|x| {
-                        if UPWARDS {
-                            *x > compact_target
+                    let cmp_fn = |x: &u64, y: &u64| {
+                        if TYPE == crate::solver::SOLVE_TYPE_GT {
+                            x > y
+                        } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                            x < y
                         } else {
-                            *x < compact_target
+                            x & mask == y & mask
                         }
-                    });
+                    };
+
+                    let success_lane_idx = final_abs.iter().position(|x| cmp_fn(x, &target));
 
                     if let Some(success_lane_idx) = success_lane_idx {
                         crate::unlikely();
@@ -680,10 +729,10 @@ impl From<DecimalMessage> for DecimalSolver {
 }
 
 impl crate::solver::Solver for DecimalSolver {
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         match self {
-            Self::SingleBlock(solver) => solver.solve::<UPWARDS>(target),
-            Self::DoubleBlock(solver) => solver.solve::<UPWARDS>(target),
+            Self::SingleBlock(solver) => solver.solve::<TYPE>(target, mask),
+            Self::DoubleBlock(solver) => solver.solve::<TYPE>(target, mask),
         }
     }
 }
@@ -727,7 +776,7 @@ impl GoAwaySolver {
 }
 
 impl crate::solver::Solver for GoAwaySolver {
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         unsafe {
             use core::arch::x86_64::*;
 
@@ -735,11 +784,11 @@ impl crate::solver::Solver for GoAwaySolver {
                 return None;
             }
 
+            let target = target & mask;
+
             let mut prefix_state = Align16(crate::sha256::IV);
             crate::sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
             let prepared_state = crate::sha256::sha_ni::prepare_state(&prefix_state);
-
-            let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
 
             let feedback_ab = {
                 let lows = _mm_cvtsi64x_si128(
@@ -789,13 +838,17 @@ impl crate::solver::Solver for GoAwaySolver {
                         _mm_extract_epi64(states3[0], 1) as u64,
                     ];
 
-                    let success_lane_idx = result_abs.iter().position(|x| {
-                        if UPWARDS {
-                            *x > compact_target
+                    let cmp_fn = |x: &u64, y: &u64| {
+                        if TYPE == crate::solver::SOLVE_TYPE_GT {
+                            x > y
+                        } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                            x < y
                         } else {
-                            *x < compact_target
+                            x & mask == y & mask
                         }
-                    });
+                    };
+
+                    let success_lane_idx = result_abs.iter().position(|x| cmp_fn(x, &target));
 
                     self.attempted_nonces += 4;
 
@@ -845,6 +898,22 @@ mod tests {
                 DoubleBlockMessage::new(prefix, search_space).map(Into::into)
             }
         });
+    }
+
+    #[test]
+    fn test_solve_decimal_f64() {
+        crate::solver::tests::test_decimal_validator_f64_safe::<DecimalSolver, _>(
+            |prefix, search_space| {
+                if let Some((solver, p)) =
+                    SingleBlockMessage::new_f64(prefix, search_space).map(|(x, p)| (x.into(), p))
+                {
+                    Some((DecimalSolver::SingleBlock(solver), p))
+                } else {
+                    DoubleBlockMessage::new(prefix, search_space)
+                        .map(|x| (DecimalSolver::DoubleBlock(x.into()), None))
+                }
+            },
+        );
     }
 
     #[test]

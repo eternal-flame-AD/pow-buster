@@ -129,15 +129,6 @@ pub fn bench_proof(c: &mut Criterion) {
     for difficulty in [50_000, 100_000, 1_000_000, 4_000_000, 10_000_000] {
         group.throughput(Throughput::Elements(difficulty as u64));
         let target = compute_target(difficulty);
-        let target_bytes = target.to_be_bytes();
-        let target_u32s = core::array::from_fn(|i| {
-            u32::from_be_bytes([
-                target_bytes[i * 4],
-                target_bytes[i * 4 + 1],
-                target_bytes[i * 4 + 2],
-                target_bytes[i * 4 + 3],
-            ])
-        });
         group.bench_with_input(
             BenchmarkId::new(
                 "proof",
@@ -162,7 +153,9 @@ pub fn bench_proof(c: &mut Criterion) {
                                 SingleBlockMessage::new(&prefix, 0).expect("solver is None"),
                             );
                             core::hint::black_box(
-                                solver.solve::<true>(target_u32s).expect("solver failed"),
+                                solver
+                                    .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                                    .expect("solver failed"),
                             );
                         }
                     }
@@ -196,7 +189,9 @@ pub fn bench_proof(c: &mut Criterion) {
                                 DoubleBlockMessage::new(&prefix, 0).expect("solver is None"),
                             );
                             core::hint::black_box(
-                                solver.solve::<true>(target_u32s).expect("solver failed"),
+                                solver
+                                    .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                                    .expect("solver failed"),
                             );
                         }
                     }
@@ -230,7 +225,9 @@ pub fn bench_proof(c: &mut Criterion) {
                                 .expect("solver is None"),
                             );
                             core::hint::black_box(
-                                solver.solve::<true>(target_u32s).expect("solver failed"),
+                                solver
+                                    .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                                    .expect("solver failed"),
                             );
                         }
                     }
@@ -321,15 +318,6 @@ pub fn bench_proof_rayon(c: &mut Criterion) {
     group.throughput(Throughput::Elements(1024 * 1_000_000));
 
     let target = compute_target(1_000_000);
-    let target_bytes = target.to_be_bytes();
-    let target_u32s = core::array::from_fn(|i| {
-        u32::from_be_bytes([
-            target_bytes[i * 4],
-            target_bytes[i * 4 + 1],
-            target_bytes[i * 4 + 2],
-            target_bytes[i * 4 + 3],
-        ])
-    });
 
     group.bench_function("proof_rayon", |b| {
         let mut counter = 0u64;
@@ -351,7 +339,9 @@ pub fn bench_proof_rayon(c: &mut Criterion) {
                         );
 
                         let start = std::time::Instant::now();
-                        solver.solve::<true>(target_u32s).expect("solver failed");
+                        solver
+                            .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                            .expect("solver failed");
                         start.elapsed()
                     })
                     .sum::<Duration>()
@@ -380,7 +370,9 @@ pub fn bench_proof_rayon(c: &mut Criterion) {
                         );
 
                         let start = std::time::Instant::now();
-                        solver.solve::<true>(target_u32s).expect("solver failed");
+                        solver
+                            .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                            .expect("solver failed");
                         start.elapsed()
                     })
                     .sum::<Duration>()
@@ -409,7 +401,9 @@ pub fn bench_proof_rayon(c: &mut Criterion) {
                         let mut solver = GoAwaySolver::from(GoAwayMessage::new_bytes(&prefix));
 
                         let start = std::time::Instant::now();
-                        solver.solve::<true>(target_u32s).expect("solver failed");
+                        solver
+                            .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                            .expect("solver failed");
                         start.elapsed()
                     })
                     .sum::<Duration>()

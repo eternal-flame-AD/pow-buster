@@ -13,6 +13,7 @@
     - [Formal Benchmark (mCaptcha only)](#formal-benchmark-mcaptcha-only)
     - [End to End Benchmark](#end-to-end-benchmark)
       - [CPU only](#cpu-only)
+    - [Cap.js Browser Comparison](#capjs-browser-comparison)
     - [Throughput Sanity Check](#throughput-sanity-check)
       - [Single Threaded](#single-threaded)
       - [Multi Threaded](#multi-threaded)
@@ -22,7 +23,7 @@
   - [License and Acknowledgments](#license-and-acknowledgments)
   - [AI Disclaimer](#ai-disclaimer)
 
-A fast, adversarially implemented mCaptcha/Anubis/go-away PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features without wasting energy in the browser.
+A fast, adversarially implemented mCaptcha/Anubis/go-away/Cap.js PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features without wasting energy in the browser.
 
 The benchmarks demonstrate a significant performance gap between browser-based JavaScript execution and native implementations (both optimized CPU and unoptimized GPU), suggesting fundamental challenges for PoW-based browser CAPTCHA systems.
 
@@ -30,7 +31,7 @@ The benchmarks demonstrate a significant performance gap between browser-based J
 
 ## Why?
 
-I personally don't like some projects put themselves at the ethical high ground of "protecting the website" when they:
+I personally don't like some projects (a subset of the schemes I supported, not all of them) put themselves at the ethical high ground of "protecting the website" when they:
 - Don't really protect the website better than heuristics (and this program serves as a proof of concept that it can be gamed using pure CPU).
 - Requires users to disable their anti fingerprinting protection like JShelter, and don't give users an opportunity to re-enable them before automatically redirecting them to the a website they have never been to before, which can very well hide fingerprinting scripts. This program emits solutions to these challenges fast without requiring JavaScript.
 - Justify the annoying friction by claiming the lack of a transparent spec and alternative manual solutions to be ["[good] taste [for] a 'security product'"](https://anubis.techaro.lol/docs/user/frequently-asked-questions), despite themselves not publishing sound security analysis to justify the friction. I did the reverse engineering that nobody should even have to do for an open source security product.
@@ -39,11 +40,11 @@ I personally don't like some projects put themselves at the ethical high ground 
 
 ## Features
 
-- Greedy padding logic
+- Greedy padding logic with 64-bit integer and floating point nonce stretching
 - Efficient outer loop and SIMD nonce encoding
 - SHA-2 hotstarting with round-level granularity
 - Fully unrolled and monomorphic core friendly to pipelining and ternary logic instruction lowering
-- Short-circuiting comparison with $H_1 \to H_7$ feedback elision with optional 64-bit support
+- Short-circuiting comparison with $H_1 \to H_7$ feed-forward elision with optional 64-bit support
 - Switch to octal nonces when success rate is overwhelming
 - An API compatible with [anubis_offload](https://github.com/DavidBuchanan314/anubis_offload/) but doesn't need a GPU to run.
 
@@ -223,6 +224,51 @@ You are hitting host http://localhost:8923/, n_workers: 32
 
 All 32 cores of a AMD Ryzen 9 7950X are used for the end-to-end benchmark. It seems we are at the bottleneck of the server being able to record successful attempts, as further performance tuning only show improvement in offline benchmarks.
 
+### Cap.js Browser Comparison
+
+Cap.js is a good end-to-end comparison target since it:
+- Uses multiple sub-goals instead of one big goal, results in a normal instead of geometric distribution of solution times
+- Has an official browser benchmark performed by BrowserStack
+- Has a WASM solver written in Rust
+
+Cap.js got [the following benchmark](https://github.com/tiagozip/cap/blob/0c6f140724cfad7500d3b9f59b1387c9bd91e672/docs/guide/benchmark.md) as of 09/12/2025:
+
+| Tier      | Device             | Chrome | Safari |
+| --------- | ------------------ | ------ | ------ |
+| Low-end   | Samsung Galaxy A11 | 4.583s | -      |
+| Low-end   | iPhone SE (2020)   | -      | 1.282s |
+| Mid-range | Google Pixel 7     | 1.027s | -      |
+| Mid-range | iPad (9th gen)     | –      | 1.401s |
+| High-end  | Google Pixel 9     | 0.894s | –      |
+| High-end  | MacBook Air M3     | 0.312s | 0.423s |
+
+Tested with BrowserStack using the following configuration:
+
+- **Challenge difficulty:** 4
+- **Number of challenges:** 50
+- **Salt/challenge size:** 32
+- **Number of benchmarks:** 50
+
+We set up a local Cap.js server, set it to the same difficulty but 5000 subgoals instead of 50.
+
+```sh
+> target/release/simd-mcaptcha cap-js --site-key 8b4574013b --url http://localhost:3000/
+
+challenge: CapJsChallengeDescriptor { rules: CapJsChallengeRules { count: 5000, salt_length: 32, difficulty: 4 }, token: "58c59bcc0395e2ee385ed2306581d2d5720079370967838c6b" }
+{
+  "token": "04d15ccd0a853a79:1fa4246e098cbcf7e9d0b946a44f42",
+  "expires": 1757723993381,
+  "_meta": {
+    "elapsed_us": 199841,
+    "attempted_nonces": 326359936,
+    "hashrate": 1633097992
+  }
+}
+```
+
+We solved it in ~200ms using 32-threads on a 7950X at 1.633 GH/s (faster because of hotstarting), and about 150x faster than MacBook Air M3. Taking out the thread count
+lead (32 threads on 7950X, 8 threads on MacBook Air M3), we are at about 40x "net" speedup per thread.
+
 ### Throughput Sanity Check
 
 Just as a sanity check to make sure we are actually performing checks with effective data parallelism and the difference is not just because implementation overhead, here are the numbers from OpenSSL with SHA-NI support:
@@ -249,11 +295,11 @@ For us we have single thread:
 
 On a mobile CPU (i7-11370H), similar performance can be achieved on AVX-512 (at a higher IPC due to Intel having faster register rotations):
 
-| Workload                         | AVX-512        | SHA-NI     | 
-| -------------------------------- | -------------- | ---------  |
-| SingleBlock/Anubis               | 72.30 MH/s     | 21.87 MH/s |
-| DoubleBlock (mCaptcha edge case) | 44.84 MH/s     | 14.46 MH/s |
-| go-away (16 bytes)               | 80.53 MH/s     | 20.42 MH/s |
+| Workload                         | AVX-512    | SHA-NI     |
+| -------------------------------- | ---------- | ---------- |
+| SingleBlock/Anubis               | 72.30 MH/s | 21.87 MH/s |
+| DoubleBlock (mCaptcha edge case) | 44.84 MH/s | 14.46 MH/s |
+| go-away (16 bytes)               | 80.53 MH/s | 20.42 MH/s |
 
 The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and about 20% of that on Firefox, this is corroborated by Anubis's own accounts in their code comments using 7950X3D empirical testing. Empirical throughput of WASM-based mCaptcha is unreliable due to lack of official benchmark tools, but should be around 2-4 MH/s, corroborated with the author's CACM paper.
 

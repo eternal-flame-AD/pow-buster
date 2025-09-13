@@ -31,39 +31,71 @@ impl SingleBlockSolver {
     }
 }
 
-impl crate::solver::Solver for SingleBlockSolver {
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
-        // start from the blind-spot of the AVX-512 solution first
+impl SingleBlockSolver {
+    fn solve_impl<const TYPE: u8, const NO_TRAILING_ZEROS: bool>(
+        &mut self,
+        target: u64,
+        mask: u64,
+    ) -> Option<(u64, [u32; 8])> {
         let mut message_be = Align64(sha2::digest::generic_array::GenericArray::default());
         for i in 0..16 {
             message_be.0[i * 4..i * 4 + 4].copy_from_slice(&self.message.message[i].to_be_bytes());
         }
+        let target = target & mask;
 
-        for keyspace in [900_000_000..1_000_000_000, 100_000_000..900_000_000] {
-            for key in keyspace {
+        for nonzero_digit in 1..=9 {
+            for key in 0..100_000_000 {
                 let mut key_copy = key;
 
-                for i in (0..9).rev() {
-                    message_be.0[self.message.digit_index + i] = (key_copy % 10) as u8 + b'0';
-                    key_copy /= 10;
+                if NO_TRAILING_ZEROS {
+                    for i in (0..8).rev() {
+                        message_be.0[self.message.digit_index + i] = (key_copy % 10) as u8 + b'0';
+                        key_copy /= 10;
+                    }
+                    message_be.0[self.message.digit_index + 8] = b'0' + nonzero_digit as u8;
+                } else {
+                    for i in (1..9).rev() {
+                        message_be.0[self.message.digit_index + i] = (key_copy % 10) as u8 + b'0';
+                        key_copy /= 10;
+                    }
+                    message_be.0[self.message.digit_index + 0] = b'0' + nonzero_digit as u8;
                 }
 
                 let mut state = self.message.prefix_state;
                 sha2::compress256(&mut state, core::array::from_ref(&*message_be));
 
-                let pass = if UPWARDS {
-                    state[0] > target[0]
+                let pass = if TYPE == crate::solver::SOLVE_TYPE_GT {
+                    (state[0] as u64) << 32 | (state[1] as u64) > target
+                } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                    (state[0] as u64) << 32 | (state[1] as u64) < target
                 } else {
-                    state[0] < target[0]
+                    ((state[0] as u64) << 32 | (state[1] as u64)) & mask == target & mask
                 };
 
                 if pass {
-                    return Some((key + self.message.nonce_addend, state));
+                    let mut transformed_key = key;
+                    if NO_TRAILING_ZEROS {
+                        transformed_key *= 10;
+                        transformed_key += nonzero_digit;
+                    } else {
+                        transformed_key += 1_00_000_000 * nonzero_digit;
+                    }
+                    return Some((transformed_key + self.message.nonce_addend, state));
                 }
             }
         }
 
         None
+    }
+}
+
+impl crate::solver::Solver for SingleBlockSolver {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+        if self.message.no_trailing_zeros {
+            self.solve_impl::<TYPE, true>(target, mask)
+        } else {
+            self.solve_impl::<TYPE, false>(target, mask)
+        }
     }
 }
 
@@ -95,10 +127,11 @@ impl DoubleBlockSolver {
 }
 
 impl crate::solver::Solver for DoubleBlockSolver {
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         if self.attempted_nonces >= self.limit {
             return None;
         }
+        let target = target & mask;
 
         let mut buffer: sha2::digest::crypto_common::Block<sha2::Sha256> = Default::default();
         for i in 0..16 {
@@ -112,8 +145,6 @@ impl crate::solver::Solver for DoubleBlockSolver {
         terminal_message_schedule[14] = ((self.message.message_length as u64 * 8) >> 32) as u32;
         terminal_message_schedule[15] = (self.message.message_length as u64 * 8) as u32;
         crate::sha256::do_message_schedule_k_w(&mut terminal_message_schedule);
-
-        let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
 
         for key in (if self.message.nonce_addend == 0 {
             100_000_000
@@ -145,8 +176,16 @@ impl crate::solver::Solver for DoubleBlockSolver {
 
             let ab = (state[0] as u64) << 32 | (state[1] as u64);
 
-            let cmp_fn = if UPWARDS { u64::gt } else { u64::lt };
-            if cmp_fn(&ab, &compact_target) {
+            let cmp_fn = |x: &u64, y: &u64| {
+                if TYPE == crate::solver::SOLVE_TYPE_GT {
+                    x > y
+                } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                    x < y
+                } else {
+                    x & mask == y & mask
+                }
+            };
+            if cmp_fn(&ab, &target) {
                 crate::unlikely();
 
                 let mut state = self.message.prefix_state;
@@ -214,10 +253,10 @@ impl From<DecimalMessage> for DecimalSolver {
 }
 
 impl crate::solver::Solver for DecimalSolver {
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         match self {
-            Self::SingleBlock(solver) => solver.solve::<UPWARDS>(target),
-            Self::DoubleBlock(solver) => solver.solve::<UPWARDS>(target),
+            Self::SingleBlock(solver) => solver.solve::<TYPE>(target, mask),
+            Self::DoubleBlock(solver) => solver.solve::<TYPE>(target, mask),
         }
     }
 }
@@ -251,7 +290,9 @@ impl GoAwaySolver {
 }
 
 impl crate::solver::Solver for GoAwaySolver {
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+        let target = target & mask;
+
         let mut buffer =
             Align16([sha2::digest::crypto_common::Block::<sha2::Sha256>::default(); 16]);
         for i in 0..8 {
@@ -259,8 +300,6 @@ impl crate::solver::Solver for GoAwaySolver {
         }
         buffer[0][40] = 0x80;
         buffer[0][60..64].copy_from_slice(&(Self::MSG_LEN as u32).to_be_bytes());
-
-        let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
 
         for key in 0..=u64::MAX {
             unsafe {
@@ -277,8 +316,16 @@ impl crate::solver::Solver for GoAwaySolver {
             let state_ab = (state[0] as u64) << 32 | (state[1] as u64);
             self.attempted_nonces += 1;
 
-            let cmp_fn = if UPWARDS { u64::gt } else { u64::lt };
-            if cmp_fn(&state_ab, &compact_target) {
+            let cmp_fn = |x: &u64, y: &u64| {
+                if TYPE == crate::solver::SOLVE_TYPE_GT {
+                    x > y
+                } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                    x < y
+                } else {
+                    x & mask == y & mask
+                }
+            };
+            if cmp_fn(&state_ab, &target) {
                 crate::unlikely();
 
                 return Some((key, state));
@@ -307,6 +354,22 @@ mod tests {
                 DoubleBlockMessage::new(prefix, search_space).map(Into::into)
             }
         });
+    }
+
+    #[test]
+    fn test_solve_decimal_f64() {
+        crate::solver::tests::test_decimal_validator_f64_safe::<DecimalSolver, _>(
+            |prefix, search_space| {
+                if let Some((solver, p)) =
+                    SingleBlockMessage::new_f64(prefix, search_space).map(|(x, p)| (x.into(), p))
+                {
+                    Some((DecimalSolver::SingleBlock(solver), p))
+                } else {
+                    DoubleBlockMessage::new(prefix, search_space)
+                        .map(|x| (DecimalSolver::DoubleBlock(x.into()), None))
+                }
+            },
+        );
     }
 
     #[test]

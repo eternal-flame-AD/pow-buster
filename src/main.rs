@@ -27,6 +27,7 @@ struct Cli {
 enum ApiType {
     Mcaptcha,
     Anubis,
+    CapJs,
 }
 
 #[cfg(feature = "live-throughput-test")]
@@ -36,6 +37,7 @@ impl std::str::FromStr for ApiType {
         match s {
             "mcaptcha" => Ok(ApiType::Mcaptcha),
             "anubis" => Ok(ApiType::Anubis),
+            "capjs" | "cap-js" => Ok(ApiType::CapJs),
             _ => Err(format!("invalid api type: {}", s)),
         }
     }
@@ -59,6 +61,17 @@ enum SubCommand {
 
         #[clap(long)]
         do_control: bool,
+    },
+    #[cfg(feature = "client")]
+    CapJs {
+        #[clap(long, default_value = "http://localhost:3000/")]
+        url: String,
+
+        #[clap(long)]
+        site_key: String,
+
+        #[clap(long)]
+        num_threads: Option<u32>,
     },
     #[cfg(feature = "client")]
     Anubis {
@@ -142,16 +155,9 @@ fn main() {
                         .expect("solver is None"),
                 );
                 let target = compute_target_64(difficulty);
-                let target_bytes = target.to_be_bytes();
-                let target_u32s = core::array::from_fn(|i| {
-                    u32::from_be_bytes([
-                        target_bytes[i * 4],
-                        target_bytes[i * 4 + 1],
-                        target_bytes[i * 4 + 2],
-                        target_bytes[i * 4 + 3],
-                    ])
-                });
-                let result = solver.solve::<true>(target_u32s).expect("solver failed");
+                let result = solver
+                    .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                    .expect("solver failed");
                 core::hint::black_box(result);
             }
         }
@@ -189,16 +195,9 @@ fn main() {
                                 .expect("solver is None"),
                         );
 
-                        let target_bytes = target.to_be_bytes();
-                        let target_u32s = core::array::from_fn(|i| {
-                            u32::from_be_bytes([
-                                target_bytes[i * 4],
-                                target_bytes[i * 4 + 1],
-                                target_bytes[i * 4 + 2],
-                                target_bytes[i * 4 + 3],
-                            ])
-                        });
-                        let result = solver.solve::<true>(target_u32s).expect("solver failed");
+                        let result = solver
+                            .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                            .expect("solver failed");
                         counter.fetch_add(1, Ordering::Relaxed);
                         core::hint::black_box(result);
                     }
@@ -226,21 +225,56 @@ fn main() {
                 }
             }
         }
+        #[cfg(feature = "client")]
+        SubCommand::CapJs {
+            url,
+            site_key,
+            num_threads,
+        } => {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+
+            let mut pb = rayon::ThreadPoolBuilder::new();
+            if let Some(num_threads) = num_threads {
+                pb = pb.num_threads(num_threads as usize);
+            }
+
+            let pool = pb.build().unwrap();
+            let pool = Arc::new(pool);
+
+            runtime.block_on(async move {
+                use simd_mcaptcha::adapter::{CapJsResponse, SolveCapJsResponseMeta};
+
+                let client = reqwest::ClientBuilder::new()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .unwrap();
+                let (response, meta) =
+                    simd_mcaptcha::client::solve_capjs(&pool, &client, &url, &site_key)
+                        .await
+                        .unwrap();
+
+                #[derive(serde::Serialize)]
+                struct MixedResponse {
+                    #[serde(flatten)]
+                    response: CapJsResponse,
+                    #[serde(rename = "_meta")]
+                    meta: SolveCapJsResponseMeta,
+                }
+
+                serde_json::to_writer_pretty(std::io::stdout(), &MixedResponse { response, meta })
+                    .unwrap();
+                println!();
+            });
+        }
         SubCommand::Time {
             difficulty,
             #[cfg(feature = "official")]
             test_official,
         } => {
             let target = compute_target_64(difficulty);
-            let target_bytes = target.to_be_bytes();
-            let target_u32s = core::array::from_fn(|i| {
-                u32::from_be_bytes([
-                    target_bytes[i * 4],
-                    target_bytes[i * 4 + 1],
-                    target_bytes[i * 4 + 2],
-                    target_bytes[i * 4 + 3],
-                ])
-            });
             let begin = Instant::now();
             let mut total_nonces = 0;
             for i in 0..40u8 {
@@ -251,7 +285,9 @@ fn main() {
                     DecimalMessage::new(&prefix_bytes, 0).expect("solver is None"),
                 );
                 let inner_begin = Instant::now();
-                let (nonce, _) = solver.solve::<true>(target_u32s).expect("solver failed");
+                let (nonce, _) = solver
+                    .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                    .expect("solver failed");
                 eprintln!(
                     "[{}]: in {:.3} seconds ({})",
                     core::any::type_name::<SingleBlockSolver>(),
@@ -276,7 +312,9 @@ fn main() {
                 let mut solver =
                     DecimalSolver::from(DecimalMessage::new(&prefix, 0).expect("solver is None"));
                 let inner_begin = Instant::now();
-                let (nonce, _) = solver.solve::<true>(target_u32s).expect("solver failed");
+                let (nonce, _) = solver
+                    .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                    .expect("solver failed");
                 eprintln!(
                     "[{}]: in {:.3} seconds ({})",
                     core::any::type_name::<DoubleBlockSolver>(),
@@ -300,7 +338,9 @@ fn main() {
                 prefix[0] = i;
                 let mut solver = GoAwaySolver::from(GoAwayMessage::new_bytes(&prefix));
                 let inner_begin = Instant::now();
-                let (nonce, _) = solver.solve::<true>(target_u32s).expect("solver failed");
+                let (nonce, _) = solver
+                    .solve::<{ simd_mcaptcha::solver::SOLVE_TYPE_GT }>(target, !0)
+                    .expect("solver failed");
                 eprintln!(
                     "[{}]: in {:.3} seconds ({})",
                     core::any::type_name::<GoAwaySolver>(),
@@ -449,6 +489,9 @@ fn main() {
                                             count_clone.fetch_add(1, Ordering::SeqCst);
                                         }
                                     }
+                                    ApiType::CapJs => {
+                                        unimplemented!("control tests for capjs are not implemented");
+                                    }
                                 }
                             });
                         }
@@ -504,9 +547,9 @@ fn main() {
                                     }
                                     Err(_) => failed_clone.fetch_add(1, Ordering::Relaxed),
                                 };
-                                let mut packed_time = start.elapsed().as_micros() as u64;
+                                let mut packed_time = start.elapsed().as_micros() as u64 / 16;
                                 packed_time <<=32;
-                                packed_time += iotime as u64;
+                                packed_time += iotime as u64 / 16;
                                 packed_time_clone.fetch_add(packed_time, Ordering::Relaxed);
                             },
                             ApiType::Anubis => loop {
@@ -528,6 +571,24 @@ fn main() {
                                         failed_clone.fetch_add(1, Ordering::Relaxed);
                                     }
                                 };
+                                let mut packed_time = start.elapsed().as_micros() as u64 / 16;
+                                packed_time <<= 32;
+                                packed_time += iotime as u64 / 16;
+                                packed_time_clone.fetch_add(packed_time, Ordering::Relaxed);
+                            },
+                            ApiType::CapJs => loop {
+                                let mut iotime = 0;
+                                let start = Instant::now();
+                                match simd_mcaptcha::client::solve_capjs_worker(&pool, &client, &host_clone, &site_key_clone, &mut iotime)
+                                    .await {
+                                        Ok(_) => {
+                                            succeeded_clone.fetch_add(1, Ordering::Relaxed);
+                                        }
+                                        Err(e) => {
+                                            eprintln!("capjs error: {:?}", e);
+                                            failed_clone.fetch_add(1, Ordering::Relaxed);
+                                        }
+                                    };
                                 let mut packed_time = start.elapsed().as_micros() as u64 / 16;
                                 packed_time <<= 32;
                                 packed_time += iotime as u64 / 16;

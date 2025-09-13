@@ -66,13 +66,16 @@ impl SingleBlockSolver {
 
 const MUTATION_TYPE_UNALIGNED: u8 = 0;
 const MUTATION_TYPE_ALIGNED: u8 = 1;
-const MUTATION_TYPE_ALIGNED_OCTAL: u8 = MUTATION_TYPE_ALIGNED | 2;
+const MUTATION_TYPE_OCTAL: u8 = 2;
+const MUTATION_TYPE_ALIGNED_OCTAL: u8 = MUTATION_TYPE_ALIGNED | MUTATION_TYPE_OCTAL;
+const MUTATION_TYPE_UNALIGNED_OCTAL: u8 = MUTATION_TYPE_UNALIGNED | MUTATION_TYPE_OCTAL;
 
 impl crate::solver::Solver for SingleBlockSolver {
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         if self.attempted_nonces >= self.limit {
             return None;
         }
+        let target = target & mask;
 
         // the official default difficulty is 5e6, so we design for 1e8
         // and there should almost always be a valid solution within our supported solution space
@@ -86,29 +89,34 @@ impl crate::solver::Solver for SingleBlockSolver {
         }
         let lane_id_1_word_idx = (self.message.digit_index + 1) / 4;
 
-        // zero out the nonce portion to prevent incorrect results if solvers are reused
-        for i in (self.message.digit_index..).take(9) {
-            let message = decompose_blocks_mut(&mut self.message.message);
-            message[SWAP_DWORD_BYTE_ORDER[i]] = b'0';
-        }
-
         // make sure there are no runtime "register indexing" logic
         #[inline(never)]
         fn solve_inner<
             const DIGIT_WORD_IDX0: usize,
             const DIGIT_WORD_IDX1_INCREMENT: bool,
-            const UPWARDS: bool,
+            const TYPE: u8,
             const MUTATION_TYPE: u8,
         >(
             this: &mut SingleBlockSolver,
-            #[cfg(not(feature = "compare-64bit"))] target: u32,
-            #[cfg(feature = "compare-64bit")] target: u64,
+            target: u64,
+            mask: u64,
         ) -> Option<u64> {
             let mut partial_state = this.message.prefix_state;
             crate::sha256::ingest_message_prefix::<DIGIT_WORD_IDX0>(
                 &mut partial_state,
                 core::array::from_fn(|i| this.message.message[i]),
             );
+
+            // zero out the nonce portion to prevent incorrect results if solvers are reused
+            for (ix, i) in (this.message.digit_index..).take(9).enumerate() {
+                let message = decompose_blocks_mut(&mut this.message.message);
+                message[SWAP_DWORD_BYTE_ORDER[i]] =
+                    if ix >= 2 && MUTATION_TYPE & MUTATION_TYPE_OCTAL != 0 {
+                        b'1'
+                    } else {
+                        b'0'
+                    };
+            }
 
             if this.attempted_nonces >= this.limit {
                 return None;
@@ -121,16 +129,21 @@ impl crate::solver::Solver for SingleBlockSolver {
 
             let lane_id_0_byte_idx = this.message.digit_index % 4;
             let lane_id_1_byte_idx = (this.message.digit_index + 1) % 4;
-            let mut inner_key_buf = Align16(*b"0000\x80000");
 
-            for prefix_set_index in 0..(if MUTATION_TYPE == MUTATION_TYPE_ALIGNED_OCTAL {
+            for prefix_set_index in 0..(if MUTATION_TYPE & MUTATION_TYPE_OCTAL != 0 {
                 6
             } else {
                 5
             }) {
+                let mut inner_key_buf = if MUTATION_TYPE & MUTATION_TYPE_OCTAL != 0 {
+                    Align16(*b"1111\x80111")
+                } else {
+                    Align16(*b"0000\x80000")
+                };
+
                 unsafe {
                     let (lane_id_0_or_value, lane_id_1_or_value) =
-                        if MUTATION_TYPE == MUTATION_TYPE_ALIGNED_OCTAL {
+                        if MUTATION_TYPE & MUTATION_TYPE_OCTAL != 0 {
                             let lane_id_0_or_value = _mm512_sll_epi32(
                                 load_lane_id_epi32(&LANE_ID_MSB_STR_0, prefix_set_index),
                                 _mm_set1_epi64x(((3 - lane_id_0_byte_idx) * 8) as _),
@@ -160,18 +173,13 @@ impl crate::solver::Solver for SingleBlockSolver {
                         lane_id_0_or_value
                     };
 
-                    let max_iterations = if MUTATION_TYPE == MUTATION_TYPE_ALIGNED_OCTAL {
+                    let inner_iteration_end = if MUTATION_TYPE & MUTATION_TYPE_OCTAL != 0 {
                         0o10_000_000
                     } else {
                         10_000_000
                     };
-
-                    let inner_iteration_end = if remaining_limit < max_iterations as u64 {
-                        remaining_limit as u32
-                    } else {
-                        max_iterations
-                    };
-                    remaining_limit -= inner_iteration_end as u64;
+                    let max_iterations = inner_iteration_end;
+                    remaining_limit -= max_iterations as u64;
 
                     // soft pipeline this to compute the new message after the hash
                     // LLVM seems to handle cases where high register pressure work happens first better
@@ -268,21 +276,35 @@ impl crate::solver::Solver for SingleBlockSolver {
                         // A 64-bit compare solution is provided for completeness but almost never needed for realistic challenges.
 
                         #[cfg(not(feature = "compare-64bit"))]
-                        let cmp_fn = if UPWARDS {
-                            _mm512_cmpgt_epu32_mask
-                        } else {
-                            _mm512_cmplt_epu32_mask
+                        let cmp_fn = |x: __m512i, y: __m512i| {
+                            if TYPE == crate::solver::SOLVE_TYPE_GT {
+                                _mm512_cmpgt_epu32_mask(x, y)
+                            } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                                _mm512_cmplt_epu32_mask(x, y)
+                            } else {
+                                _mm512_cmpeq_epu32_mask(
+                                    _mm512_and_si512(x, _mm512_set1_epi32((mask >> 32) as _)),
+                                    y,
+                                )
+                            }
                         };
 
                         #[cfg(feature = "compare-64bit")]
-                        let cmp64_fn = if UPWARDS {
-                            _mm512_cmpgt_epu64_mask
-                        } else {
-                            _mm512_cmplt_epu64_mask
+                        let cmp64_fn = |x: __m512i, y: __m512i| {
+                            if TYPE == crate::solver::SOLVE_TYPE_GT {
+                                _mm512_cmpgt_epu64_mask(x, y)
+                            } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                                _mm512_cmplt_epu64_mask(x, y)
+                            } else {
+                                _mm512_cmpeq_epu64_mask(
+                                    _mm512_and_si512(x, _mm512_set1_epi64(mask as _)),
+                                    y,
+                                )
+                            }
                         };
 
                         #[cfg(not(feature = "compare-64bit"))]
-                        let met_target = cmp_fn(state[0], _mm512_set1_epi32(target as _));
+                        let met_target = cmp_fn(state[0], _mm512_set1_epi32((target >> 32) as _));
 
                         #[cfg(feature = "compare-64bit")]
                         let (met_target_high, met_target_lo) = {
@@ -311,11 +333,11 @@ impl crate::solver::Solver for SingleBlockSolver {
                                 [_tzcnt_u16(met_target_high << 8 | met_target_lo) as usize];
 
                             let mut nonce_prefix = 16 * prefix_set_index + success_lane_idx;
-                            if MUTATION_TYPE != MUTATION_TYPE_ALIGNED_OCTAL {
+                            if MUTATION_TYPE & MUTATION_TYPE_OCTAL == 0 {
                                 nonce_prefix += 10;
                             }
 
-                            if MUTATION_TYPE_ALIGNED & MUTATION_TYPE != 0 {
+                            if MUTATION_TYPE & MUTATION_TYPE_ALIGNED != 0 {
                                 this.message.message[DIGIT_WORD_IDX0 + 1] =
                                     inner_key_buf.as_ptr().cast::<u32>().read();
                                 this.message.message[DIGIT_WORD_IDX0 + 2] =
@@ -335,13 +357,18 @@ impl crate::solver::Solver for SingleBlockSolver {
                             }
 
                             let mut decimal_inner_key = next_inner_key as u64 - 1;
-                            if MUTATION_TYPE == MUTATION_TYPE_ALIGNED_OCTAL {
+                            if MUTATION_TYPE & MUTATION_TYPE_OCTAL != 0 {
                                 decimal_inner_key = 0;
                                 let mut key_octal = next_inner_key - 1;
                                 for m in (0..7u32).map(|i| 10u64.pow(i)) {
-                                    let output = key_octal % 8;
+                                    let output = (key_octal % 8) + 1;
                                     key_octal /= 8;
                                     decimal_inner_key += output as u64 * m;
+                                }
+                                let mut message_be = [0u8; 64];
+                                for i in 0..16 {
+                                    message_be[i * 4..][..4]
+                                        .copy_from_slice(&this.message.message[i].to_be_bytes());
                                 }
                             }
 
@@ -352,7 +379,7 @@ impl crate::solver::Solver for SingleBlockSolver {
                         this.attempted_nonces += 16;
 
                         if MUTATION_TYPE == MUTATION_TYPE_ALIGNED_OCTAL {
-                            crate::strings::to_octal_7::<true, 0x80>(
+                            crate::strings::to_octal_7::<true, 0x80, 1>(
                                 &mut inner_key_buf,
                                 next_inner_key,
                             )
@@ -361,6 +388,18 @@ impl crate::solver::Solver for SingleBlockSolver {
                                 &mut inner_key_buf,
                                 next_inner_key,
                             );
+                        } else if MUTATION_TYPE == MUTATION_TYPE_UNALIGNED_OCTAL {
+                            let message_bytes = decompose_blocks_mut(&mut this.message.message);
+                            let mut key_copy = next_inner_key;
+
+                            for i in (0..7).rev() {
+                                let output = key_copy % 8;
+                                key_copy /= 8;
+                                *message_bytes.get_unchecked_mut(
+                                    *SWAP_DWORD_BYTE_ORDER
+                                        .get_unchecked(this.message.digit_index + i + 2),
+                                ) = output as u8 + b'1';
+                            }
                         } else {
                             let message_bytes = decompose_blocks_mut(&mut this.message.message);
                             let mut key_copy = next_inner_key;
@@ -373,12 +412,6 @@ impl crate::solver::Solver for SingleBlockSolver {
                                         .get_unchecked(this.message.digit_index + i + 2),
                                 ) = output as u8 + b'0';
                             }
-
-                            // hint at LLVM that the modulo ends in 0
-                            if key_copy != 0 {
-                                debug_assert_eq!(key_copy, 0);
-                                core::hint::unreachable_unchecked();
-                            }
                         }
                     }
                 }
@@ -388,32 +421,29 @@ impl crate::solver::Solver for SingleBlockSolver {
             None
         }
 
-        #[cfg(not(feature = "compare-64bit"))]
-        let compact_target = target[0];
-
-        #[cfg(feature = "compare-64bit")]
-        let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
-
         macro_rules! dispatch {
             ($idx0:literal, $idx1_inc:literal) => {
                 if self.message.digit_index % 4 == 2 {
                     // if we have to much search space it doesn't matter
                     // use the octal kernel
-                    if self.message.approx_working_set_count.get() >= 100 {
-                        solve_inner::<$idx0, $idx1_inc, UPWARDS, MUTATION_TYPE_ALIGNED_OCTAL>(
-                            self,
-                            compact_target,
+                    if self.message.no_trailing_zeros
+                        || self.message.approx_working_set_count.get() >= 100
+                    {
+                        solve_inner::<$idx0, $idx1_inc, TYPE, MUTATION_TYPE_ALIGNED_OCTAL>(
+                            self, target, mask,
                         )
                     } else {
-                        solve_inner::<$idx0, $idx1_inc, UPWARDS, MUTATION_TYPE_ALIGNED>(
-                            self,
-                            compact_target,
+                        solve_inner::<$idx0, $idx1_inc, TYPE, MUTATION_TYPE_ALIGNED>(
+                            self, target, mask,
                         )
                     }
+                } else if self.message.no_trailing_zeros {
+                    solve_inner::<$idx0, $idx1_inc, TYPE, MUTATION_TYPE_UNALIGNED_OCTAL>(
+                        self, target, mask,
+                    )
                 } else {
-                    solve_inner::<$idx0, $idx1_inc, UPWARDS, MUTATION_TYPE_UNALIGNED>(
-                        self,
-                        compact_target,
+                    solve_inner::<$idx0, $idx1_inc, TYPE, MUTATION_TYPE_UNALIGNED>(
+                        self, target, mask,
                     )
                 }
             };
@@ -491,22 +521,26 @@ impl DoubleBlockSolver {
 }
 
 impl crate::solver::Solver for DoubleBlockSolver {
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         if !is_supported_lane_position(DoubleBlockMessage::DIGIT_IDX as usize / 4) {
             return None;
         }
+        let target = target & mask;
 
         if self.attempted_nonces >= self.limit {
             return None;
         }
 
-        for i in (DoubleBlockMessage::DIGIT_IDX as usize..).take(9) {
+        for (ix, i) in (DoubleBlockMessage::DIGIT_IDX as usize..)
+            .take(9)
+            .enumerate()
+        {
             let message = decompose_blocks_mut(&mut self.message.message);
             message[SWAP_DWORD_BYTE_ORDER[i]] = b'0';
+            if ix >= 2 {
+                message[SWAP_DWORD_BYTE_ORDER[i]] = b'1';
+            }
         }
-
-        #[cfg(feature = "compare-64bit")]
-        let feedback_ab = (target[0] as u64) << 32 | (target[1] as u64);
 
         let mut partial_state = self.message.prefix_state;
         crate::sha256::sha2_arx::<0>(&mut partial_state, &self.message.message[..13]);
@@ -516,14 +550,14 @@ impl crate::solver::Solver for DoubleBlockSolver {
         terminal_message_schedule[15] = (self.message.message_length as u64 * 8) as u32;
         crate::sha256::do_message_schedule_k_w(&mut terminal_message_schedule);
 
-        let mut itoa_buf = Align16(*b"0000\x80000");
+        let mut itoa_buf = Align16(*b"1111\x80111");
         // the addend is definitely not zero for double block solver, so we can start at 0
         // to recoup some lost search space from using octal digits
-        for prefix_set_index in 0..(LANE_ID_LSB_STR_0.len() / 16) {
+        for prefix_set_index in 0..(LANE_ID_LSB_STR.len() / 16) {
             unsafe {
                 let lane_id_0_or_value =
-                    _mm512_slli_epi32(load_lane_id_epi32(&LANE_ID_MSB_STR_0, prefix_set_index), 8);
-                let lane_id_1_or_value = load_lane_id_epi32(&LANE_ID_LSB_STR_0, prefix_set_index);
+                    _mm512_slli_epi32(load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index), 8);
+                let lane_id_1_or_value = load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index);
 
                 let lane_index_value_v = _mm512_or_epi32(
                     _mm512_set1_epi32(self.message.message[13] as _),
@@ -581,17 +615,31 @@ impl crate::solver::Solver for DoubleBlockSolver {
                     );
 
                     #[cfg(not(feature = "compare-64bit"))]
-                    let cmp_fn = if UPWARDS {
-                        _mm512_cmpgt_epu32_mask
-                    } else {
-                        _mm512_cmplt_epu32_mask
+                    let cmp_fn = |x: __m512i, y: __m512i| {
+                        if TYPE == crate::solver::SOLVE_TYPE_GT {
+                            _mm512_cmpgt_epu32_mask(x, y)
+                        } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                            _mm512_cmplt_epu32_mask(x, y)
+                        } else {
+                            _mm512_cmpeq_epu32_mask(
+                                _mm512_and_si512(x, _mm512_set1_epi32((mask >> 32) as _)),
+                                y,
+                            )
+                        }
                     };
 
                     #[cfg(feature = "compare-64bit")]
-                    let cmp64_fn = if UPWARDS {
-                        _mm512_cmpgt_epu64_mask
-                    } else {
-                        _mm512_cmplt_epu64_mask
+                    let cmp64_fn = |x: __m512i, y: __m512i| {
+                        if TYPE == crate::solver::SOLVE_TYPE_GT {
+                            _mm512_cmpgt_epu64_mask(x, y)
+                        } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                            _mm512_cmplt_epu64_mask(x, y)
+                        } else {
+                            _mm512_cmpeq_epu64_mask(
+                                _mm512_and_si512(x, _mm512_set1_epi64(mask as _)),
+                                y,
+                            )
+                        }
                     };
 
                     state[0] = _mm512_add_epi32(state[0], save_a);
@@ -602,7 +650,7 @@ impl crate::solver::Solver for DoubleBlockSolver {
                     }
 
                     #[cfg(not(feature = "compare-64bit"))]
-                    let met_target = (cmp_fn)(state[0], _mm512_set1_epi32(target[0] as _));
+                    let met_target = (cmp_fn)(state[0], _mm512_set1_epi32((target >> 32) as _));
 
                     #[cfg(feature = "compare-64bit")]
                     let result_ab_lo = _mm512_unpacklo_epi32(state[1], state[0]);
@@ -611,9 +659,9 @@ impl crate::solver::Solver for DoubleBlockSolver {
                     #[cfg(feature = "compare-64bit")]
                     let (met_target_high, met_target_lo) = {
                         let ab_met_target_lo =
-                            cmp64_fn(result_ab_lo, _mm512_set1_epi64(feedback_ab as _)) as u16;
+                            cmp64_fn(result_ab_lo, _mm512_set1_epi64(target as _)) as u16;
                         let ab_met_target_high =
-                            cmp64_fn(result_ab_hi, _mm512_set1_epi64(feedback_ab as _)) as u16;
+                            cmp64_fn(result_ab_hi, _mm512_set1_epi64(target as _)) as u16;
                         (ab_met_target_high, ab_met_target_lo)
                     };
 
@@ -633,7 +681,7 @@ impl crate::solver::Solver for DoubleBlockSolver {
                         let success_lane_idx = INDEX_REMAP_PUNPCKLDQ
                             [_tzcnt_u16(met_target_high << 8 | met_target_lo) as usize];
 
-                        let nonce_prefix = 16 * prefix_set_index + success_lane_idx;
+                        let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
 
                         self.message.message[14] = cum0;
                         self.message.message[15] = cum1;
@@ -661,7 +709,7 @@ impl crate::solver::Solver for DoubleBlockSolver {
                         let mut decimal_inner_key = 0;
                         let mut key_octal = next_inner_key - 1;
                         for m in (0..7u32).map(|i| 10u64.pow(i)) {
-                            let output = key_octal % 8;
+                            let output = (key_octal % 8) + 1;
                             key_octal /= 8;
                             decimal_inner_key += output as u64 * m;
                         }
@@ -680,7 +728,7 @@ impl crate::solver::Solver for DoubleBlockSolver {
                         return None;
                     }
 
-                    crate::strings::to_octal_7::<true, 0x80>(&mut itoa_buf, next_inner_key);
+                    crate::strings::to_octal_7::<true, 0x80, 1>(&mut itoa_buf, next_inner_key);
                 }
             }
         }
@@ -738,10 +786,10 @@ impl From<DecimalMessage> for DecimalSolver {
 }
 
 impl crate::solver::Solver for DecimalSolver {
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         match self {
-            Self::SingleBlock(solver) => solver.solve::<UPWARDS>(target),
-            Self::DoubleBlock(solver) => solver.solve::<UPWARDS>(target),
+            Self::SingleBlock(solver) => solver.solve::<TYPE>(target, mask),
+            Self::DoubleBlock(solver) => solver.solve::<TYPE>(target, mask),
         }
     }
 }
@@ -785,7 +833,7 @@ impl GoAwaySolver {
 }
 
 impl crate::solver::Solver for GoAwaySolver {
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         unsafe {
             let lane_id_v = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
 
@@ -793,11 +841,10 @@ impl crate::solver::Solver for GoAwaySolver {
                 return None;
             }
 
+            let target = target & mask;
+
             let mut prefix_state = crate::sha256::IV;
             crate::sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
-
-            #[cfg(feature = "compare-64bit")]
-            let compact_target = (target[0] as u64) << 32 | (target[1] as u64);
 
             let high_limit = (self.limit >> 32) as u32;
             let low_limit = self.limit as u32;
@@ -848,21 +895,35 @@ impl crate::solver::Solver for GoAwaySolver {
                     }
 
                     #[cfg(not(feature = "compare-64bit"))]
-                    let cmp_fn = if UPWARDS {
-                        _mm512_cmpgt_epu32_mask
-                    } else {
-                        _mm512_cmplt_epu32_mask
+                    let cmp_fn = |x: __m512i, y: __m512i| {
+                        if TYPE == crate::solver::SOLVE_TYPE_GT {
+                            _mm512_cmpgt_epu32_mask(x, y)
+                        } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                            _mm512_cmplt_epu32_mask(x, y)
+                        } else {
+                            _mm512_cmpeq_epu32_mask(
+                                _mm512_and_si512(x, _mm512_set1_epi32((mask >> 32) as _)),
+                                y,
+                            )
+                        }
                     };
 
                     #[cfg(feature = "compare-64bit")]
-                    let cmp_fn = if UPWARDS {
-                        _mm512_cmpgt_epu64_mask
-                    } else {
-                        _mm512_cmplt_epu64_mask
+                    let cmp64_fn = |x: __m512i, y: __m512i| {
+                        if TYPE == crate::solver::SOLVE_TYPE_GT {
+                            _mm512_cmpgt_epu64_mask(x, y)
+                        } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                            _mm512_cmplt_epu64_mask(x, y)
+                        } else {
+                            _mm512_cmpeq_epu64_mask(
+                                _mm512_and_si512(x, _mm512_set1_epi64(mask as _)),
+                                y,
+                            )
+                        }
                     };
 
                     #[cfg(not(feature = "compare-64bit"))]
-                    let met_target = cmp_fn(state[0], _mm512_set1_epi32(target[0] as _));
+                    let met_target = cmp_fn(state[0], _mm512_set1_epi32((target >> 32) as _));
 
                     #[cfg(feature = "compare-64bit")]
                     let result_ab_lo = _mm512_unpacklo_epi32(state[1], state[0]);
@@ -871,9 +932,9 @@ impl crate::solver::Solver for GoAwaySolver {
                     #[cfg(feature = "compare-64bit")]
                     let (met_target_high, met_target_lo) = {
                         let ab_met_target_lo =
-                            cmp_fn(result_ab_lo, _mm512_set1_epi64(compact_target as _)) as u16;
+                            cmp64_fn(result_ab_lo, _mm512_set1_epi64(target as _)) as u16;
                         let ab_met_target_high =
-                            cmp_fn(result_ab_hi, _mm512_set1_epi64(compact_target as _)) as u16;
+                            cmp64_fn(result_ab_hi, _mm512_set1_epi64(target as _)) as u16;
                         (ab_met_target_high, ab_met_target_lo)
                     };
 
@@ -935,6 +996,22 @@ mod tests {
                 DoubleBlockMessage::new(prefix, search_space).map(Into::into)
             }
         });
+    }
+
+    #[test]
+    fn test_solve_decimal_f64() {
+        crate::solver::tests::test_decimal_validator_f64_safe::<DecimalSolver, _>(
+            |prefix, search_space| {
+                if let Some((solver, p)) =
+                    SingleBlockMessage::new_f64(prefix, search_space).map(|(x, p)| (x.into(), p))
+                {
+                    Some((DecimalSolver::SingleBlock(solver), p))
+                } else {
+                    DoubleBlockMessage::new(prefix, search_space)
+                        .map(|x| (DecimalSolver::DoubleBlock(x.into()), None))
+                }
+            },
+        );
     }
 
     #[test]

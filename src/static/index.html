@@ -44,6 +44,18 @@
             Go-away (Server-Side Only for now):
             <code>{"challenge":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "target": "000fff", "difficulty": 16}</code>
         </li>
+        <li>
+            CapJS (Server-Side Only for now):
+            <ul>
+                <li>
+                    Typical salt:
+                    <code>{"challenge":{"c":50,"s":32,"d":4},"token":"4b1b46efba002091eeff6cfb0a8c2210d4670d9ce013d6e773","expires":0}</code>
+                <li>
+                    Stretched salt (floating point numbers are expected behavior, server will accept them):
+                    <code>{"challenge":{"c":50,"s":57,"d":4},"token":"4b1b46efba002091eeff6cfb0a8c2210d4670d9ce013d6e773","expires":0}</code>
+                </li>
+            </ul>
+        </li>
     </ul>
 
     <h1>Request Form</h1>

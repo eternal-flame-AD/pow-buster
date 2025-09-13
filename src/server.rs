@@ -15,10 +15,12 @@ use tokio::sync::Semaphore;
 
 use crate::{
     Align16, DecimalSolver,
-    adapter::{AnubisChallengeDescriptor, GoAwayConfig},
+    adapter::{
+        AnubisChallengeDescriptor, CapJsChallengeDescriptor, GoAwayConfig, SolveCapJsResponse,
+    },
     compute_target_anubis,
     message::DecimalMessage,
-    solver::Solver,
+    solver::{SOLVE_TYPE_LT, Solver},
 };
 
 #[cfg(feature = "server-wasm")]
@@ -237,7 +239,7 @@ async fn solve_generic(
     x_forwarded_for: axum_extra::TypedHeader<XForwardedFor>,
     state: State<AppState>,
     form: Form<SolveForm>,
-) -> Result<String, SolveError> {
+) -> Result<Response, SolveError> {
     let form = form.0;
 
     let left_strip = form.challenge.find('{').unwrap_or(0);
@@ -249,14 +251,61 @@ async fn solve_generic(
     let challenge = &form.challenge[left_strip..right_strip];
 
     if let Ok(config) = serde_json::from_str(challenge) {
-        return solve_goaway(remote_addr, x_forwarded_for, state, config).await;
+        return solve_goaway(remote_addr, x_forwarded_for, state, config)
+            .await
+            .map(IntoResponse::into_response);
     }
 
     if let Ok(config) = serde_json::from_str(challenge) {
-        return solve_anubis(remote_addr, x_forwarded_for, state, config).await;
+        return solve_anubis(remote_addr, x_forwarded_for, state, config)
+            .await
+            .map(IntoResponse::into_response);
+    }
+
+    if let Ok(config) = serde_json::from_str(challenge) {
+        return solve_capjs(remote_addr, x_forwarded_for, state, config)
+            .await
+            .map(IntoResponse::into_response);
     }
 
     Err(SolveError::InvalidChallenge)
+}
+
+#[tracing::instrument(skip(state, config), name = "solve_capjs")]
+async fn solve_capjs(
+    remote_addr: axum::extract::ConnectInfo<std::net::SocketAddr>,
+    x_forwarded_for: axum_extra::TypedHeader<XForwardedFor>,
+    State(state): State<AppState>,
+    config: CapJsChallengeDescriptor,
+) -> Result<Json<SolveCapJsResponse>, SolveError> {
+    tracing::info!("solving capjs challenge {:?}", config);
+
+    let estimated_workload = config.estimated_workload();
+    if estimated_workload > state.effective_limit() {
+        return Err(SolveError::EstimatedWorkloadGreaterThanLimit {
+            limit: state.effective_limit(),
+            estimated: estimated_workload,
+        });
+    }
+
+    let (result, attempted_nonces) = {
+        let _permit = state.semaphore.acquire().await.unwrap();
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        state.pool.spawn(move || {
+            let result = config.solve_with_limit(state.limit);
+            tx.send(result).ok();
+        });
+
+        rx.await.map_err(|_| SolveError::SolverFatal)?
+    };
+
+    let response = result.ok_or(SolveError::SolverFailed {
+        limit: state.limit,
+        attempted: attempted_nonces,
+    })?;
+
+    Ok(Json(response))
 }
 
 #[tracing::instrument(skip(state, config), name = "solve_goaway")]
@@ -418,14 +467,7 @@ async fn anubis_offload_api(
 
     let target = compute_target_anubis(form.difficulty.try_into().unwrap());
     let target_bytes = target.to_be_bytes();
-    let target_u32s = core::array::from_fn(|i| {
-        u32::from_be_bytes([
-            target_bytes[i * 4],
-            target_bytes[i * 4 + 1],
-            target_bytes[i * 4 + 2],
-            target_bytes[i * 4 + 3],
-        ])
-    });
+    let target_u64 = u64::from_be_bytes(target_bytes[..8].try_into().unwrap());
 
     let ((result, attempted_nonces), elapsed) = if form.difficulty
         <= if cfg!(target_feature = "avx512f") {
@@ -440,7 +482,7 @@ async fn anubis_offload_api(
             DecimalMessage::new(form.data.as_bytes(), 0).ok_or(SolveError::InvalidChallenge)?,
         );
         solver.set_limit(state.limit);
-        let result = solver.solve::<false>(target_u32s);
+        let result = solver.solve::<{ SOLVE_TYPE_LT }>(target_u64, !0);
         let elapsed = start.elapsed();
         ((result, solver.get_attempted_nonces()), elapsed)
     } else {
@@ -463,7 +505,7 @@ async fn anubis_offload_api(
 
                 let mut solver = DecimalSolver::from(message);
                 solver.set_limit(state.limit);
-                let result = solver.solve::<false>(target_u32s);
+                let result = solver.solve::<{ SOLVE_TYPE_LT }>(target_u64, !0);
                 total_attempted_nonces += solver.get_attempted_nonces();
                 if let Some((result, hash)) = result {
                     tx.send((

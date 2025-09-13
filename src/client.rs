@@ -4,10 +4,13 @@ use reqwest::Client;
 
 use crate::{
     Align16,
-    adapter::{AnubisChallengeDescriptor, GoAwayConfig},
+    adapter::{
+        AnubisChallengeDescriptor, CapJsChallengeDescriptor, CapJsResponse, GoAwayConfig,
+        SolveCapJsResponseMeta,
+    },
     compute_target, compute_target_goaway,
     message::{DecimalMessage, GoAwayMessage},
-    solver::Solver,
+    solver::{SOLVE_TYPE_GT, SOLVE_TYPE_LT, Solver},
 };
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
@@ -63,6 +66,133 @@ pub async fn solve_mcaptcha(
     solve_mcaptcha_ex(pool, client, base_url, site_key, really_solve, &mut 0).await
 }
 
+pub async fn solve_capjs(
+    pool: &rayon::ThreadPool,
+    client: &Client,
+    base_url: &str,
+    site_key: &str,
+) -> Result<(CapJsResponse, SolveCapJsResponseMeta), SolveError> {
+    let mut url_buf = format!("{}/{}/challenge", base_url.trim_end_matches('/'), site_key);
+    let challenge: CapJsChallengeDescriptor = client
+        .post(&url_buf)
+        .header("Content-Type", "application/json")
+        .body("{}")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let solution = challenge.solve_with_limit_parallel(pool, u64::MAX);
+    tx.send(solution).unwrap();
+    let (result, _) = rx.await.unwrap();
+    let Some(solution) = result else {
+        return Err(SolveError::SolverFailed);
+    };
+
+    url_buf.truncate(url_buf.len() - "challenge".len());
+    url_buf.push_str("redeem");
+
+    Ok((
+        client
+            .post(&url_buf)
+            .json(&solution)
+            .send()
+            .await?
+            .json()
+            .await?,
+        solution.meta,
+    ))
+}
+
+pub async fn solve_capjs_worker(
+    pool: &rayon::ThreadPool,
+    client: &Client,
+    base_url: &str,
+    site_key: &str,
+    time_iowait: &mut u32,
+) -> Result<(CapJsResponse, SolveCapJsResponseMeta), SolveError> {
+    static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+    let mut forwarded_for = *b"fe00:0000:0000::";
+    let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let counter_bytes = counter.to_be_bytes();
+    for i in 0..2 {
+        let low_nibble = counter_bytes[i] & 0x0f;
+        let high_nibble = counter_bytes[i] >> 4;
+        forwarded_for[5 + i * 2] = if high_nibble < 10 {
+            b'0' + high_nibble
+        } else {
+            b'a' + high_nibble - 10
+        };
+        forwarded_for[5 + i * 2 + 1] = if low_nibble < 10 {
+            b'0' + low_nibble
+        } else {
+            b'a' + low_nibble - 10
+        };
+    }
+    for i in 0..2 {
+        let low_nibble = counter_bytes[2 + i] & 0x0f;
+        let high_nibble = counter_bytes[2 + i] >> 4;
+        forwarded_for[10 + i * 2] = if high_nibble < 10 {
+            b'0' + high_nibble
+        } else {
+            b'a' + high_nibble - 10
+        };
+        forwarded_for[10 + i * 2 + 1] = if low_nibble < 10 {
+            b'0' + low_nibble
+        } else {
+            b'a' + low_nibble - 10
+        };
+    }
+
+    let mut url_buf = format!("{}/{}/challenge", base_url.trim_end_matches('/'), site_key);
+    let iotime = std::time::Instant::now();
+    let challenge: CapJsChallengeDescriptor = client
+        .post(&url_buf)
+        .header("Content-Type", "application/json")
+        .header("X-Forwarded-For", unsafe {
+            std::str::from_utf8_unchecked(&forwarded_for)
+        })
+        .body("{}")
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let iotime = iotime.elapsed();
+    *time_iowait += iotime.as_micros() as u32;
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    pool.spawn(move || {
+        let solution = challenge.solve();
+        tx.send(solution).unwrap();
+    });
+    let (result, _) = rx.await.unwrap();
+    let Some(solution) = result else {
+        return Err(SolveError::SolverFailed);
+    };
+
+    url_buf.truncate(url_buf.len() - "challenge".len());
+    url_buf.push_str("redeem");
+
+    let iotime = std::time::Instant::now();
+    let resp = client
+        .post(&url_buf)
+        .header("X-Forwarded-For", unsafe {
+            std::str::from_utf8_unchecked(&forwarded_for)
+        })
+        .json(&solution)
+        .send()
+        .await?
+        .json()
+        .await?;
+    let iotime = iotime.elapsed();
+    *time_iowait += iotime.as_micros() as u32;
+    Ok((resp, solution.meta))
+}
+
 /// Solve a mcaptcha live.
 ///
 /// If `really_solve` is false, the solver will not be used and a dummy nonce and result will be returned.
@@ -96,15 +226,7 @@ pub async fn solve_mcaptcha_ex(
 
     let mut prefix = Vec::new();
     crate::build_prefix(&mut prefix, &config.string, &config.salt);
-    let target_bytes = compute_target(config.difficulty_factor).to_be_bytes();
-    let target_u32s = core::array::from_fn(|i| {
-        u32::from_be_bytes([
-            target_bytes[i * 4],
-            target_bytes[i * 4 + 1],
-            target_bytes[i * 4 + 2],
-            target_bytes[i * 4 + 3],
-        ])
-    });
+    let target = compute_target(config.difficulty_factor);
 
     let (nonce, result) = if really_solve {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -116,7 +238,7 @@ pub async fn solve_mcaptcha_ex(
                     break;
                 };
                 let mut solver: crate::DecimalSolver = message.into();
-                result = solver.solve::<true>(target_u32s);
+                result = solver.solve::<{ SOLVE_TYPE_GT }>(target, !0);
                 if result.is_some() {
                     break;
                 }
@@ -330,16 +452,7 @@ pub async fn solve_goaway_js_pow_sha256(
     }
     let config: GoAwayConfig = res.json().await?;
 
-    let target_bytes = compute_target_goaway(config.difficulty()).to_be_bytes();
-    let target_u32s = core::array::from_fn(|i| {
-        let i = i * 4;
-        u32::from_be_bytes([
-            target_bytes[i],
-            target_bytes[i + 1],
-            target_bytes[i + 2],
-            target_bytes[i + 3],
-        ])
-    });
+    let target = compute_target_goaway(config.difficulty());
 
     let estimated_workload = 1u64 << config.difficulty().get();
 
@@ -363,7 +476,7 @@ pub async fn solve_goaway_js_pow_sha256(
                     })
                     .ok_or(SolveError::UnexpectedChallengeFormat)?,
             );
-            let result = solver.solve::<false>(target_u32s);
+            let result = solver.solve::<{ SOLVE_TYPE_LT }>(target, !0);
             let Some(result) = result else {
                 return Err(SolveError::SolverFailed);
             };

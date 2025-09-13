@@ -54,12 +54,27 @@ impl SingleBlockSolver {
 }
 
 impl crate::solver::Solver for SingleBlockSolver {
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+        if self.message.no_trailing_zeros {
+            self.solve_impl::<TYPE, true>(target, mask)
+        } else {
+            self.solve_impl::<TYPE, false>(target, mask)
+        }
+    }
+}
+
+impl SingleBlockSolver {
+    fn solve_impl<const TYPE: u8, const NO_TRAILING_ZEROS: bool>(
+        &mut self,
+        target: u64,
+        mask: u64,
+    ) -> Option<(u64, [u32; 8])> {
         let lane_id_0_word_idx = self.message.digit_index / 4;
         if !is_supported_lane_position(lane_id_0_word_idx) {
             return None;
         }
         let lane_id_1_word_idx = (self.message.digit_index + 1) / 4;
+        let target = target & mask;
 
         for i in (self.message.digit_index as usize..).take(9) {
             let message = decompose_blocks_mut(&mut self.message.message);
@@ -75,11 +90,13 @@ impl crate::solver::Solver for SingleBlockSolver {
         fn solve_inner<
             const LANE_ID_0_WORD_IDX: usize,
             const LANE_ID_1_INCREMENT: bool,
-            const UPWARDS: bool,
+            const TYPE: u8,
+            const NO_TRAILING_ZEROS: bool,
         >(
             this: &mut SingleBlockSolver,
             hotstart_state: [u32; 8],
             target: u32,
+            mask: u32,
         ) -> Option<u64> {
             unsafe {
                 let lane_id_0_byte_idx = this.message.digit_index % 4;
@@ -99,7 +116,9 @@ impl crate::solver::Solver for SingleBlockSolver {
                         lane_id_0_or_value = v128_or(lane_id_1_or_value, lane_id_0_or_value);
                     }
 
-                    for inner_key in 0..(10_000_000.min(this.limit.div_ceil(4))) {
+                    let mut inner_key = if NO_TRAILING_ZEROS { 1 } else { 0 };
+                    let mut bumper = 1;
+                    while inner_key < 10_000_000 {
                         {
                             let message_bytes = decompose_blocks_mut(&mut this.message.message);
                             let mut key_copy = inner_key;
@@ -139,7 +158,15 @@ impl crate::solver::Solver for SingleBlockSolver {
                         let result_a =
                             u32x4_add(state[0], u32x4_splat(this.message.prefix_state[0]));
 
-                        let cmp_fn = if UPWARDS { u32x4_le } else { u32x4_ge };
+                        let cmp_fn = |x: v128, y: v128| {
+                            if TYPE == crate::solver::SOLVE_TYPE_GT {
+                                u32x4_le(x, y)
+                            } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                                u32x4_ge(x, y)
+                            } else {
+                                u32x4_ne(v128_and(x, u32x4_splat(mask)), y)
+                            }
+                        };
 
                         let a_not_met_target = cmp_fn(result_a, u32x4_splat(target));
 
@@ -150,7 +177,15 @@ impl crate::solver::Solver for SingleBlockSolver {
                             v128_store(extract.as_mut_ptr().cast(), result_a);
                             let success_lane_idx = extract
                                 .iter()
-                                .position(|x| if UPWARDS { *x > target } else { *x < target })
+                                .position(|x| {
+                                    if TYPE == crate::solver::SOLVE_TYPE_GT {
+                                        *x > target
+                                    } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                                        *x < target
+                                    } else {
+                                        *x & mask == target & mask
+                                    }
+                                })
                                 .unwrap();
                             let nonce_prefix = 10 + 4 * prefix_set_index + success_lane_idx;
 
@@ -174,11 +209,22 @@ impl crate::solver::Solver for SingleBlockSolver {
                             );
                         }
 
-                        this.attempted_nonces += 4;
-                    }
+                        inner_key += 1;
 
-                    if this.attempted_nonces >= this.limit {
-                        return None;
+                        if NO_TRAILING_ZEROS {
+                            bumper += 1;
+                            let should_bump = bumper == 10;
+                            inner_key += should_bump as u32;
+                            if should_bump {
+                                bumper -= 9;
+                            }
+                        }
+
+                        this.attempted_nonces += 4;
+
+                        if this.attempted_nonces >= this.limit {
+                            return None;
+                        }
                     }
                 }
             }
@@ -189,9 +235,19 @@ impl crate::solver::Solver for SingleBlockSolver {
         macro_rules! dispatch {
             ($idx0_words:literal) => {
                 if lane_id_0_word_idx == lane_id_1_word_idx {
-                    solve_inner::<{ $idx0_words }, false, UPWARDS>(self, hotstart_state, target[0])
+                    solve_inner::<{ $idx0_words }, false, TYPE, NO_TRAILING_ZEROS>(
+                        self,
+                        hotstart_state,
+                        (target >> 32) as u32,
+                        (mask >> 32) as u32,
+                    )
                 } else {
-                    solve_inner::<{ $idx0_words }, true, UPWARDS>(self, hotstart_state, target[0])
+                    solve_inner::<{ $idx0_words }, true, TYPE, NO_TRAILING_ZEROS>(
+                        self,
+                        hotstart_state,
+                        (target >> 32) as u32,
+                        (mask >> 32) as u32,
+                    )
                 }
             };
         }
@@ -251,10 +307,14 @@ impl DoubleBlockSolver {
 }
 
 impl crate::solver::Solver for DoubleBlockSolver {
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         if !is_supported_lane_position(DoubleBlockMessage::DIGIT_IDX as usize / 4) {
             return None;
         }
+        let target = target & mask;
+
+        let target = (target >> 32) as u32;
+        let mask = (mask >> 32) as u32;
 
         if self.attempted_nonces >= self.limit {
             return None;
@@ -344,9 +404,17 @@ impl crate::solver::Solver for DoubleBlockSolver {
 
                     let result_a = u32x4_add(state[0], save_a);
 
-                    let cmp_fn = if UPWARDS { u32x4_le } else { u32x4_ge };
+                    let cmp_fn = |x: v128, y: v128| {
+                        if TYPE == crate::solver::SOLVE_TYPE_GT {
+                            u32x4_le(x, y)
+                        } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                            u32x4_ge(x, y)
+                        } else {
+                            u32x4_ne(v128_and(x, u32x4_splat(mask)), y)
+                        }
+                    };
 
-                    let a_not_met_target = cmp_fn(result_a, u32x4_splat(target[0]));
+                    let a_not_met_target = cmp_fn(result_a, u32x4_splat(target as _));
 
                     if !u32x4_all_true(a_not_met_target) {
                         crate::unlikely();
@@ -356,10 +424,12 @@ impl crate::solver::Solver for DoubleBlockSolver {
                         let success_lane_idx = extract
                             .iter()
                             .position(|x| {
-                                if UPWARDS {
-                                    *x > target[0]
+                                if TYPE == crate::solver::SOLVE_TYPE_GT {
+                                    *x > target
+                                } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                                    *x < target
                                 } else {
-                                    *x < target[0]
+                                    *x & mask == target & mask
                                 }
                             })
                             .unwrap();
@@ -474,10 +544,10 @@ impl DecimalSolver {
 }
 
 impl crate::solver::Solver for DecimalSolver {
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         match self {
-            Self::SingleBlock(solver) => solver.solve::<UPWARDS>(target),
-            Self::DoubleBlock(solver) => solver.solve::<UPWARDS>(target),
+            Self::SingleBlock(solver) => solver.solve::<TYPE>(target, mask),
+            Self::DoubleBlock(solver) => solver.solve::<TYPE>(target, mask),
         }
     }
 }
@@ -511,7 +581,12 @@ impl GoAwaySolver {
 }
 
 impl crate::solver::Solver for GoAwaySolver {
-    fn solve<const UPWARDS: bool>(&mut self, target: [u32; 4]) -> Option<(u64, [u32; 8])> {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+        let target = target & mask;
+
+        let target = (target >> 32) as u32;
+        let mask = (mask >> 32) as u32;
+
         unsafe {
             if !is_supported_lane_position(PREFIX_OFFSET_TO_LANE_POSITION[0]) {
                 return None;
@@ -550,9 +625,17 @@ impl crate::solver::Solver for GoAwaySolver {
 
                     crate::sha256::simd128::multiway_arx::<9>(&mut state, &mut msg);
                     let result_a = u32x4_add(state[0], u32x4_splat(crate::sha256::IV[0]));
-                    let cmp_fn = if UPWARDS { u32x4_le } else { u32x4_ge };
+                    let cmp_fn = |x: v128, y: v128| {
+                        if TYPE == crate::solver::SOLVE_TYPE_GT {
+                            u32x4_le(x, y)
+                        } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                            u32x4_ge(x, y)
+                        } else {
+                            u32x4_ne(v128_and(x, u32x4_splat(mask)), y)
+                        }
+                    };
 
-                    let a_not_met_target = cmp_fn(result_a, u32x4_splat(target[0]));
+                    let a_not_met_target = cmp_fn(result_a, u32x4_splat(target));
 
                     if !u32x4_all_true(a_not_met_target) {
                         crate::unlikely();
@@ -562,10 +645,12 @@ impl crate::solver::Solver for GoAwaySolver {
                         let success_lane_idx = extract
                             .iter()
                             .position(|x| {
-                                if UPWARDS {
-                                    *x > target[0]
+                                if TYPE == crate::solver::SOLVE_TYPE_GT {
+                                    *x > target
+                                } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                                    *x < target
                                 } else {
-                                    *x < target[0]
+                                    *x & mask == target & mask
                                 }
                             })
                             .unwrap();
@@ -612,6 +697,22 @@ mod tests {
                 DoubleBlockMessage::new(prefix, search_space).map(Into::into)
             }
         });
+    }
+
+    #[test]
+    fn test_solve_decimal_f64() {
+        crate::solver::tests::test_decimal_validator_f64_safe::<DecimalSolver, _>(
+            |prefix, search_space| {
+                if let Some((solver, p)) =
+                    SingleBlockMessage::new_f64(prefix, search_space).map(|(x, p)| (x.into(), p))
+                {
+                    Some((DecimalSolver::SingleBlock(solver), p))
+                } else {
+                    DoubleBlockMessage::new(prefix, search_space)
+                        .map(|x| (DecimalSolver::DoubleBlock(x.into()), None))
+                }
+            },
+        );
     }
 
     #[test]

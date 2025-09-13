@@ -406,13 +406,13 @@ pub(crate) fn simd_itoa8<const N: usize, const REGISTER_BSWAP: bool, const PLACE
 }
 
 #[cfg(not(target_feature = "avx512f"))]
-pub(crate) fn to_octal_7<const REGISTER_BSWAP: bool, const PLACEHOLDER: u8>(
+pub(crate) fn to_octal_7<const REGISTER_BSWAP: bool, const PLACEHOLDER: u8, const OFFSET: u8>(
     out: &mut Align16<[u8; 8]>,
     mut input: u32,
 ) {
     out.fill(PLACEHOLDER);
     for i in (0..7).rev() {
-        out[i] = ((input & 0b111) as u8) + b'0';
+        out[i] = ((input & 0b111) as u8) + b'0' + OFFSET;
         input >>= 3;
     }
     if REGISTER_BSWAP {
@@ -426,7 +426,7 @@ pub(crate) fn to_octal_7<const REGISTER_BSWAP: bool, const PLACEHOLDER: u8>(
 }
 
 #[cfg(target_feature = "avx512f")]
-pub(crate) fn to_octal_7<const REGISTER_BSWAP: bool, const PLACEHOLDER: u8>(
+pub(crate) fn to_octal_7<const REGISTER_BSWAP: bool, const PLACEHOLDER: u8, const OFFSET: u8>(
     out: &mut Align16<[u8; 8]>,
     input: u32,
 ) {
@@ -440,7 +440,11 @@ pub(crate) fn to_octal_7<const REGISTER_BSWAP: bool, const PLACEHOLDER: u8>(
             x = _mm256_srlv_epi32(x, _mm256_setr_epi32(18, 15, 12, 9, 6, 3, 0, 0));
         }
         x = _mm256_and_si256(x, _mm256_set1_epi32(0b111));
-        x = _mm256_or_epi32(x, _mm256_set1_epi32(b'0' as _));
+        if OFFSET != 0 {
+            x = _mm256_add_epi32(x, _mm256_set1_epi32((b'0' + OFFSET) as _));
+        } else {
+            x = _mm256_or_epi32(x, _mm256_set1_epi32(b'0' as _));
+        }
         let mut d = _mm256_cvtepi32_epi8(x);
         if REGISTER_BSWAP {
             d = _mm_insert_epi8(d, PLACEHOLDER as _, 4);
@@ -460,10 +464,14 @@ mod tests {
     fn test_to_octal_7() {
         let i = 0o1234567;
         let mut buf = Align16([0u8; 8]);
-        to_octal_7::<false, 0x80>(&mut buf, i);
+        to_octal_7::<false, 0x80, 0>(&mut buf, i);
         assert_eq!(buf, Align16(*b"1234567\x80"));
-        to_octal_7::<true, 0x80>(&mut buf, i);
+        to_octal_7::<true, 0x80, 0>(&mut buf, i);
         assert_eq!(buf, Align16(*b"4321\x80765"));
+        to_octal_7::<false, 0x80, 1>(&mut buf, i);
+        assert_eq!(buf, Align16(*b"2345678\x80"));
+        to_octal_7::<true, 0x80, 1>(&mut buf, i);
+        assert_eq!(buf, Align16(*b"5432\x80876"));
     }
 
     #[test]
