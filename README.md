@@ -25,7 +25,7 @@
 
 A fast, adversarially [^3] implemented mCaptcha/Anubis/go-away/Cap.js/NolLamas PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features without wasting energy in the browser.
 
-[^3]: Adversarial refers to challenges are solved using the path-of-least-resistance, sometimes involving massaging nonce space into favorable conditions or partially inverting hash images into lower-latency internal states. Most schemes supported do not have explicit specifications and depend on the cryptographic guarantees of the hash function, which I did not break (at least not in a previously unknown way). This code follows the original code to the letter of the law and sometimes emit awkward but computationally favorable solutions (such as `10000000073377131`, `-10.00000141128212`, etc.)
+[^3]: Adversarial refers to challenges are solved using the path-of-least-resistance, sometimes involving massaging nonce space into favorable conditions or partially inverting hash images into lower-latency internal states. Most schemes supported do not have explicit specifications and depend on the cryptographic guarantees of the hash function, which I did not break (at least not in a previously unknown way). This code follows the original code to the letter of the law and sometimes emit awkward but computationally or statistically favorable solutions (such as `10000000073377131`, `-10.00000141128212`, etc.)
 
 The benchmarks demonstrate a significant performance gap between browser-based JavaScript execution and native implementations (both optimized CPU and unoptimized GPU), suggesting fundamental challenges for PoW-based browser CAPTCHA systems.
 
@@ -39,6 +39,7 @@ I personally don't like some projects (a subset of the schemes I supported, not 
 - Don't really protect the website better than heuristics (and this program serves as a proof of concept that it can be gamed using pure CPU).
 - Requires users to disable their anti fingerprinting protection like JShelter, and don't give users an opportunity to re-enable them before automatically redirecting them to the a website they have never been to before, which can very well hide fingerprinting scripts. This program emits solutions to these challenges fast without requiring JavaScript.
 - Justify the annoying friction by claiming the lack of a transparent spec and alternative manual solutions to be ["\[good\] taste \[for\] a 'security product'"](https://anubis.techaro.lol/docs/user/frequently-asked-questions), despite themselves not publishing sound security analysis to justify the friction. I did the reverse engineering that nobody should even have to do for an open source security product.
+- Internally uses suboptimal and exploitable searching strategies. For example in GoToSocial, [~80% users are forced to wait more than median](/plots/gts_pmf.png) due to the search using a `1/x` implicit prior when an attacker with a few samples can quickly fit or estimate the real underlying model (empirical guessing, MCMC, Method of Moments, etc.) and switch to Bayesian or Greedy search strategies.
 
 [A longer blabbing post regarding this](https://mi.yumechi.jp/notes/aa223tk8c5ao02v9)
 
