@@ -662,7 +662,7 @@ pub struct GoToSocialAoSoALUTOwned<
     T: ArrayLength<u32>, // how many nonces per SoA element
     A: AlignerTo<GenericArray<u32, T>, Alignment = Time4<T>>,
 > {
-    data: Vec<GoToSocialSoALUTEntry<T, A>>,
+    data: alloc::vec::Vec<GoToSocialSoALUTEntry<T, A>>,
 }
 
 /// A view of the GoToSocial AoS OA LUT
@@ -675,81 +675,15 @@ pub struct GotoSocialAoSoALUTView<
     data: &'a [GoToSocialSoALUTEntry<T, A>],
 }
 
-// supports difficulties up to 500K
+// supports difficulties up to 1 million
 #[cfg(target_feature = "avx512f")]
-const BUILT_IN_LUT_16_LEN: usize = 500000 / 16;
+const BUILT_IN_LUT_16_LEN: usize = 1_000_000 / 16;
 
 #[cfg(target_feature = "avx512f")]
 #[allow(long_running_const_eval)]
 static BUILT_IN_LUT_16_BUF: [GoToSocialSoALUTEntry<U16, Align64<GenericArray<u32, U16>>>;
-    BUILT_IN_LUT_16_LEN] = {
-    let mut result: [GoToSocialSoALUTEntry<U16, Align64<GenericArray<u32, U16>>>;
-        BUILT_IN_LUT_16_LEN] = unsafe { core::mem::zeroed() };
-    let mut i = 0;
-    let mut digits = [0; 8];
-    while i < BUILT_IN_LUT_16_LEN {
-        let mut di = 0;
-        let mut word_2s: GenericArray<u32, U16> = unsafe { core::mem::zeroed() };
-        let mut word_3s: GenericArray<u32, U16> = unsafe { core::mem::zeroed() };
-        let mut msg_lens: GenericArray<u32, U16> = unsafe { core::mem::zeroed() };
-        while di < 16 {
-            let mut copy = i as u64 * 16 + di as u64;
-            let mut j = 8;
-            loop {
-                j -= 1;
-                digits[j] = (copy % 10) as u8 + b'0';
-                copy /= 10;
-                if copy == 0 {
-                    break;
-                }
-            }
-            let mut output_bytes = [0; 3 * 4];
-            let mut k = j;
-            while k < 8 {
-                output_bytes[k - j] = digits[k];
-                k += 1;
-            }
-            output_bytes[k - j] = 0x80;
-            let msg_len = ((k - j) as u32 + GoToSocialMessage::SEED_LEN) * 8;
-            unsafe {
-                core::ptr::addr_of_mut!(word_2s)
-                    .cast::<u32>()
-                    .add(di)
-                    .write(u32::from_be_bytes([
-                        output_bytes[0],
-                        output_bytes[1],
-                        output_bytes[2],
-                        output_bytes[3],
-                    ]));
-                core::ptr::addr_of_mut!(word_3s)
-                    .cast::<u32>()
-                    .add(di)
-                    .write(u32::from_be_bytes([
-                        output_bytes[4],
-                        output_bytes[5],
-                        output_bytes[6],
-                        output_bytes[7],
-                    ]));
-                core::ptr::addr_of_mut!(msg_lens)
-                    .cast::<u32>()
-                    .add(di)
-                    .write(msg_len);
-            }
-
-            di += 1;
-        }
-        result[i] = GoToSocialSoALUTEntry {
-            word_2: Align64(word_2s),
-            word_3: Align64(word_3s),
-            word_4: unsafe { core::mem::zeroed() },
-            msg_len: Align64(msg_lens),
-            _phantom: core::marker::PhantomData,
-        };
-        i += 1;
-    }
-
-    result
-};
+    BUILT_IN_LUT_16_LEN] =
+    unsafe { core::mem::transmute(*include_bytes!(concat!(env!("OUT_DIR"), "/gts_lut_16.bin"))) };
 
 #[cfg(target_feature = "avx512f")]
 
@@ -806,7 +740,9 @@ impl<T: ArrayLength<u32>, A: AlignerTo<GenericArray<u32, T>, Alignment = Time4<T
 {
     /// Create a new Lookup Table
     pub fn new() -> Self {
-        Self { data: Vec::new() }
+        Self {
+            data: alloc::vec::Vec::new(),
+        }
     }
 
     /// Get a view of the Lookup Table  
@@ -904,6 +840,7 @@ pub struct GoToSocialMessage {
 
 impl GoToSocialMessage {
     /// The length of the seed in bytes
+    // sync with build.rs
     pub const SEED_LEN: u32 = 16;
 
     /// creates a new go-to-social message

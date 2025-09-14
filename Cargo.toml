@@ -8,6 +8,7 @@ keywords = ["sha-2", "captcha", "proof-of-work", "mining"]
 authors = ["Yumechi <yume@yumechi.jp>"]
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

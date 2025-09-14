@@ -69,9 +69,12 @@ pub fn bench_proof_go_to_social(c: &mut Criterion) {
                     let mut solver = GoToSocialSolver::new(lut.view(), message);
 
                     let solution = solver
-                        .solve::<{ pow_buster::solver::SOLVE_TYPE_DH_PREIMAGE }>(target, u64::MAX)
+                        .solve_nonce_only::<{ pow_buster::solver::SOLVE_TYPE_DH_PREIMAGE }>(
+                            target,
+                            u64::MAX,
+                        )
                         .unwrap();
-                    assert_eq!(solution.0, answer);
+                    assert_eq!(solution, answer);
                 },
                 criterion::BatchSize::SmallInput,
             )
