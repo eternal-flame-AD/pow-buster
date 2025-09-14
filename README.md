@@ -23,11 +23,13 @@
   - [License and Acknowledgments](#license-and-acknowledgments)
   - [AI Disclaimer](#ai-disclaimer)
 
-A fast, adversarially implemented mCaptcha/Anubis/go-away/Cap.js/NolLamas PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features without wasting energy in the browser.
+A fast, adversarially [^3] implemented mCaptcha/Anubis/go-away/Cap.js/NolLamas PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features without wasting energy in the browser.
+
+[^3]: Adversarial refers to challenges are solved using the path-of-least-resistance, sometimes involving massaging nonce space into favorable conditions or partially inverting hash images into lower-latency internal states. Most schemes supported do not have explicit specifications and depend on the cryptographic guarantees of the hash function, which I did not break (at least not in a previously unknown way). This code follows the original code to the letter of the law and sometimes emit awkward but computationally favorable solutions (such as `10000000073377131`, `-10.00000141128212`, etc.)
 
 The benchmarks demonstrate a significant performance gap between browser-based JavaScript execution and native implementations (both optimized CPU and unoptimized GPU), suggesting fundamental challenges for PoW-based browser CAPTCHA systems.
 
-[Web demo featuring a public backend native solver and client-side WASM solver](https://powbuster.yumechi.jp/)
+[Public web demo running on a $4/month/core server, 80-100MHs/thread](https://powbuster.yumechi.jp/)
 
 ## Why?
 
