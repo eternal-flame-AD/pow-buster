@@ -977,10 +977,12 @@ pub struct GoToSocialSolver<'a> {
 }
 
 impl<'a> GoToSocialSolver<'a> {
+    const ABSOLUTE_MAX_NONCE: u64 = 10u64.pow(7) - 1;
+
     /// Create a new GoToSocial solver.
     pub fn new(alut: GotoSocialAoSoALUT16View<'a>, message: GoToSocialMessage) -> Self {
         Self {
-            max_nonce: alut.max_supported_nonce(),
+            max_nonce: alut.max_supported_nonce().min(Self::ABSOLUTE_MAX_NONCE),
             alut,
             message,
             attempted_nonces: 0,
@@ -989,7 +991,9 @@ impl<'a> GoToSocialSolver<'a> {
 
     /// Set the max nonce.
     pub fn set_max_nonce(&mut self, max_nonce: u64) {
-        self.max_nonce = max_nonce;
+        self.max_nonce = max_nonce
+            .min(self.alut.max_supported_nonce())
+            .min(Self::ABSOLUTE_MAX_NONCE);
     }
 
     /// Get the attempted nonces.
@@ -1029,7 +1033,7 @@ impl crate::solver::Solver for GoToSocialSolver<'_> {
                     _mm512_set1_epi32(seed_words[3] as _),
                     _mm512_load_si512(data.word_2.as_ptr().cast()),
                     _mm512_load_si512(data.word_3.as_ptr().cast()),
-                    _mm512_load_si512(data.word_4.as_ptr().cast()),
+                    _mm512_setzero_si512(),
                     _mm512_setzero_si512(),
                     _mm512_setzero_si512(),
                     _mm512_setzero_si512(),
@@ -1061,7 +1065,6 @@ impl crate::solver::Solver for GoToSocialSolver<'_> {
                     output_block[3] = seed_words[3];
                     output_block[4] = data.word_2[success_lane_idx as usize];
                     output_block[5] = data.word_3[success_lane_idx as usize];
-                    output_block[6] = data.word_4[success_lane_idx as usize];
                     output_block[15] = data.msg_len[success_lane_idx as usize];
                     crate::sha256::digest_block(&mut output_state, &output_block);
 
@@ -1099,7 +1102,7 @@ impl crate::solver::Solver for GoToSocialSolver<'_> {
                     _mm512_set1_epi32(seed_words[3] as _),
                     _mm512_load_si512(data.word_2.as_ptr().cast()),
                     _mm512_load_si512(data.word_3.as_ptr().cast()),
-                    _mm512_load_si512(data.word_4.as_ptr().cast()),
+                    _mm512_setzero_si512(),
                     _mm512_setzero_si512(),
                     _mm512_setzero_si512(),
                     _mm512_setzero_si512(),

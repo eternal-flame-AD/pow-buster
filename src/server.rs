@@ -282,7 +282,6 @@ async fn solve_generic(
     Err(SolveError::InvalidChallenge)
 }
 
-#[cfg(target_feature = "avx512f")]
 #[derive(Debug, serde::Deserialize)]
 /// A GoToSocial challenge descriptor
 pub struct GoToSocialChallengeDescriptor {
@@ -292,7 +291,6 @@ pub struct GoToSocialChallengeDescriptor {
     challenge: String,
 }
 
-#[cfg(target_feature = "avx512f")]
 #[tracing::instrument(skip(state, config), name = "solve_gotosocial")]
 async fn solve_gotosocial(
     remote_addr: axum::extract::ConnectInfo<std::net::SocketAddr>,
@@ -300,7 +298,12 @@ async fn solve_gotosocial(
     State(state): State<AppState>,
     config: GoToSocialChallengeDescriptor,
 ) -> Result<String, SolveError> {
+    #[cfg(target_feature = "avx512f")]
     use crate::solver::avx512::GoToSocialSolver;
+
+    #[cfg(not(target_feature = "avx512f"))]
+    use crate::solver::safe::GoToSocialSolver;
+
     tracing::info!("solving gotosocial challenge {:?}", config);
     use crate::message::GoToSocialMessage;
 
@@ -316,7 +319,11 @@ async fn solve_gotosocial(
     state.pool.spawn(move || {
         let start = std::time::Instant::now();
         // this is limited to 500k supported nonces, takes about 5ms tops on AVX512
+        #[cfg(target_feature = "avx512f")]
         let mut solver = GoToSocialSolver::new(crate::message::BUILT_IN_LUT_16_BUF_VIEW, message);
+        #[cfg(not(target_feature = "avx512f"))]
+        let mut solver = GoToSocialSolver::from(message);
+        solver.set_max_nonce(state.limit);
         let solution =
             solver.solve_nonce_only::<{ crate::solver::SOLVE_TYPE_DH_PREIMAGE }>(target, u64::MAX);
         let elapsed = start.elapsed();
@@ -328,9 +335,15 @@ async fn solve_gotosocial(
 
     let Some(solution) = solution else {
         return Err(SolveError::SolverFailed {
-            limit: state
-                .limit
-                .min(crate::message::BUILT_IN_LUT_16_BUF_VIEW.max_supported_nonce()),
+            limit: {
+                cfg_if::cfg_if! {
+                    if #[cfg(target_feature = "avx512f")] {
+                        state.limit.min(crate::message::BUILT_IN_LUT_16_BUF_VIEW.max_supported_nonce())
+                    } else {
+                        state.limit
+                    }
+                }
+            },
             attempted: attempted_nonces,
         });
     };

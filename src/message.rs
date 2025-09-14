@@ -759,28 +759,32 @@ impl<T: ArrayLength<u32>, A: AlignerTo<GenericArray<u32, T>, Alignment = Time4<T
         let additional_entries = max_nonce_by_alignment as usize - self.data.len();
         self.data.reserve(additional_entries);
         for i in self.data.len()..max_nonce_by_alignment as usize {
-            let mut digits = [0; 10];
+            let mut digits = [0; 8];
 
             let mut word_2s = GenericArray::default();
             let mut word_3s = GenericArray::default();
-            let mut word_4s = GenericArray::default();
             let mut msg_lens = GenericArray::default();
             for di in 0..T::USIZE {
                 let mut copy = i as u64 * T::USIZE as u64 + di as u64;
-                let mut j = 10;
+                let mut j = 8;
                 loop {
                     j -= 1;
                     digits[j] = (copy % 10) as u8 + b'0';
                     copy /= 10;
                     if copy == 0 {
                         break;
+                    } else if j == 0 {
+                        return;
                     }
                 }
                 let itoa_buf = &digits[j..];
-                // max 10 digits from u32, one more digit from alignment multipler, then 0x80, 12 bytes fit
-                let mut output_bytes = [0; 3 * 4];
+                let mut output_bytes = [0; 2 * 4];
                 output_bytes[..itoa_buf.len()].copy_from_slice(itoa_buf);
-                output_bytes[itoa_buf.len()] = 0x80;
+                if itoa_buf.len() != 8 {
+                    output_bytes[itoa_buf.len()] = 0x80;
+                } else {
+                    return;
+                }
                 let msg_len = (itoa_buf.len() as u32 + GoToSocialMessage::SEED_LEN) * 8;
                 msg_lens[di] = msg_len;
                 word_2s[di] = u32::from_be_bytes([
@@ -795,17 +799,10 @@ impl<T: ArrayLength<u32>, A: AlignerTo<GenericArray<u32, T>, Alignment = Time4<T
                     output_bytes[6],
                     output_bytes[7],
                 ]);
-                word_4s[di] = u32::from_be_bytes([
-                    output_bytes[8],
-                    output_bytes[9],
-                    output_bytes[10],
-                    output_bytes[11],
-                ]);
             }
             self.data.push(GoToSocialSoALUTEntry {
                 word_2: A::from(word_2s),
                 word_3: A::from(word_3s),
-                word_4: A::from(word_4s),
                 msg_len: A::from(msg_lens),
                 _phantom: core::marker::PhantomData,
             });
@@ -828,7 +825,6 @@ pub struct GoToSocialSoALUTEntry<
 > {
     pub(crate) word_2: A,
     pub(crate) word_3: A,
-    pub(crate) word_4: A,
     pub(crate) msg_len: A,
     _phantom: core::marker::PhantomData<T>,
 }
@@ -947,6 +943,7 @@ impl CapJSEmitter {
 mod tests {
     use super::*;
 
+    #[cfg(target_feature = "avx512f")]
     #[test]
     fn test_go_to_social_aosoa_lut() {
         let mut alut = GotoSocialAoSoALUT16::new();

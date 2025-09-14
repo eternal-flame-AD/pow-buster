@@ -11,28 +11,32 @@ fn build_lut<const ALIGNMENT: usize>(
         Err(e) => panic!(" unknown endianness: {}", e),
     };
     for i in 0..max_nonce_by_alignment as usize {
-        let mut digits = [0; 10];
+        let mut digits = [0; 8];
 
         let mut word_2s = [0; ALIGNMENT];
         let mut word_3s = [0; ALIGNMENT];
-        let mut word_4s = [0; ALIGNMENT];
         let mut msg_lens = [0; ALIGNMENT];
         for di in 0..ALIGNMENT {
             let mut copy = i as u64 * ALIGNMENT as u64 + di as u64;
-            let mut j = 10;
+            let mut j = 8;
             loop {
                 j -= 1;
                 digits[j] = (copy % 10) as u8 + b'0';
                 copy /= 10;
                 if copy == 0 {
                     break;
+                } else if j == 0 {
+                    panic!("nonce too large");
                 }
             }
             let itoa_buf = &digits[j..];
-            // max 10 digits from u32, one more digit from alignment multipler, then 0x80, 12 bytes fit
-            let mut output_bytes = [0; 3 * 4];
+            let mut output_bytes = [0; 2 * 4];
             output_bytes[..itoa_buf.len()].copy_from_slice(itoa_buf);
-            output_bytes[itoa_buf.len()] = 0x80;
+            if itoa_buf.len() != 8 {
+                output_bytes[itoa_buf.len()] = 0x80;
+            } else {
+                todo!(">10 million difficulty not supported yet");
+            }
             let msg_len = (itoa_buf.len() as u32 + 16) * 8;
             msg_lens[di] = msg_len;
             word_2s[di] = u32::from_be_bytes([
@@ -47,28 +51,16 @@ fn build_lut<const ALIGNMENT: usize>(
                 output_bytes[6],
                 output_bytes[7],
             ]);
-            word_4s[di] = u32::from_be_bytes([
-                output_bytes[8],
-                output_bytes[9],
-                output_bytes[10],
-                output_bytes[11],
-            ]);
         }
         if is_be {
             word_2s
                 .iter_mut()
                 .chain(word_3s.iter_mut())
-                .chain(word_4s.iter_mut())
                 .chain(msg_lens.iter_mut())
                 .for_each(|w| *w = w.swap_bytes());
         }
 
-        for w in word_2s
-            .iter()
-            .chain(word_3s.iter())
-            .chain(word_4s.iter())
-            .chain(msg_lens.iter())
-        {
+        for w in word_2s.iter().chain(word_3s.iter()).chain(msg_lens.iter()) {
             output.write_all(&w.to_le_bytes())?;
         }
     }
