@@ -687,7 +687,7 @@ static BUILT_IN_LUT_16_BUF: [GoToSocialSoALUTEntry<U16, Align64<GenericArray<u32
 
 #[cfg(target_feature = "avx512f")]
 
-/// A built-in view of the GoToSocial AoS OA LUT with 16 items per SoA element that should handle all difficulties up to 500K
+/// A built-in view of the GoToSocial AoSOA LUT with 16 items per SoA element that should handle all difficulties up to 500K
 pub static BUILT_IN_LUT_16_BUF_VIEW: GotoSocialAoSoALUTView<U16, Align64<GenericArray<u32, U16>>> =
     GotoSocialAoSoALUTView {
         data: &BUILT_IN_LUT_16_BUF,
@@ -699,6 +699,11 @@ impl<'a, T: ArrayLength<u32>, A: AlignerTo<GenericArray<u32, T>, Alignment = Tim
     /// Get the maximum supported nonce
     pub fn max_supported_nonce(&self) -> u64 {
         (self.data.len() as u64 * T::USIZE as u64).saturating_sub(1)
+    }
+
+    /// Get the number of bins in the LUT
+    pub fn num_bins(&self) -> usize {
+        self.data.len()
     }
 
     /// Iterate over the entries in reverse order

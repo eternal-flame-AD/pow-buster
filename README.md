@@ -298,6 +298,7 @@ For us we have single thread:
 | SingleBlock/Anubis               | 89.16 MH/s              | 62.19 MH/s                    | 14.74 MH/s                               |
 | DoubleBlock (mCaptcha edge case) | 53.28 MH/s              | 42.55 MH/s                    | Not Tested                               |
 | go-away (16 bytes)               | 98.42 MH/s              | 78.10 MH/s                    | Not Tested                               |
+| GoToSocial (Preimage Finding)    | 98.76 MH/s              | N/A                           | N/A                                      |
 
 On a mobile CPU (i7-11370H), similar performance can be achieved on AVX-512 (at a higher IPC due to Intel having faster register rotations):
 
@@ -318,6 +319,7 @@ The peak throughput on 7950X reported by `openssl speed -multi 32 sha256` is 239
 | SingleBlock/Anubis               | 1.485 GH/s  | 1.143 GH/s  |
 | DoubleBlock (mCaptcha edge case) | 850.75 MH/s | 827.74 MH/s |
 | go-away (16 bytes)               | 1.525 GH/s  | 1.291 GH/s  |
+| GoToSocial (Preimage Finding)    | 1.527 GH/s  | N/A         |
 
 On EPYC 9634 with better thermals, OpenSSL has 598.28 MH/s (38.29 GB/s) single block, 1.91 GH/s (122.54 GB/s) continuous.
 
