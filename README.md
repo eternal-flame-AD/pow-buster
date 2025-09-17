@@ -63,6 +63,7 @@ All load tests were performed using the `live` command with the following method
 - All requests are strictly proof of work round-trips and contain valid proof of work. No backend service were hooked up.
 - Supplementary features that are irrelevant to this study such as traditional IP rate-limiting were disabled.
 - These tests were performed on a 32-core AMD Ryzen 9 7950X, actual ratio/capacity may vary depending on server capacity and topology.
+- "difficulty inversion" was defined as a the server not being able to fully load all 32-cores at at least 1:1 latency (as reported by `http_wait` metric at cutoff 50%) or 1:1 CPU usage to `pow-buster`'s throughput.
 
 ## Features
 
@@ -153,7 +154,7 @@ Note: To reproduce, you don't need to clone the submodule, it is only used as a 
 
 ### Formal Benchmark (mCaptcha only)
 
-Speedup against official solution, reported by Criterion.rs, single-threaded:
+Speedup against official solution, reported by Criterion.rs, single-threaded except for "mCaptcha User Survey extrapolated" column which uses all worker threads on the user's browser:
 
 Results on AMD Ryzen 9 7950X, 32 cores, when supported, single-hash number comes first (there is 90% chance your deployment is single-hash, this vagueness is IMO design oversight by the mCaptcha team), double-hash number comes second, all numbers are in milliseconds, compiled with `-Ctarget-cpu=native` unless otherwise specified.
 
@@ -318,7 +319,7 @@ For us we have single thread:
 | -------------------------------- | ----------------------- | ----------------------------- | ---------------------------------------- |
 | SingleBlock/Anubis               | 89.16 MH/s              | 62.19 MH/s                    | 14.74 MH/s                               |
 | DoubleBlock (mCaptcha edge case) | 53.28 MH/s              | 42.55 MH/s                    | Not Tested                               |
-| go-away (16 bytes)               | 98.42 MH/s              | 78.10 MH/s                    | Not Tested                               |
+| go-away (32 bytes)               | 98.42 MH/s              | 78.10 MH/s                    | Not Tested                               |
 | GoToSocial (Preimage Finding)    | 98.76 MH/s              | N/A                           | N/A                                      |
 
 On a mobile CPU (i7-11370H), similar performance can be achieved on AVX-512 (at a higher IPC due to Intel having faster register rotations):
@@ -327,7 +328,7 @@ On a mobile CPU (i7-11370H), similar performance can be achieved on AVX-512 (at 
 | -------------------------------- | ---------- | ---------- |
 | SingleBlock/Anubis               | 72.30 MH/s | 21.87 MH/s |
 | DoubleBlock (mCaptcha edge case) | 44.84 MH/s | 14.46 MH/s |
-| go-away (16 bytes)               | 80.53 MH/s | 20.42 MH/s |
+| go-away (32 bytes)               | 80.53 MH/s | 20.42 MH/s |
 
 The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and about 20% of that on Firefox, this is corroborated by Anubis's own accounts in their code comments using 7950X3D empirical testing. Empirical throughput of WASM-based mCaptcha is unreliable due to lack of official benchmark tools, but should be around 2-4 MH/s, corroborated with the author's CACM paper.
 
@@ -339,7 +340,7 @@ The peak throughput on 7950X reported by `openssl speed -multi 32 sha256` is 239
 | -------------------------------- | ----------- | ----------- |
 | SingleBlock/Anubis               | 1.485 GH/s  | 1.143 GH/s  |
 | DoubleBlock (mCaptcha edge case) | 850.75 MH/s | 827.74 MH/s |
-| go-away (16 bytes)               | 1.525 GH/s  | 1.291 GH/s  |
+| go-away (32 bytes)               | 1.525 GH/s  | 1.291 GH/s  |
 | GoToSocial (Preimage Finding)    | 1.527 GH/s  | N/A         |
 
 On EPYC 9634 with better thermals, OpenSSL has 598.28 MH/s (38.29 GB/s) single block, 1.91 GH/s (122.54 GB/s) continuous.
@@ -348,7 +349,7 @@ On EPYC 9634 with better thermals, OpenSSL has 598.28 MH/s (38.29 GB/s) single b
 | -------------------------------- | ---------- | --------- |
 | SingleBlock/Anubis               | 3.387 GH/s | 2.09 GH/s |
 | DoubleBlock (mCaptcha edge case) | 1.861 GH/s | 1.64 GH/s |
-| go-away (16 bytes)               | 3.826 GH/s | 3.15 GH/s |
+| go-away (32 bytes)               | 3.826 GH/s | 3.15 GH/s |
 
 ## Security Implications
 
