@@ -5,6 +5,7 @@
 - [PoW Buster](#pow-buster)
   - [Table of Contents](#table-of-contents)
   - [Why?](#why)
+  - [Upstream Response](#upstream-response)
   - [Features](#features)
   - [Building](#building)
   - [Limitations](#limitations)
@@ -42,6 +43,26 @@ I personally don't like some projects (a subset of the schemes I supported, not 
 - Internally uses suboptimal and exploitable searching strategies. For example in GoToSocial, [~80% users are forced to wait more than median](/plots/gts_pmf.png) due to the search using a `1/x` implicit prior when an attacker with a few samples can quickly fit or estimate the real underlying model (empirical guessing, MCMC, Method of Moments, etc.) and switch to Bayesian or Greedy search strategies.
 
 [A longer blabbing post regarding this](https://mi.yumechi.jp/notes/aa223tk8c5ao02v9)
+
+## Upstream Response 
+
+We had opened some issues to upstream when there are clear performance regressions (i.e. not just optimization by a factor but non-linear server-side performance degradation). Here are the current statuses:
+
+
+| Project    | Issue / PR                                                                 | Reported Issue                                                       | Upstream response                             |
+| ---------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------- |
+| mCaptcha   | [#186](https://github.com/mCaptcha/mCaptcha/issues/186)                    | Difficulty inversion; Spin loop, stalls at ~200 rps                  | **Pending Since 06/05/2025**                  |
+| Anubis     | [#1103](https://github.com/TecharoHQ/anubis/issues/1103)                   | Lock-convoy on certain backend caps at 5-6 k rps                     | **Fixed** (pending algo tweak)                |
+| go-away    | –                                                                          | not evaluated                                                        | –                                             |
+| Cap.js     | [#97](https://github.com/tiagozip/cap/issues/97)                           | Difficulty inversion; Event-loop starvation, drops from 400 → 50 rps | **Declined** ("out-of-scope"/suggested IP RL) |
+| GoToSocial | [PR 4433](https://codeberg.org/superseriousbusiness/gotosocial/pulls/4433) | Structural bias                                                      | **Feature removal pending**                   |
+
+All load tests were performed using the `live` command with the following methodology:
+
+- For projects with multiple difficulty presets, the highest difficulty preset was used
+- All requests are strictly proof of work round-trips and contain valid proof of work. No backend service were hooked up.
+- Supplementary features that are irrelevant to this study such as traditional IP rate-limiting were disabled.
+- These tests were performed on a 32-core AMD Ryzen 9 7950X, actual ratio/capacity may vary depending on server capacity and topology.
 
 ## Features
 
