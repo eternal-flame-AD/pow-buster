@@ -730,9 +730,7 @@ async fn solve_anubis(
     final_url
         .write_str(&unsafe { std::str::from_utf8_unchecked(&response_hex) })
         .unwrap();
-    if !instant {
-        write!(final_url, "&nonce={}", nonce).unwrap();
-    }
+    write!(final_url, "&nonce={}", nonce).unwrap();
     final_url.write_str("&redir=").unwrap();
 
     let hash_rate_mhs = attempted_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0;
