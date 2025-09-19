@@ -334,12 +334,12 @@ impl crate::solver::Solver for SingleBlockSolver {
                             crate::unlikely();
 
                             #[cfg(not(feature = "compare-64bit"))]
-                            let success_lane_idx = _tzcnt_u16(met_target) as usize;
+                            let success_lane_idx = met_target.trailing_zeros() as usize;
 
                             // remap the indices according to unpacking order
                             #[cfg(feature = "compare-64bit")]
                             let success_lane_idx = INDEX_REMAP_PUNPCKLDQ
-                                [_tzcnt_u16(met_target_high << 8 | met_target_lo) as usize];
+                                [(met_target_high << 8 | met_target_lo).trailing_zeros() as usize];
 
                             let mut nonce_prefix = 16 * prefix_set_index + success_lane_idx;
                             if MUTATION_TYPE & MUTATION_TYPE_OCTAL == 0 {
@@ -696,11 +696,11 @@ impl crate::solver::Solver for DoubleBlockSolver {
                         crate::unlikely();
 
                         #[cfg(not(feature = "compare-64bit"))]
-                        let success_lane_idx = _tzcnt_u16(met_target) as usize;
+                        let success_lane_idx = met_target.trailing_zeros() as usize;
 
                         #[cfg(feature = "compare-64bit")]
                         let success_lane_idx = INDEX_REMAP_PUNPCKLDQ
-                            [_tzcnt_u16(met_target_high << 8 | met_target_lo) as usize];
+                            [(met_target_high << 8 | met_target_lo).trailing_zeros() as usize];
 
                         let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
 
@@ -929,11 +929,11 @@ impl crate::solver::Solver for GoAwaySolver {
                         crate::unlikely();
 
                         #[cfg(not(feature = "compare-64bit"))]
-                        let success_lane_idx = _tzcnt_u16(met_target);
+                        let success_lane_idx = met_target.trailing_zeros();
 
                         #[cfg(feature = "compare-64bit")]
                         let success_lane_idx = INDEX_REMAP_PUNPCKLDQ
-                            [_tzcnt_u16(met_target_high << 8 | met_target_lo) as usize];
+                            [(met_target_high << 8 | met_target_lo).trailing_zeros() as usize];
 
                         let final_low_word = low_word | (success_lane_idx as u32);
 
@@ -1053,7 +1053,7 @@ impl crate::solver::Solver for GoToSocialSolver<'_> {
                     _mm512_cmpeq_epu32_mask(state[INDEX_H], _mm512_set1_epi32(target_h_bias as _));
 
                 if d_matched != 0 && h_matched != 0 {
-                    let success_lane_idx = _tzcnt_u16(d_matched & h_matched);
+                    let success_lane_idx = (d_matched & h_matched).trailing_zeros();
                     let final_nonce = nonce_base + success_lane_idx as u64;
 
                     let mut output_state = crate::sha256::IV;
@@ -1124,7 +1124,7 @@ impl crate::solver::Solver for GoToSocialSolver<'_> {
 
                 // ktest
                 if d_res != 0 && h_res != 0 {
-                    let success_lane_idx = _tzcnt_u16(d_res & h_res);
+                    let success_lane_idx = (d_res & h_res).trailing_zeros();
                     let final_nonce = nonce_base + success_lane_idx as u64;
 
                     return Some(final_nonce);
