@@ -24,11 +24,11 @@
   - [License and Acknowledgments](#license-and-acknowledgments)
   - [AI Disclaimer](#ai-disclaimer)
 
-A fast, adversarially [^3] implemented mCaptcha/Anubis/go-away/Cap.js/NolLamas PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features without wasting energy in the browser.
+A fast, data-parallel, adversarially [^3] implemented mCaptcha/Anubis/go-away/Cap.js/NolLamas PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features without wasting energy in the browser.
 
 [^3]: Adversarial refers to challenges are solved using the path-of-least-resistance, sometimes involving massaging nonce space into favorable conditions or partially inverting hash images into lower-latency internal states. Most schemes supported do not have explicit specifications and depend on the cryptographic guarantees of the hash function, which I did not break (at least not in a previously unknown way). This code follows the original code to the letter of the law and sometimes emit awkward but computationally or statistically favorable solutions (such as `10000000073377131`, `-10.00000141128212`, etc.)
 
-The benchmarks demonstrate a significant performance gap between browser-based JavaScript execution and native implementations (both optimized CPU and unoptimized GPU), suggesting fundamental challenges for PoW-based browser CAPTCHA systems.
+The benchmarks demonstrate a significant performance gap between browser-based JavaScript execution and native implementations, suggesting fundamental challenges for PoW-based browser CAPTCHA systems.
 
 [Public web demo running on a $4/month/core server, 80-100MHs/thread](https://powbuster.yumechi.jp/)
 
@@ -158,7 +158,7 @@ Note: To reproduce, you don't need to clone the submodule, it is only used as a 
 
 Speedup against official solution, reported by Criterion.rs, single-threaded except for "mCaptcha User Survey extrapolated" column which uses all worker threads on the user's browser:
 
-Results on AMD Ryzen 9 7950X, 32 cores, when supported, single-hash number comes first (there is 90% chance your deployment is single-hash, this vagueness is IMO design oversight by the mCaptcha team), double-hash number comes second, all numbers are in milliseconds, compiled with `-Ctarget-cpu=native` unless otherwise specified.
+Results on AMD Ryzen 9 7950X, 32 hyperthreads, when supported, single-hash number comes first (there is 90% chance your deployment is single-hash, this vagueness is IMO design oversight by the mCaptcha team), double-hash number comes second, all numbers are in milliseconds, compiled with `-Ctarget-cpu=native` unless otherwise specified.
 
 | DFactor (equiv. Anubis difficulty) | AVX-512       | AVX-512 (32-byte salt) | Safe Optimized (+) [^1] | mCaptcha (+)  | mCaptcha Generic x64 (+) | mCaptcha User Survey extrapolated [^2] |
 | ---------------------------------- | ------------- | ---------------------- | ----------------------- | ------------- | ------------------------ | -------------------------------------- |
@@ -252,7 +252,7 @@ You are hitting host http://localhost:8923/, n_workers: 32
 [60.0s] proofs accepted: 5180, failed: 0, 5s: 89.2pps, 5s_failed: 0.0rps, 0.34% iowait
 ```
 
-All 32 cores of a AMD Ryzen 9 7950X are used for the end-to-end benchmark. It seems we are at the bottleneck of the server being able to record successful attempts, as further performance tuning only show improvement in offline benchmarks.
+All 32 hyperthreads of a AMD Ryzen 9 7950X are used for the end-to-end benchmark. It seems we are at the bottleneck of the server being able to record successful attempts, as further performance tuning only show improvement in offline benchmarks.
 
 ### Cap.js Browser Comparison
 
