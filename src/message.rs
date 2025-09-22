@@ -651,6 +651,7 @@ impl GoAwayMessage {
     }
 }
 
+#[cfg(feature = "alloc")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// A Look-Up Table for the GoToSocial algorithm
 ///
@@ -734,12 +735,14 @@ impl<'a, T: ArrayLength<u32>, A: AlignerTo<GenericArray<u32, T>, Alignment = Tim
 }
 
 /// A Look-Up Table for the GoToSocial algorithm with 16 items per SoA element
+#[cfg(feature = "alloc")]
 pub type GotoSocialAoSoALUT16 = GoToSocialAoSoALUTOwned<U16, Align64<GenericArray<u32, U16>>>;
 
 /// A view of the GoToSocial AoS OA LUT with 16 items per SoA element
 pub type GotoSocialAoSoALUT16View<'a> =
     GotoSocialAoSoALUTView<'a, U16, Align64<GenericArray<u32, U16>>>;
 
+#[cfg(feature = "alloc")]
 impl<T: ArrayLength<u32>, A: AlignerTo<GenericArray<u32, T>, Alignment = Time4<T>>>
     GoToSocialAoSoALUTOwned<T, A>
 {
