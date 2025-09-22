@@ -37,6 +37,7 @@ pub trait Solver {
     /// - `SOLVE_TYPE_LT`: Less than test (such as Anubis and GoAway)
     /// - `SOLVE_TYPE_GT`: Greater than test (such as mCaptcha)
     /// - `SOLVE_TYPE_MASK`: Mask test (such as Cap.js)
+    /// - `SOLVE_TYPE_DH_PREIMAGE`: DH preimage test when the complete image is given (such as GoToSocial), target is (H_4 << 32 | H_7)
     ///
     /// Currently bitmasking `SOLVE_TYPE_MASK` with `SOLVE_TYPE_GT` or `SOLVE_TYPE_LT` is not supported and may result in unexpected behavior.
     ///

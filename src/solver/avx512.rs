@@ -1051,9 +1051,9 @@ impl crate::solver::Solver for GoToSocialSolver<'_> {
                     _mm512_cmpeq_epu32_mask(state[INDEX_D], _mm512_set1_epi32(target_d_bias as _));
                 let h_matched =
                     _mm512_cmpeq_epu32_mask(state[INDEX_H], _mm512_set1_epi32(target_h_bias as _));
-
-                if d_matched != 0 && h_matched != 0 {
-                    let success_lane_idx = (d_matched & h_matched).trailing_zeros();
+                let matched = d_matched & h_matched;
+                if matched != 0 {
+                    let success_lane_idx = matched.trailing_zeros();
                     let final_nonce = nonce_base + success_lane_idx as u64;
 
                     let mut output_state = crate::sha256::IV;
@@ -1121,10 +1121,10 @@ impl crate::solver::Solver for GoToSocialSolver<'_> {
                     _mm512_cmpeq_epu32_mask(state[INDEX_D], _mm512_set1_epi32(target_d_bias as _));
                 let h_res =
                     _mm512_cmpeq_epu32_mask(state[INDEX_H], _mm512_set1_epi32(target_h_bias as _));
-
+                let matched = d_res & h_res;
                 // ktest
-                if d_res != 0 && h_res != 0 {
-                    let success_lane_idx = (d_res & h_res).trailing_zeros();
+                if matched != 0 {
+                    let success_lane_idx = matched.trailing_zeros();
                     let final_nonce = nonce_base + success_lane_idx as u64;
 
                     return Some(final_nonce);
