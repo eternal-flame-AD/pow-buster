@@ -1,5 +1,5 @@
 use std::{
-    num::NonZeroU8,
+    num::{NonZeroU32, NonZeroU64},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -10,8 +10,8 @@ use std::{
 use clap::{Parser, Subcommand};
 
 use pow_buster::{
-    DecimalSolver, DoubleBlockSolver, GoAwaySolver, SingleBlockSolver, compute_target_anubis,
-    compute_target_mcaptcha,
+    Align16, DecimalSolver, DoubleBlockSolver, GoAwaySolver, SingleBlockSolver,
+    compute_target_anubis, compute_target_goaway, compute_target_mcaptcha,
     message::{DecimalMessage, GoAwayMessage},
     solver::Solver,
 };
@@ -43,8 +43,28 @@ impl std::str::FromStr for ApiType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scheme {
+    Anubis,
+    GoAway,
+    Mcaptcha,
+}
+
+impl std::str::FromStr for Scheme {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "anubis" => Ok(Scheme::Anubis),
+            "mcaptcha" => Ok(Scheme::Mcaptcha),
+            "goaway" | "go-away" => Ok(Scheme::GoAway),
+            _ => Err(format!("invalid scheme: {}", s)),
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum SubCommand {
+    /// Live throughput test using multiple workers
     #[cfg(feature = "live-throughput-test")]
     Live {
         #[clap(long, default_value = "mcaptcha")]
@@ -62,6 +82,7 @@ enum SubCommand {
         #[clap(short, long)]
         n_threads: Option<u32>,
     },
+    /// Solve Cap.js with a real URL
     #[cfg(feature = "client")]
     CapJs {
         #[clap(long, default_value = "http://localhost:3000/")]
@@ -73,16 +94,36 @@ enum SubCommand {
         #[clap(long)]
         num_threads: Option<u32>,
     },
+    /// Solve a generic PoW
+    Solve {
+        #[clap(short, long, help = "use the explicitly provided salt")]
+        salt: String,
+
+        #[clap(short, long, help = "scheme to use, one of anubis, mcaptcha, goaway")]
+        scheme: String,
+
+        #[clap(short, long, help = "use the explicitly provided difficulty")]
+        difficulty: NonZeroU64,
+
+        #[clap(short, long, help = "thread count", default_value = "1")]
+        num_threads: NonZeroU32,
+
+        #[clap(long, help = "show progress")]
+        progress: bool,
+    },
+    /// Solve an Anubis PoW with a real URL
     #[cfg(feature = "client")]
     Anubis {
         #[clap(long, default_value = "http://localhost:8923/")]
         url: String,
     },
+    /// Solve a GoAway PoW with a real URL
     #[cfg(feature = "client")]
     GoAway {
         #[clap(long, default_value = "http://localhost:8080/")]
         url: String,
     },
+    /// Start a server for a solver service
     #[cfg(feature = "server")]
     Server {
         #[clap(long, default_value = "127.0.0.1:8080")]
@@ -105,6 +146,7 @@ enum SubCommand {
         #[clap(long)]
         check_origin: Option<String>,
     },
+    /// Spin-loop profile a solver
     Profile {
         #[clap(short, long, default_value = "10000000")]
         difficulty: u64,
@@ -112,6 +154,7 @@ enum SubCommand {
         #[clap(short, long, default_value = "64")]
         prefix_length: usize,
     },
+    /// Spin-loop profile a solver with multiple threads
     ProfileMt {
         #[clap(short, long, default_value = "10000000")]
         difficulty: u64,
@@ -125,6 +168,7 @@ enum SubCommand {
         #[clap(short, long, default_value = "64")]
         prefix_length: usize,
     },
+    /// Time a solver
     Time {
         #[clap(short, long, default_value = "10000000")]
         difficulty: u64,
@@ -174,7 +218,7 @@ fn main() {
                 (compute_target_mcaptcha(difficulty), difficulty)
             } else {
                 (
-                    compute_target_anubis(NonZeroU8::new(difficulty as u8).unwrap()),
+                    compute_target_anubis(core::num::NonZeroU8::new(difficulty as u8).unwrap()),
                     1 << (4 * (difficulty as u8)),
                 )
             };
@@ -349,6 +393,189 @@ fn main() {
                 difficulty,
                 total_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0
             );
+        }
+        SubCommand::Solve {
+            salt,
+            scheme,
+            difficulty,
+            num_threads,
+            progress,
+        } => {
+            let scheme = scheme
+                .parse()
+                .expect("invalid scheme, must be one of anubis, mcaptcha, goaway");
+            let target = match scheme {
+                Scheme::Anubis => {
+                    compute_target_anubis(difficulty.try_into().expect("difficulty out of range"))
+                }
+                Scheme::Mcaptcha => compute_target_mcaptcha(difficulty.get()),
+                Scheme::GoAway => {
+                    compute_target_goaway(difficulty.try_into().expect("difficulty out of range"))
+                }
+            };
+            let estimated_work = u64::MAX / target;
+
+            let (tx, rx) = std::sync::mpsc::channel();
+            let salt_bytes = salt.as_bytes();
+            let nonce_attempted = core::sync::atomic::AtomicU64::new(0);
+            let ws_churn = core::sync::atomic::AtomicU64::new(0);
+
+            std::thread::scope(|s| {
+                let nonce_attempted = &nonce_attempted;
+                let ws_churn = &ws_churn;
+                (0..num_threads.get()).for_each(|ix| {
+                    let tx = tx.clone();
+                    s.spawn(move || {
+                        if let Scheme::GoAway = scheme {
+                            #[cfg(not(feature = "compare-64bit"))]
+                            {
+                                assert_ne!(target >> 32, 0, "64-bit comparison is required for this difficulty, rebuild with `compare-64bit` feature");
+                            }
+                            let message = GoAwayMessage::new_hex(
+                                salt_bytes.try_into().expect("invalid salt length"),
+                            )
+                            .expect("invalid salt: must be hex");
+                            let mut solver = GoAwaySolver::from(message);
+                            for high_word in (ix..).step_by(num_threads.get() as usize) {
+                                solver.set_fixed_high_word(high_word);
+                                let result = solver
+                                    .solve::<{ pow_buster::solver::SOLVE_TYPE_LT }>(target, !0);
+                                nonce_attempted
+                                    .fetch_add(solver.get_attempted_nonces(), Ordering::Relaxed);
+                                ws_churn.fetch_add(1, Ordering::Relaxed);
+                                let Some(result) = result else {
+                                    continue;
+                                };
+                                tx.send(result).unwrap();
+                            }
+                        } else if let Scheme::Mcaptcha = scheme {
+                            #[cfg(not(feature = "compare-64bit"))]
+                            {
+                                assert_ne!(target >> 32, u32::MAX as _, "64-bit comparison is required for this difficulty, rebuild with `compare-64bit` feature");
+                            }
+                            for working_set in (ix..).step_by(num_threads.get() as usize) {
+                                let Some(message) = DecimalMessage::new(salt_bytes, working_set)
+                                else {
+                                    return;
+                                };
+                                let mut solver = DecimalSolver::from(message);
+                                let result = solver
+                                    .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0);
+                                nonce_attempted
+                                    .fetch_add(solver.get_attempted_nonces(), Ordering::Relaxed);
+                                ws_churn.fetch_add(1, Ordering::Relaxed);
+                                let Some(result) = result else {
+                                    continue;
+                                };
+                                tx.send(result).unwrap();
+                            }
+                        } else {
+                            #[cfg(not(feature = "compare-64bit"))]
+                            {
+                                assert_ne!(target >> 32, 0, "64-bit comparison is required for this difficulty, rebuild with `compare-64bit` feature");
+                            }
+                            for working_set in (ix..).step_by(num_threads.get() as usize) {
+                                let Some(message) = DecimalMessage::new(salt_bytes, working_set)
+                                else {
+                                    return;
+                                };
+                                let mut solver = DecimalSolver::from(message);
+                                let result = solver
+                                    .solve::<{ pow_buster::solver::SOLVE_TYPE_LT }>(target, !0);
+                                nonce_attempted
+                                    .fetch_add(solver.get_attempted_nonces(), Ordering::Relaxed);
+                                ws_churn.fetch_add(1, Ordering::Relaxed);
+                                let Some(result) = result else {
+                                    continue;
+                                };
+                                tx.send(result).unwrap();
+                            }
+                        }
+                    });
+                });
+
+                if progress && Scheme::GoAway != scheme {
+                    s.spawn(|| {
+                        let begin = Instant::now();
+                        loop {
+                            std::thread::sleep(Duration::from_secs(5));
+                            let nonce_attempted = nonce_attempted.load(Ordering::Relaxed);
+                            eprintln!(
+                                "attempted/estimated: {}/{} ({:.2} MH/s, outer loop churn: {:.2} rps)",
+                                nonce_attempted,
+                                estimated_work,
+                                nonce_attempted as f64
+                                    / 1024.0
+                                    / 1024.0
+                                    / begin.elapsed().as_secs_f64(),
+                                ws_churn.load(Ordering::Relaxed) as f64
+                                    / begin.elapsed().as_secs_f64()
+                            );
+                        }
+                    });
+                }
+
+                let Ok((nonce, result)) = rx.recv() else {
+                    eprintln!("no solution found");
+                    std::process::exit(1);
+                };
+                let mut hex = [0u8; 64];
+                pow_buster::encode_hex(&mut hex, result);
+                match scheme {
+                    Scheme::GoAway => {
+                        let mut goaway_token = Align16([b'0'; 64 + 8 * 2]);
+                        goaway_token[..64].copy_from_slice(salt_bytes);
+                        let nonce_bytes = nonce.to_be_bytes();
+                        for i in 0..8 {
+                            let high_nibble = nonce_bytes[i] >> 4;
+                            let low_nibble = nonce_bytes[i] & 0x0f;
+                            goaway_token[64 + i * 2] = if high_nibble < 10 {
+                                b'0' + high_nibble
+                            } else {
+                                b'a' + high_nibble - 10
+                            };
+                            goaway_token[64 + i * 2 + 1] = if low_nibble < 10 {
+                                b'0' + low_nibble
+                            } else {
+                                b'a' + low_nibble - 10
+                            };
+                        }
+
+                        let mut goaway_id = Align16([0; 32]);
+                        // this doesn't do anything, just make something up for the id
+                        for i in 0..4 {
+                            let result_bytes: [u8; 4] = result[i].to_ne_bytes();
+                            for j in 0..4 {
+                                let high_nibble = result_bytes[j] >> 4;
+                                let low_nibble = result_bytes[j] & 0x0f;
+                                goaway_id[(4 * i + j) * 2] = if high_nibble < 10 {
+                                    b'0' + high_nibble
+                                } else {
+                                    b'a' + high_nibble - 10
+                                };
+                                goaway_id[(4 * i + j) * 2 + 1] = if low_nibble < 10 {
+                                    b'0' + low_nibble
+                                } else {
+                                    b'a' + low_nibble - 10
+                                };
+                            }
+                        }
+
+                        println!(
+                            "__goaway_token={}&__goaway_id={}",
+                            core::str::from_utf8(&goaway_token[..]).unwrap(),
+                            core::str::from_utf8(&goaway_id[..]).unwrap()
+                        );
+                    }
+                    Scheme::Anubis | Scheme::Mcaptcha => {
+                        println!(
+                            "nonce={nonce}&response={}",
+                            core::str::from_utf8(&hex).unwrap()
+                        );
+                    }
+                }
+                std::process::exit(0);
+            });
         }
         #[cfg(feature = "client")]
         SubCommand::Anubis { url } => {

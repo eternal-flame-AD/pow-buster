@@ -236,6 +236,7 @@ pub struct GoAwaySolver {
     pub(super) challenge: [u32; 8],
     pub(super) attempted_nonces: u64,
     pub(super) limit: u64,
+    pub(super) fixed_high_word: Option<u32>,
 }
 
 impl From<GoAwayMessage> for GoAwaySolver {
@@ -244,6 +245,7 @@ impl From<GoAwayMessage> for GoAwaySolver {
             challenge: challenge.challenge,
             attempted_nonces: 0,
             limit: u64::MAX,
+            fixed_high_word: None,
         }
     }
 }
@@ -260,6 +262,11 @@ impl GoAwaySolver {
     pub fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
     }
+
+    /// Set the fixed high word.
+    pub fn set_fixed_high_word(&mut self, high_word: u32) {
+        self.fixed_high_word = Some(high_word);
+    }
 }
 
 impl crate::solver::Solver for GoAwaySolver {
@@ -274,7 +281,13 @@ impl crate::solver::Solver for GoAwaySolver {
         buffer[0][40] = 0x80;
         buffer[0][60..64].copy_from_slice(&(Self::MSG_LEN).to_be_bytes());
 
-        for key in 0..=u64::MAX {
+        let start = (self.fixed_high_word.unwrap_or(0) as u64) << 32;
+        let stop = if let Some(high_word) = self.fixed_high_word {
+            (high_word as u64 + 1) << 32 - 1
+        } else {
+            u64::MAX
+        };
+        for key in start..=stop {
             unsafe {
                 *buffer[0].as_mut_ptr().add(32).cast::<u64>() =
                     u64::from_ne_bytes(key.to_be_bytes());

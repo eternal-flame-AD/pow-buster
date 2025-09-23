@@ -698,6 +698,7 @@ pub struct GoAwaySolver {
     challenge: [u32; 8],
     attempted_nonces: u64,
     limit: u64,
+    fixed_high_word: Option<u32>,
 }
 
 impl From<super::safe::GoAwaySolver> for GoAwaySolver {
@@ -706,6 +707,7 @@ impl From<super::safe::GoAwaySolver> for GoAwaySolver {
             challenge: solver.challenge,
             attempted_nonces: solver.attempted_nonces,
             limit: solver.limit,
+            fixed_high_word: solver.fixed_high_word,
         }
     }
 }
@@ -716,6 +718,7 @@ impl From<GoAwayMessage> for GoAwaySolver {
             challenge: challenge.challenge,
             attempted_nonces: 0,
             limit: u64::MAX,
+            fixed_high_word: None,
         }
     }
 }
@@ -731,6 +734,11 @@ impl GoAwaySolver {
     /// Get the attempted nonces.
     pub fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
+    }
+
+    /// Set the fixed high word.
+    pub fn set_fixed_high_word(&mut self, high_word: u32) {
+        self.fixed_high_word = Some(high_word);
     }
 }
 
@@ -755,7 +763,11 @@ impl crate::solver::Solver for GoAwaySolver {
                 _mm_shuffle_epi32(lows, 0b01001010)
             };
 
-            for high_word in 0..=u32::MAX {
+            for high_word in if let Some(high_word) = self.fixed_high_word {
+                high_word..=high_word
+            } else {
+                0..=u32::MAX
+            } {
                 for low_word in (0..=u32::MAX).step_by(4) {
                     let mut states0 = prepared_state;
                     let mut states1 = prepared_state;
