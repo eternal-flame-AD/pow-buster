@@ -25,9 +25,15 @@ pub mod server;
 #[cfg(feature = "wasm-bindgen")]
 mod wasm_ffi;
 
-/// String manipulation functions
 #[cfg(any(target_feature = "avx512f", target_feature = "avx2"))]
-mod strings;
+cfg_if::cfg_if! {
+    if #[cfg(feature = "internals")] {
+        /// String manipulation functions
+        pub mod strings;
+    } else {
+        mod strings;
+    }
+}
 
 /// SHA-256 primitives
 mod sha256;
@@ -178,11 +184,15 @@ const PREFIX_OFFSET_TO_LANE_POSITION: [usize; 64] = [
     0, 0, 1, 1, 1, 1,
 ];
 
-const SWAP_DWORD_BYTE_ORDER: [usize; 64] = [
-    3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12, 19, 18, 17, 16, 23, 22, 21, 20, 27, 26,
-    25, 24, 31, 30, 29, 28, 35, 34, 33, 32, 39, 38, 37, 36, 43, 42, 41, 40, 47, 46, 45, 44, 51, 50,
-    49, 48, 55, 54, 53, 52, 59, 58, 57, 56, 63, 62, 61, 60,
-];
+const SWAP_DWORD_BYTE_ORDER: [usize; 64] = {
+    let mut data = [0; 64];
+    let mut i = 0;
+    while i < 64 {
+        data[i] = i / 4 * 4 + 3 - i % 4;
+        i += 1;
+    }
+    data
+};
 
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 cfg_if::cfg_if! {
@@ -195,6 +205,8 @@ cfg_if::cfg_if! {
         pub type DecimalSolver = crate::solver::avx512::DecimalSolver;
         /// Go away solver
         pub type GoAwaySolver = crate::solver::avx512::GoAwaySolver;
+        /// Binary solver
+        pub type BinarySolver = crate::solver::safe::BinarySolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "AVX-512";
     } else if #[cfg(target_feature = "sha")] {
@@ -206,6 +218,8 @@ cfg_if::cfg_if! {
         pub type DecimalSolver = crate::solver::sha_ni::DecimalSolver;
         /// Go away solver
         pub type GoAwaySolver = crate::solver::sha_ni::GoAwaySolver;
+        /// Binary solver
+        pub type BinarySolver = crate::solver::safe::BinarySolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "SHA-NI";
     } else {
@@ -217,6 +231,8 @@ cfg_if::cfg_if! {
         pub type DecimalSolver = crate::solver::safe::DecimalSolver;
         /// Go away solver
         pub type GoAwaySolver = crate::solver::safe::GoAwaySolver;
+        /// Binary solver
+        pub type BinarySolver = crate::solver::safe::BinarySolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "Fallback";
     }

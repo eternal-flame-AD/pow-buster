@@ -1,7 +1,10 @@
+use sha2::digest::generic_array::GenericArray;
+
 use crate::{
     Align16, Align64,
     message::{
-        DecimalMessage, DoubleBlockMessage, GoAwayMessage, GoToSocialMessage, SingleBlockMessage,
+        BinaryMessage, DecimalMessage, DoubleBlockMessage, GoAwayMessage, GoToSocialMessage,
+        SingleBlockMessage,
     },
 };
 
@@ -327,6 +330,107 @@ impl crate::solver::Solver for GoAwaySolver {
     }
 }
 
+/// Safe binary nonce solver.
+///
+/// Output: nonce in little endian order
+///
+/// Current implementation: generic sha2 crate fallback.
+pub struct BinarySolver {
+    message: BinaryMessage,
+    attempted_nonces: u64,
+    limit: u64,
+}
+
+impl From<BinaryMessage> for BinarySolver {
+    fn from(message: BinaryMessage) -> Self {
+        Self {
+            message,
+            attempted_nonces: 0,
+            limit: u64::MAX,
+        }
+    }
+}
+
+impl BinarySolver {
+    /// Set the limit.
+    pub fn set_limit(&mut self, limit: u64) {
+        self.limit = limit;
+    }
+
+    /// Get the attempted nonces.
+    pub fn get_attempted_nonces(&self) -> u64 {
+        self.attempted_nonces
+    }
+}
+
+impl crate::solver::Solver for BinarySolver {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+        let salt = &self.message.salt_residual[..self.message.salt_residual_len];
+        let mut blocks = [GenericArray::default(); 2];
+        blocks[0][..salt.len()].copy_from_slice(salt);
+        let mut ptr = salt.len();
+        let mut cur_block = 0;
+
+        for _ in 0..self.message.nonce_byte_count {
+            blocks[cur_block][ptr] = 0;
+            ptr += 1;
+            if ptr == 64 {
+                cur_block = 1;
+                ptr = 0;
+            }
+        }
+        blocks[cur_block][ptr] = 0x80;
+        ptr += 1;
+        if ptr + 8 > 64 {
+            cur_block = 1;
+        }
+        blocks[cur_block][(64 - 8)..]
+            .copy_from_slice(&(self.message.message_length * 8).to_be_bytes());
+
+        let used_blocks = &mut blocks[..=cur_block];
+
+        for x in 0..(self
+            .limit
+            .min(256u64.saturating_pow(self.message.nonce_byte_count as u32)))
+        {
+            let mut state = self.message.prefix_state;
+            let nonce_bytes = &x.to_le_bytes()[..self.message.nonce_byte_count as usize];
+            for i in 0..self.message.nonce_byte_count as usize {
+                unsafe {
+                    used_blocks
+                        .as_mut_ptr()
+                        .cast::<u8>()
+                        .add(self.message.salt_residual_len + i)
+                        .write(nonce_bytes[i]);
+                }
+            }
+
+            sha2::compress256(&mut state, &used_blocks);
+
+            let cmp_fn = |x: u64, y: u64| {
+                if TYPE == crate::solver::SOLVE_TYPE_GT {
+                    x > y
+                } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                    x < y
+                } else {
+                    x & mask == y & mask
+                }
+            };
+            if cmp_fn((state[0] as u64) << 32 | (state[1] as u64), target) {
+                return Some((x, state.0));
+            }
+
+            self.attempted_nonces += 1;
+
+            if self.attempted_nonces >= self.limit {
+                return None;
+            }
+        }
+
+        None
+    }
+}
+
 /// Safe GoToSocial solver.
 ///
 ///
@@ -518,6 +622,15 @@ mod tests {
                 }
             },
         );
+    }
+
+    #[test]
+    fn test_solve_binary() {
+        crate::solver::tests::test_binary_validator::<BinarySolver, _>(
+            |prefix, nonce_byte_count| {
+                BinarySolver::from(BinaryMessage::new(prefix, nonce_byte_count))
+            },
+        )
     }
 
     #[test]

@@ -321,6 +321,42 @@ pub(crate) mod tests {
         }
     }
 
+    pub(crate) fn test_binary_validator<S: Solver, F: for<'a> FnMut(&'a [u8], u8) -> S>(
+        mut factory: F,
+    ) {
+        #[cfg(debug_assertions)]
+        let salts = [b'A'];
+        #[cfg(not(debug_assertions))]
+        let salts = *b"Ax_?"; // test a variety of salts in optimized builds
+        for salt in salts {
+            for nonce_byte_count in [4, 5, 8] {
+                for prefix_len in 0..64 {
+                    let mut msg = Vec::from_iter(std::iter::repeat(salt).take(prefix_len));
+                    let mut solver = factory(&msg, nonce_byte_count);
+                    const DIFFICULTY: u64 = 100_000;
+                    let target = compute_target_mcaptcha(DIFFICULTY as u64);
+                    let (nonce, result) = solver
+                        .solve::<SOLVE_TYPE_GT>(target, !0)
+                        .expect("solver failed");
+                    msg.extend_from_slice(&nonce.to_le_bytes()[..nonce_byte_count as usize]);
+                    let expected_digest = sha2::Sha256::digest(&msg);
+                    let mut got_digest = [0; 32];
+                    for i in 0..8 {
+                        got_digest[i * 4..][..4].copy_from_slice(&result[i].to_be_bytes());
+                    }
+                    assert_eq!(
+                        expected_digest.as_slice(),
+                        got_digest.as_slice(),
+                        "nonce: {}, prefix_len: {}, salt: {}",
+                        nonce,
+                        prefix_len,
+                        salt
+                    );
+                }
+            }
+        }
+    }
+
     pub(crate) fn test_decimal_validator_f64_safe<
         S: Solver,
         F: for<'a> FnMut(&'a [u8], u32) -> Option<(S, Option<IEEE754LosslessFixupPrefix>)>,

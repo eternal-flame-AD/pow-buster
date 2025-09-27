@@ -69,7 +69,7 @@ impl SingleBlockMessage {
         let mut prefix_state = sha256::IV;
         let mut nonce_addend = 0u64;
         let mut complete_blocks_before = 0;
-        let mut approx_working_set_count = 1;
+        let mut approx_working_set_count = 1u32;
 
         // first consume all full blocks, this is shared so use scalar reference implementation
         while prefix.len() >= 64 {
@@ -94,7 +94,7 @@ impl SingleBlockMessage {
                 is_fitst_digit = false;
                 1u8
             } else {
-                approx_working_set_count *= 10;
+                approx_working_set_count = approx_working_set_count.saturating_mul(10);
                 let digit = working_set % 10;
                 working_set /= 10;
                 digit as u8
@@ -306,7 +306,7 @@ impl SingleBlockMessage {
                 is_fitst_digit = false;
                 1u8
             } else {
-                approx_working_set_count *= 10;
+                approx_working_set_count = approx_working_set_count.saturating_mul(10);
                 let digit = working_set % 10;
                 working_set /= 10;
                 digit as u8
@@ -598,7 +598,62 @@ impl DecimalMessage {
     }
 }
 
-/// A message  in the go-away format
+/// Binary message with a fixed layout
+pub struct BinaryMessage {
+    /// the SHA-256 midstate for the previous block
+    pub prefix_state: Align16<[u32; 8]>,
+
+    /// the residual salt
+    pub salt_residual: [u8; 64],
+
+    /// the length of the residual salt
+    pub salt_residual_len: usize,
+
+    /// the number of bytes of the nonce
+    /// Guaranteed to be less or equal to 8
+    pub nonce_byte_count: u8,
+
+    /// message length in bytes
+    pub message_length: usize,
+}
+
+impl BinaryMessage {
+    /// creates a new binary message
+    pub fn new(salt: &[u8], nonce_byte_count: u8) -> Self {
+        assert!(
+            nonce_byte_count <= 8,
+            "nonce_byte_count must be less or equal to 8"
+        );
+        let mut prefix_state = crate::Align16(sha256::IV);
+
+        let mut chunks = salt.chunks_exact(64);
+        for block in &mut chunks {
+            sha256::digest_block(
+                &mut prefix_state,
+                &core::array::from_fn(|i| {
+                    u32::from_be_bytes([
+                        block[i * 4],
+                        block[i * 4 + 1],
+                        block[i * 4 + 2],
+                        block[i * 4 + 3],
+                    ])
+                }),
+            );
+        }
+        let remainder = chunks.remainder();
+        let mut salt_residual = [0; 64];
+        salt_residual[..remainder.len()].copy_from_slice(remainder);
+        Self {
+            prefix_state,
+            salt_residual,
+            salt_residual_len: remainder.len(),
+            nonce_byte_count,
+            message_length: salt.len() + nonce_byte_count as usize,
+        }
+    }
+}
+
+/// A message in the go-away format
 ///
 /// Construct: Proof := (prefix || U64(nonce)) where prefix is 32 bytes
 pub struct GoAwayMessage {

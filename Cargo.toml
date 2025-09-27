@@ -58,6 +58,11 @@ harness = false
 name = "bench_go_to_social"
 harness = false
 
+[[bench]]
+name = "bench_strings"
+harness = false
+requires = ["internals"]
+
 [features]
 default = ["std", "all-lane-positions"]
 alloc = []
@@ -72,6 +77,7 @@ tokio = ["std", "dep:tokio"]
 rayon = ["std", "dep:rayon"]
 server = ["adapter", "tokio", "tracing", "dep:rayon", "dep:thiserror", "dep:url", "dep:axum", "dep:tower-http", "dep:tracing-subscriber", "dep:axum-extra", "dep:headers"]
 tracing = ["dep:tracing"]
+internals = []
 all-lane-positions = [
     "lane-position-0",
     "lane-position-1",

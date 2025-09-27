@@ -68,6 +68,7 @@ fn build_lut<const ALIGNMENT: usize>(
 }
 
 fn main() -> std::io::Result<()> {
+    println!("cargo::rerun-if-changed=build.rs");
     if std::env::var("CARGO_CFG_TARGET_FEATURE")
         .unwrap()
         .contains("avx512f")
