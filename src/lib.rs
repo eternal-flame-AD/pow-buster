@@ -206,7 +206,7 @@ cfg_if::cfg_if! {
         /// Go away solver
         pub type GoAwaySolver = crate::solver::avx512::GoAwaySolver;
         /// Binary solver
-        pub type BinarySolver = crate::solver::safe::BinarySolver;
+        pub type BinarySolver = crate::solver::avx512::BinarySolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "AVX-512";
     } else if #[cfg(target_feature = "sha")] {
@@ -249,6 +249,8 @@ cfg_if::cfg_if! {
         pub type DecimalSolver = crate::solver::simd128::DecimalSolver;
         /// Go away solver
         pub type GoAwaySolver = crate::solver::simd128::GoAwaySolver;
+        /// Binary solver
+        pub type BinarySolver = crate::solver::safe::BinarySolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "SIMD128";
     } else {
@@ -260,6 +262,8 @@ cfg_if::cfg_if! {
         pub type DecimalSolver = crate::solver::safe::DecimalSolver;
         /// Go away solver
         pub type GoAwaySolver = crate::solver::safe::GoAwaySolver;
+        /// Binary solver
+        pub type BinarySolver = crate::solver::safe::BinarySolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "Fallback";
     }

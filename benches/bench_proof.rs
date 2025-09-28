@@ -3,6 +3,8 @@ use std::time::Duration;
 use criterion::{BenchmarkId, Throughput};
 use criterion::{Criterion, criterion_group, criterion_main};
 
+use pow_buster::BinarySolver;
+use pow_buster::message::BinaryMessage;
 use pow_buster::{
     DoubleBlockSolver, SingleBlockSolver, compute_target_mcaptcha,
     message::{DoubleBlockMessage, SingleBlockMessage},
@@ -225,6 +227,43 @@ pub fn bench_proof(c: &mut Criterion) {
                             let mut solver = DoubleBlockSolver::from(
                                 DoubleBlockMessage::new(&prefix, 0).expect("solver is None"),
                             );
+                            core::hint::black_box(
+                                solver
+                                    .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)
+                                    .expect("solver failed"),
+                            );
+                        }
+                    }
+                    start.elapsed() / 10
+                })
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new(
+                "proof (binary u32)",
+                ProofKey {
+                    difficulty,
+                    solver_type: "native",
+                },
+            ),
+            &difficulty,
+            |b, &_difficulty| {
+                b.iter_custom(|iters| {
+                    let start = std::time::Instant::now();
+                    let mut prefix: [u8; 64] = [0; 64];
+                    static COUNTER: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    for _ in 0..iters {
+                        for _ in 0..10 {
+                            prefix[..8].copy_from_slice(
+                                &COUNTER
+                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                                    .to_ne_bytes(),
+                            );
+                            let mut solver = BinarySolver::from(BinaryMessage::new(
+                                &prefix,
+                                4.try_into().unwrap(),
+                            ));
                             core::hint::black_box(
                                 solver
                                     .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)

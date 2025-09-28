@@ -336,9 +336,9 @@ impl crate::solver::Solver for GoAwaySolver {
 ///
 /// Current implementation: generic sha2 crate fallback.
 pub struct BinarySolver {
-    message: BinaryMessage,
-    attempted_nonces: u64,
-    limit: u64,
+    pub(super) message: BinaryMessage,
+    pub(super) attempted_nonces: u64,
+    pub(super) limit: u64,
 }
 
 impl From<BinaryMessage> for BinarySolver {
@@ -371,7 +371,7 @@ impl crate::solver::Solver for BinarySolver {
         let mut ptr = salt.len();
         let mut cur_block = 0;
 
-        for _ in 0..self.message.nonce_byte_count {
+        for _ in 0..self.message.nonce_byte_count.get() {
             blocks[cur_block][ptr] = 0;
             ptr += 1;
             if ptr == 64 {
@@ -391,11 +391,12 @@ impl crate::solver::Solver for BinarySolver {
 
         for x in 0..(self
             .limit
-            .min(256u64.saturating_pow(self.message.nonce_byte_count as u32)))
+            .min(256u64.saturating_pow(self.message.nonce_byte_count.get() as u32))
+            .max(1))
         {
             let mut state = self.message.prefix_state;
-            let nonce_bytes = &x.to_le_bytes()[..self.message.nonce_byte_count as usize];
-            for i in 0..self.message.nonce_byte_count as usize {
+            let nonce_bytes = &x.to_le_bytes()[..self.message.nonce_byte_count.get() as usize];
+            for i in 0..self.message.nonce_byte_count.get() as usize {
                 unsafe {
                     used_blocks
                         .as_mut_ptr()

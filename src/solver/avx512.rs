@@ -1,8 +1,10 @@
+use sha2::digest::generic_array::GenericArray;
+
 use crate::{
-    Align16, PREFIX_OFFSET_TO_LANE_POSITION, SWAP_DWORD_BYTE_ORDER, decompose_blocks_mut,
+    Align16, Align64, PREFIX_OFFSET_TO_LANE_POSITION, SWAP_DWORD_BYTE_ORDER, decompose_blocks_mut,
     is_supported_lane_position,
     message::{
-        DecimalMessage, DoubleBlockMessage, GoAwayMessage, GoToSocialMessage,
+        BinaryMessage, DecimalMessage, DoubleBlockMessage, GoAwayMessage, GoToSocialMessage,
         GotoSocialAoSoALUT16View, SingleBlockMessage,
     },
 };
@@ -768,6 +770,377 @@ impl_decimal_solver!(
     [SingleBlockSolver, DoubleBlockSolver] => DecimalSolver
 );
 
+/// AVX-512 binary nonce solver.
+///
+/// Output: nonce in little endian order
+///
+/// Current implementation: 16 way SIMD with 1-round hotstart granularity.
+pub struct BinarySolver {
+    message: BinaryMessage,
+    attempted_nonces: u64,
+    limit: u64,
+}
+
+impl From<BinaryMessage> for BinarySolver {
+    fn from(message: BinaryMessage) -> Self {
+        Self {
+            message,
+            attempted_nonces: 0,
+            limit: u64::MAX,
+        }
+    }
+}
+
+impl From<crate::solver::safe::BinarySolver> for BinarySolver {
+    fn from(solver: crate::solver::safe::BinarySolver) -> Self {
+        Self {
+            message: solver.message,
+            attempted_nonces: solver.attempted_nonces,
+            limit: solver.limit,
+        }
+    }
+}
+
+impl BinarySolver {
+    /// Set the limit.
+    ///
+    /// Limits are approximate and should not be used to constrain search space, use `BinaryMessage` instead.
+    pub fn set_limit(&mut self, limit: u64) {
+        self.limit = limit;
+    }
+
+    /// Get the attempted nonces.
+    pub fn get_attempted_nonces(&self) -> u64 {
+        self.attempted_nonces
+    }
+
+    #[inline(never)]
+    fn solve_impl<
+        const TYPE: u8,
+        const FIRST_NONCE_WORD_IDX: usize,
+        const NEED_SECOND_BLOCK: bool,
+    >(
+        &mut self,
+        prefix_state: [u32; 8],
+        first_block: &Align64<[u32; 16]>,
+        second_block_schedule: &[u32; 64],
+        nonce_byte_offset: usize,
+        nonce_byte_count: core::num::NonZeroU8,
+        target: u64,
+        mask: u64,
+    ) -> Option<u64> {
+        let target = target & mask;
+
+        // at most 3 words may need to be patched (i.e. 96 bits)
+        // from which word to poke the nonce?
+        let poke_word_base = FIRST_NONCE_WORD_IDX.min(16 - 4);
+        let poke_word_byte_base = poke_word_base * 4;
+        let mut poke_word_tbl = Align16([!0u8; 16]);
+        let nonce_byte_count_decr = nonce_byte_count.get() as usize - 1;
+        for (i, ix) in ((nonce_byte_offset + 1)..)
+            .take(nonce_byte_count_decr)
+            .enumerate()
+        {
+            poke_word_tbl.0[unsafe {
+                *crate::SWAP_DWORD_BYTE_ORDER.get_unchecked(ix - poke_word_byte_base)
+            }] = i as u8;
+        }
+        let poke_word_tbl = unsafe { _mm_load_si128(poke_word_tbl.as_ptr().cast()) };
+        let lane_id_byte_remainder = 3 - nonce_byte_offset % 4;
+        let mut lane_id_base = Align64([0u32; 16]);
+        for i in 0..16 {
+            lane_id_base[i as usize] = i << (lane_id_byte_remainder * 8);
+        }
+        let lane_id_iterand = 16 << (lane_id_byte_remainder * 8);
+
+        let mut memo_state = prefix_state;
+        crate::sha256::ingest_message_prefix::<FIRST_NONCE_WORD_IDX>(
+            &mut memo_state,
+            first_block[..FIRST_NONCE_WORD_IDX].try_into().unwrap(),
+        );
+
+        for x in 0..(self
+            .limit
+            .min(256u64.saturating_pow(nonce_byte_count_decr as u32))
+            .max(1))
+        {
+            unsafe {
+                let mut block_tpl = *first_block;
+                let xm = _mm_cvtsi64x_si128(x as _);
+                let xmd = _mm_shuffle_epi8(xm, poke_word_tbl);
+                let loadd = _mm_loadu_si128(block_tpl.as_ptr().add(poke_word_base).cast());
+                _mm_storeu_si128(
+                    block_tpl.as_mut_ptr().add(poke_word_base).cast(),
+                    _mm_or_si128(loadd, xmd),
+                );
+                let mut lane_id_v = _mm512_load_si512(lane_id_base.as_ptr().cast());
+
+                for lane_id_set_idx in 0..(256 / 16) {
+                    macro_rules! get_msg {
+                        ($idx:expr) => {
+                            if $idx == FIRST_NONCE_WORD_IDX {
+                                _mm512_or_epi32(_mm512_set1_epi32(block_tpl[$idx] as _), lane_id_v)
+                            } else {
+                                _mm512_set1_epi32(block_tpl[$idx] as _)
+                            }
+                        };
+                    }
+
+                    let mut state = core::array::from_fn(|i| _mm512_set1_epi32(memo_state[i] as _));
+                    let mut msg = [
+                        get_msg!(0),
+                        get_msg!(1),
+                        get_msg!(2),
+                        get_msg!(3),
+                        get_msg!(4),
+                        get_msg!(5),
+                        get_msg!(6),
+                        get_msg!(7),
+                        get_msg!(8),
+                        get_msg!(9),
+                        get_msg!(10),
+                        get_msg!(11),
+                        get_msg!(12),
+                        get_msg!(13),
+                        get_msg!(14),
+                        get_msg!(15),
+                    ];
+
+                    crate::sha256::avx512::multiway_arx::<FIRST_NONCE_WORD_IDX>(
+                        &mut state, &mut msg,
+                    );
+
+                    if NEED_SECOND_BLOCK {
+                        for i in 0..8 {
+                            state[i] =
+                                _mm512_add_epi32(state[i], _mm512_set1_epi32(prefix_state[i] as _));
+                        }
+                        let save_a = state[0];
+                        #[cfg(feature = "compare-64bit")]
+                        let save_b = state[1];
+
+                        crate::sha256::avx512::bcst_multiway_arx::<0>(
+                            &mut state,
+                            second_block_schedule,
+                        );
+                        state[0] = _mm512_add_epi32(state[0], save_a);
+                        #[cfg(feature = "compare-64bit")]
+                        {
+                            state[1] = _mm512_add_epi32(state[1], save_b);
+                        }
+                    } else {
+                        state[0] =
+                            _mm512_add_epi32(state[0], _mm512_set1_epi32(prefix_state[0] as _));
+                        #[cfg(feature = "compare-64bit")]
+                        {
+                            state[1] =
+                                _mm512_add_epi32(state[1], _mm512_set1_epi32(prefix_state[1] as _));
+                        }
+                    }
+
+                    #[cfg(not(feature = "compare-64bit"))]
+                    let cmp_fn = |x: __m512i, y: __m512i| {
+                        if TYPE == crate::solver::SOLVE_TYPE_GT {
+                            _mm512_cmpgt_epu32_mask(x, y)
+                        } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                            _mm512_cmplt_epu32_mask(x, y)
+                        } else {
+                            _mm512_cmpeq_epu32_mask(
+                                _mm512_and_si512(x, _mm512_set1_epi32((mask >> 32) as _)),
+                                y,
+                            )
+                        }
+                    };
+
+                    #[cfg(feature = "compare-64bit")]
+                    let cmp64_fn = |x: __m512i, y: __m512i| {
+                        if TYPE == crate::solver::SOLVE_TYPE_GT {
+                            _mm512_cmpgt_epu64_mask(x, y)
+                        } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                            _mm512_cmplt_epu64_mask(x, y)
+                        } else {
+                            _mm512_cmpeq_epu64_mask(
+                                _mm512_and_si512(x, _mm512_set1_epi64(mask as _)),
+                                y,
+                            )
+                        }
+                    };
+
+                    #[cfg(not(feature = "compare-64bit"))]
+                    let met_target = (cmp_fn)(state[0], _mm512_set1_epi32((target >> 32) as _));
+
+                    #[cfg(feature = "compare-64bit")]
+                    let result_ab_lo = _mm512_unpacklo_epi32(state[1], state[0]);
+                    #[cfg(feature = "compare-64bit")]
+                    let result_ab_hi = _mm512_unpackhi_epi32(state[1], state[0]);
+                    #[cfg(feature = "compare-64bit")]
+                    let (met_target_high, met_target_lo) = {
+                        let ab_met_target_lo =
+                            cmp64_fn(result_ab_lo, _mm512_set1_epi64(target as _)) as u16;
+                        let ab_met_target_high =
+                            cmp64_fn(result_ab_hi, _mm512_set1_epi64(target as _)) as u16;
+                        (ab_met_target_high, ab_met_target_lo)
+                    };
+
+                    #[cfg(feature = "compare-64bit")]
+                    let met_target_test = met_target_high != 0 || met_target_lo != 0;
+
+                    #[cfg(not(feature = "compare-64bit"))]
+                    let met_target_test = met_target != 0;
+
+                    if met_target_test {
+                        crate::unlikely();
+
+                        #[cfg(not(feature = "compare-64bit"))]
+                        let success_lane_idx = met_target.trailing_zeros() as usize;
+                        #[cfg(feature = "compare-64bit")]
+                        let success_lane_idx = INDEX_REMAP_PUNPCKLDQ
+                            [(met_target_high << 8 | met_target_lo).trailing_zeros() as usize];
+
+                        let nonce_addend = 16 * lane_id_set_idx + success_lane_idx;
+
+                        let nonce = x << 8 | nonce_addend as u64;
+
+                        return Some(nonce);
+                    }
+
+                    lane_id_v = _mm512_add_epi32(lane_id_v, _mm512_set1_epi32(lane_id_iterand));
+                    self.attempted_nonces += 16;
+                }
+
+                if self.attempted_nonces >= self.limit {
+                    return None;
+                }
+            }
+        }
+
+        None
+    }
+}
+
+impl crate::solver::Solver for BinarySolver {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+        if (self.message.nonce_byte_count.get() == 1) // edge case not worth optimizing, bail out
+            || (self.message.salt_residual_len + self.message.nonce_byte_count.get() as usize > 64)
+        // TODO: optimize edge case where nonce itself cross block boundary
+        {
+            crate::unlikely();
+            let mut solver = crate::solver::safe::BinarySolver::from(self.message.clone());
+            return solver.solve::<TYPE>(target, mask);
+        }
+
+        let salt = &self.message.salt_residual[..self.message.salt_residual_len];
+        let mut blocks = [GenericArray::default(); 2];
+        blocks[0][..salt.len()].copy_from_slice(salt);
+        let mut ptr = salt.len();
+        let mut cur_block = 0;
+
+        for _ in 0..self.message.nonce_byte_count.get() {
+            blocks[cur_block][ptr] = 0;
+            ptr += 1;
+            if ptr == 64 {
+                cur_block = 1;
+                ptr = 0;
+            }
+        }
+        blocks[cur_block][ptr] = 0x80;
+        ptr += 1;
+        if ptr + 8 > 64 {
+            cur_block = 1;
+        }
+        blocks[cur_block][(64 - 8)..]
+            .copy_from_slice(&(self.message.message_length * 8).to_be_bytes());
+
+        let used_blocks = &mut blocks[..=cur_block];
+
+        let mut block_template_be = Align64([0; 16]);
+        for i in 0..16 {
+            block_template_be[i] =
+                u32::from_be_bytes(used_blocks[0][i * 4..][..4].try_into().unwrap());
+        }
+
+        let mut second_block_schedule = [0; 64];
+        if cur_block == 1 {
+            for i in 0..16 {
+                second_block_schedule[i] =
+                    u32::from_be_bytes(used_blocks[1][i * 4..][..4].try_into().unwrap());
+            }
+            crate::sha256::do_message_schedule_k_w(&mut second_block_schedule);
+        }
+
+        macro_rules! dispatch {
+            ($skipped_rounds:expr) => {
+                // bail out for unsupported lane positions
+                if !is_supported_lane_position($skipped_rounds) {
+                    crate::unlikely();
+                    let mut solver = crate::solver::safe::BinarySolver::from(self.message.clone());
+                    return solver.solve::<TYPE>(target, mask);
+                } else if cur_block == 1 {
+                    if let Some(nonce) = self.solve_impl::<TYPE, { $skipped_rounds }, true>(
+                        *self.message.prefix_state,
+                        &block_template_be,
+                        &second_block_schedule,
+                        self.message.salt_residual_len,
+                        self.message.nonce_byte_count,
+                        target,
+                        mask,
+                    ) {
+                        let mut final_sha_state = self.message.prefix_state;
+                        for i in 0..self.message.nonce_byte_count.get() as usize {
+                            used_blocks[0][self.message.salt_residual_len + i] =
+                                nonce.to_le_bytes()[i];
+                        }
+                        sha2::compress256(&mut final_sha_state, &used_blocks);
+                        return Some((nonce, final_sha_state.0));
+                    }
+                } else {
+                    if let Some(nonce) = self.solve_impl::<TYPE, { $skipped_rounds }, false>(
+                        *self.message.prefix_state,
+                        &block_template_be,
+                        &[0; 64],
+                        self.message.salt_residual_len,
+                        self.message.nonce_byte_count,
+                        target,
+                        mask,
+                    ) {
+                        let mut final_sha_state = self.message.prefix_state;
+                        for i in 0..self.message.nonce_byte_count.get() as usize {
+                            used_blocks[0][self.message.salt_residual_len + i] =
+                                nonce.to_le_bytes()[i];
+                        }
+                        sha2::compress256(&mut final_sha_state, &used_blocks);
+                        return Some((nonce, final_sha_state.0));
+                    }
+                }
+            };
+        }
+
+        match self.message.salt_residual_len / 4 {
+            0 => dispatch!(0),
+            1 => dispatch!(1),
+            2 => dispatch!(2),
+            3 => dispatch!(3),
+            4 => dispatch!(4),
+            5 => dispatch!(5),
+            6 => dispatch!(6),
+            7 => dispatch!(7),
+            8 => dispatch!(8),
+            9 => dispatch!(9),
+            10 => dispatch!(10),
+            11 => dispatch!(11),
+            12 => dispatch!(12),
+            13 => dispatch!(13),
+            14 => dispatch!(14),
+            15 => dispatch!(15),
+            _ => unreachable!(),
+        }
+
+        crate::unlikely();
+
+        None
+    }
+}
+
 /// AVX-512 GoAway solver.
 ///
 ///
@@ -1207,6 +1580,15 @@ mod tests {
                 }
             },
         );
+    }
+
+    #[test]
+    fn test_solve_binary() {
+        crate::solver::tests::test_binary_validator::<BinarySolver, _>(
+            |prefix, nonce_byte_count| {
+                BinarySolver::from(BinaryMessage::new(prefix, nonce_byte_count))
+            },
+        )
     }
 
     #[test]

@@ -321,7 +321,7 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn test_binary_validator<S: Solver, F: for<'a> FnMut(&'a [u8], u8) -> S>(
+    pub(crate) fn test_binary_validator<S: Solver, F: for<'a> FnMut(&'a [u8], NonZeroU8) -> S>(
         mut factory: F,
     ) {
         #[cfg(debug_assertions)]
@@ -332,7 +332,7 @@ pub(crate) mod tests {
             for nonce_byte_count in [4, 5, 8] {
                 for prefix_len in 0..64 {
                     let mut msg = Vec::from_iter(std::iter::repeat(salt).take(prefix_len));
-                    let mut solver = factory(&msg, nonce_byte_count);
+                    let mut solver = factory(&msg, NonZeroU8::new(nonce_byte_count).unwrap());
                     const DIFFICULTY: u64 = 100_000;
                     let target = compute_target_mcaptcha(DIFFICULTY as u64);
                     let (nonce, result) = solver
@@ -348,6 +348,16 @@ pub(crate) mod tests {
                         expected_digest.as_slice(),
                         got_digest.as_slice(),
                         "nonce: {}, prefix_len: {}, salt: {}",
+                        nonce,
+                        prefix_len,
+                        salt
+                    );
+                    let got_difficulty = u64::from_be_bytes(got_digest[..8].try_into().unwrap());
+                    assert!(
+                        got_difficulty >= target,
+                        "got_difficulty: {:016x} < target: {:016x} (nonce: {}, prefix_len: {}, salt: {})",
+                        got_difficulty,
+                        target,
                         nonce,
                         prefix_len,
                         salt

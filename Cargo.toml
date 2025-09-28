@@ -61,7 +61,7 @@ harness = false
 [[bench]]
 name = "bench_strings"
 harness = false
-requires = ["internals"]
+required-features = ["internals"]
 
 [features]
 default = ["std", "all-lane-positions"]

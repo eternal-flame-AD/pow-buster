@@ -10,9 +10,9 @@ use std::{
 use clap::{Parser, Subcommand};
 
 use pow_buster::{
-    Align16, DecimalSolver, DoubleBlockSolver, GoAwaySolver, SingleBlockSolver,
+    Align16, BinarySolver, DecimalSolver, DoubleBlockSolver, GoAwaySolver, SingleBlockSolver,
     compute_target_anubis, compute_target_goaway, compute_target_mcaptcha,
-    message::{DecimalMessage, GoAwayMessage},
+    message::{BinaryMessage, DecimalMessage, GoAwayMessage},
     solver::Solver,
 };
 
@@ -363,6 +363,33 @@ fn main() {
             println!(
                 "[{}]: {} seconds at difficulty {} ({:.2} MH/s)",
                 core::any::type_name::<DoubleBlockSolver>(),
+                elapsed.as_secs_f32() / 40.0,
+                difficulty,
+                total_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0
+            );
+            let begin = Instant::now();
+            let mut total_nonces = 0;
+            let mut prefix = [0u8; 64];
+            for i in 0..40u8 {
+                prefix[0] = i;
+                let mut solver =
+                    BinarySolver::from(BinaryMessage::new(&prefix, 4.try_into().unwrap()));
+                let inner_begin = Instant::now();
+                let nonce = solver
+                    .solve_nonce_only::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)
+                    .expect("solver failed");
+                eprintln!(
+                    "[{}]: in {:.3} seconds ({})",
+                    core::any::type_name::<BinarySolver>(),
+                    inner_begin.elapsed().as_secs_f32(),
+                    nonce,
+                );
+                total_nonces += solver.get_attempted_nonces();
+            }
+            let elapsed = begin.elapsed();
+            println!(
+                "[{}]: {} seconds at difficulty {} ({:.2} MH/s)",
+                core::any::type_name::<BinarySolver>(),
                 elapsed.as_secs_f32() / 40.0,
                 difficulty,
                 total_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0

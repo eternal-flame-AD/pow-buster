@@ -1,5 +1,7 @@
 #![allow(clippy::inconsistent_digit_grouping)]
 #![allow(clippy::collapsible_if)]
+use core::num::NonZeroU8;
+
 use sha2::digest::{
     consts::{B0, U16},
     generic_array::{ArrayLength, GenericArray},
@@ -599,6 +601,7 @@ impl DecimalMessage {
 }
 
 /// Binary message with a fixed layout
+#[derive(Debug, Clone)]
 pub struct BinaryMessage {
     /// the SHA-256 midstate for the previous block
     pub prefix_state: Align16<[u32; 8]>,
@@ -611,7 +614,7 @@ pub struct BinaryMessage {
 
     /// the number of bytes of the nonce
     /// Guaranteed to be less or equal to 8
-    pub nonce_byte_count: u8,
+    pub nonce_byte_count: NonZeroU8,
 
     /// message length in bytes
     pub message_length: usize,
@@ -619,9 +622,9 @@ pub struct BinaryMessage {
 
 impl BinaryMessage {
     /// creates a new binary message
-    pub fn new(salt: &[u8], nonce_byte_count: u8) -> Self {
+    pub fn new(salt: &[u8], nonce_byte_count: NonZeroU8) -> Self {
         assert!(
-            nonce_byte_count <= 8,
+            nonce_byte_count.get() <= 8,
             "nonce_byte_count must be less or equal to 8"
         );
         let mut prefix_state = crate::Align16(sha256::IV);
@@ -648,7 +651,7 @@ impl BinaryMessage {
             salt_residual,
             salt_residual_len: remainder.len(),
             nonce_byte_count,
-            message_length: salt.len() + nonce_byte_count as usize,
+            message_length: salt.len() + nonce_byte_count.get() as usize,
         }
     }
 }
