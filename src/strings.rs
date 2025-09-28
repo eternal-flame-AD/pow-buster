@@ -405,20 +405,21 @@ pub fn simd_itoa8<const N: usize, const REGISTER_BSWAP: bool, const PLACEHOLDER:
     }
 }
 
+#[cfg(not(target_feature = "avx512f"))]
 #[inline(always)]
 /// Convert up to 7 digits to ASCII
 ///
 /// Parameters:
 /// - REGISTER_BSWAP: Swap 32-bit register bytes order
 /// - PLACEHOLDER: The placeholder character to use for the rest of the bytes
-/// - OFFSET: The byte offset to add to each digit (1 -> use digits 1-8, 0 -> use digits 0-7)
-pub fn to_octal_7<const REGISTER_BSWAP: bool, const PLACEHOLDER: u8, const OFFSET: u8>(
+/// - ADDEND: The byte offset to add to each digit (1 -> use digits 1-8, 0 -> use digits 0-7)
+pub fn to_octal_7<const REGISTER_BSWAP: bool, const PLACEHOLDER: u8, const ADDEND: u8>(
     out: &mut Align16<[u8; 8]>,
     mut input: u32,
 ) {
     out.fill(PLACEHOLDER);
     for i in (0..7).rev() {
-        out[i] = ((input & 0b111) as u8) + b'0' + OFFSET;
+        out[i] = ((input & 0b111) as u8) + b'0' + ADDEND;
         input >>= 3;
     }
     if REGISTER_BSWAP {
@@ -428,6 +429,44 @@ pub fn to_octal_7<const REGISTER_BSWAP: bool, const PLACEHOLDER: u8, const OFFSE
             out_ptr = out_ptr.add(1);
             *out_ptr = (*out_ptr).swap_bytes();
         }
+    }
+}
+
+#[cfg(target_feature = "avx512f")]
+#[inline(always)]
+/// Convert up to 7 digits to ASCII
+///
+/// Parameters:
+/// - REGISTER_BSWAP: Swap 32-bit register bytes order
+/// - PLACEHOLDER: The placeholder character to use for the rest of the bytes
+/// - ADDEND: The byte offset to add to each digit (1 -> use digits 1-8, 0 -> use digits 0-7)
+pub fn to_octal_7<const REGISTER_BSWAP: bool, const PLACEHOLDER: u8, const ADDEND: u8>(
+    out: &mut Align16<[u8; 8]>,
+    input: u32,
+) {
+    use core::arch::x86_64::*;
+
+    unsafe {
+        let mut x = _mm256_set1_epi32(input as _);
+        if REGISTER_BSWAP {
+            x = _mm256_srlv_epi32(x, _mm256_setr_epi32(9, 12, 15, 18, 0, 0, 3, 6));
+        } else {
+            x = _mm256_srlv_epi32(x, _mm256_setr_epi32(18, 15, 12, 9, 6, 3, 0, 0));
+        }
+        x = _mm256_and_si256(x, _mm256_set1_epi32(0b111));
+        if ADDEND != 0 {
+            x = _mm256_add_epi32(x, _mm256_set1_epi32((b'0' + ADDEND) as _));
+        } else {
+            x = _mm256_or_epi32(x, _mm256_set1_epi32(b'0' as _));
+        }
+        let mut d = _mm256_cvtepi32_epi8(x);
+        if REGISTER_BSWAP {
+            d = _mm_insert_epi8(d, PLACEHOLDER as _, 4);
+        } else {
+            d = _mm_insert_epi8(d, PLACEHOLDER as _, 7);
+        }
+        let val = _mm_cvtsi128_si64(d) as u64;
+        out.as_mut_ptr().cast::<u64>().write(val);
     }
 }
 
