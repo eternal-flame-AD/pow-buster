@@ -4,7 +4,7 @@
 
 - [PoW Buster](#pow-buster)
   - [Table of Contents](#table-of-contents)
-  - [Why?](#why)
+  - [Motivation / Why?](#motivation--why)
   - [Upstream Response](#upstream-response)
   - [Features](#features)
   - [Building](#building)
@@ -20,6 +20,7 @@
       - [Multi Threaded](#multi-threaded)
   - [Security Implications](#security-implications)
   - [Future Work (i.e. Okay, so what would be a good PoW then?)](#future-work-ie-okay-so-what-would-be-a-good-pow-then)
+  - [Conflict of Interest Disclosure](#conflict-of-interest-disclosure)
   - [Contributing / Wishlist](#contributing--wishlist)
   - [License and Acknowledgments](#license-and-acknowledgments)
   - [AI Disclaimer](#ai-disclaimer)
@@ -32,7 +33,7 @@ The benchmarks demonstrate a significant performance gap between browser-based J
 
 [Public web demo running on a $4/month/core server, 80-100MHs/thread](https://powbuster.yumechi.jp/)
 
-## Why?
+## Motivation / Why?
 
 This project was previously known as `simd-mcaptcha` and focused on mCaptcha. However since I discovered a systematic under-engineering of similar products, this is now renamed to `pow-buster` and handles multiple PoW systems.
 
@@ -366,6 +367,17 @@ These findings suggest that both designing and adopting a PoW-based CAPTCHA syst
 ## Future Work (i.e. Okay, so what would be a good PoW then?)
 
 [See FUTURE.md](FUTURE.md)
+
+## Conflict of Interest Disclosure
+
+This work is not funded or sponsored by any external entity and entirely my own research on my own time. While I personally hold negative ethical and technical position against using Proof of Work for the open-web in general, no vendor, competitor, professional affiliation or bounty program otherwise influenced its content.
+
+For benchmarks conducted against vendor code, I am happy to rerun and/or clarify any part of the analysis by request if any vendor believes particular performance characteristics demonstrated here no longer apply or requires further clarification. Create an issue with:
+
+- An official release or beta-release tag that you want to be benchmarked.
+- Proposed methodology (commands to build your project, environment setup, etc).
+
+I will rerun the benchmarks and update relavant sections and keep all communications on record.
 
 ## Contributing / Wishlist
 
