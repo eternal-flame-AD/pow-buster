@@ -144,6 +144,8 @@ This is a structural limitation, PoW is supposed for global consensus, not maint
  
 Website operators deploying a PoW system bear the responsibility to understand the performance characteristics and security implications of their chosen PoW parameters, and whether that protects against their identified threat. __The purpose of this research is to provide the statistical analysis and empirical validation data necessary for informed deployment decisions, including optimized CPU only solutions.__ 
 
+ISO/IEC 29147:2018: “Coordinated vulnerability disclosure does not apply when no confidentiality, integrity or availability impact exists." There is nothing here that isn't already a well-known fact to the public: PoW is designed to be optimized and not to be "equitable". The only question is whether the optimization undermines the system's practical purpose. Providing concrete benchmark numbers does not constitute a vulnerability discovery.
+
 ## Benchmark
 
 Most of the formal comparison is done against mCaptcha, because they have a WASM solver and cannot be immediately dismissed as "that's JS overhead"/"we will do better later".
