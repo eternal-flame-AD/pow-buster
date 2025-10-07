@@ -35,14 +35,7 @@ The benchmarks demonstrate a significant performance gap between browser-based J
 
 ## Motivation / Why?
 
-This project was previously known as `simd-mcaptcha` and focused on mCaptcha. However since I discovered a systematic under-engineering of similar products, this is now renamed to `pow-buster` and handles multiple PoW systems.
-
-I personally don't like some projects (a subset of the schemes I supported, not all of them) put themselves at the ethical high ground of "protecting the website" when they:
-- Don't really protect the website better than heuristics (and this program serves as a proof of concept that it can be gamed using pure CPU).
-- Requires users to disable their anti fingerprinting protection like JShelter, and don't give users an opportunity to re-enable them before automatically redirecting them to the a website they have never been to before, which can very well hide fingerprinting scripts. This program emits solutions to these challenges fast without requiring JavaScript.
-- Justify the annoying friction by claiming the lack of a transparent spec and alternative manual solutions to be ["\[good\] taste \[for\] a 'security product'"](https://anubis.techaro.lol/docs/user/frequently-asked-questions), despite themselves not publishing sound security analysis to justify the friction. I did the reverse engineering that nobody should even have to do for an open source security product.
-- Makes certain judgements against certain businesses (i.e. AI companies) for spreading "slop", "unethical", "inefficient use of money and energy", etc. When the solution they come up are, under the view of HPC and security engineering, "slop", "unethical", and "inefficient". AI just a lagging indicator of popularity not programming skill, just as web development is a lagging indicator of high performance computing. The problem with AI is its hyper-optimistic and non-falsifiable claims such as "replace X", "make Y better than humans", etc. To me these solutions are no different by claiming they make AI scraping "unviable" with "hyper-optimized" JS proof of work, without any falsifiable goalpost. They are demanding a certain level of universal expertise (producing "non-slop" in fields you are not an expert in) that no human or machine can achieve.
-- Nutritional Supplement logic: Try to interpret some correlation (AI companies are crawling websites ~ request rate to my website increased, just like protein eaters ~ more muscle mass) as a causation for subtle abuse here it circles back to the same question: you are holding the nyrrative for the benefit of your tool (stop/derail crawlers) to a minimal standard (it seems request rate reduced, no economical analysis, no AB testing, no quasi-randomization for confounders, no dose response for whether a particular difficulty is indeed effective or just a test for JS and user patience, no confusion matrix) but interpreting the utility of your tool to the maximal extent probable: it seems request rate reduced, thus the PoW must have helped.
+See [MOTIVATION.md](MOTIVATION.md) for more details.
 
 
 [A longer blabbing post regarding this](https://mi.yumechi.jp/notes/aa223tk8c5ao02v9)
@@ -144,8 +137,6 @@ This isn't a vulnerability nor anything previously unknown, it's a structural we
 This is a structural limitation, PoW is supposed for global consensus, not maintaining a meaningful peer-to-peer "fair" hash rate margin, especially not when compared to commodity hardware. Every academic paper will tell you that PoW system loses protection margin using hardware or software optimizations. I implemented it, that's it.
  
 Website operators deploying a PoW system bear the responsibility to understand the performance characteristics and security implications of their chosen PoW parameters, and whether that protects against their identified threat. __The purpose of this research is to provide the statistical analysis and empirical validation data necessary for informed deployment decisions, including optimized CPU only solutions.__ 
-
-ISO/IEC 29147:2018: “Coordinated vulnerability disclosure does not apply when no confidentiality, integrity or availability impact exists." There is nothing here that isn't already a well-known fact to the public: PoW is designed to be optimized and not to be "equitable". The only question is whether the optimization undermines the system's practical purpose. Providing concrete benchmark numbers does not constitute a vulnerability discovery.
 
 ## Benchmark
 
