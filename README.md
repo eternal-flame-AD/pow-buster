@@ -348,6 +348,7 @@ On EPYC 9634 with better thermals, OpenSSL has 598.28 MH/s (38.29 GB/s) single b
 | SingleBlock/Anubis               | 3.387 GH/s | 2.09 GH/s |
 | DoubleBlock (mCaptcha edge case) | 1.861 GH/s | 1.64 GH/s |
 | go-away (32 bytes)               | 3.826 GH/s | 3.15 GH/s |
+| Cerberus (BLAKE3)                | 8.192 GH/s | N/A       |
 
 ## Security Implications
 
