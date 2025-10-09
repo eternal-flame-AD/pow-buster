@@ -20,15 +20,20 @@
 
     <h1>How to use</h1>
     <p>
-        Anubis/Go-away: You should find the challenge JSON in `head > script#anubis_challenge` or a network request
-        that ends with `/make-challenge`. Copy the challenge JSON and paste it into the textarea below.
-        Characters before the first `{` and after the last `}` are ignored.
-        <br>
-        GoToSocial/Nollamas: You should find challenge in `section.nollamas` as HTML attributes. Transform it into JSON
-        and paste it into the textarea below.
-        <br>
-        Response will be a single redirect URL provided in JavaScript format mirroring the official solver's behavior
-        after a solution is found.
+        Anubis/Go-away/Cerberus: You should find the challenge JSON in:
+    <ul>
+        <li>`head > script#anubis_challenge`</li>
+        <li>`script#challenge-script[x-challenge]`</li>
+        <li>a network request that ends with `/make-challenge`</li>
+    </ul>
+    Copy the challenge JSON and paste it into the textarea below.
+    Characters before the first `{` and after the last `}` are ignored.
+    <br>
+    GoToSocial/Nollamas: You should find challenge in `section.nollamas` as HTML attributes. Transform it into JSON
+    and paste it into the textarea below.
+    <br>
+    Response will be a single redirect URL provided in JavaScript format mirroring the official solver's behavior
+    after a solution is found.
     </p>
 
     <h1>Expected Formats</h1>
@@ -61,6 +66,10 @@
                     <code>{"challenge":{"c":50,"s":57,"d":4},"token":"4b1b46efba002091eeff6cfb0a8c2210d4670d9ce013d6e773","expires":0}</code>
                 </li>
             </ul>
+        </li>
+        <li>
+            Cerberus (Server-Side Only for now):
+            <code>{"challenge":"8676e9cefd7605e746987bf31262846259c2e550d4e308f66b74cb06a722a6c8","difficulty":16,"nonce":90144522,"ts":1000000000,"signature":"e3cae2bc91a2f303d272ba748a2fe82835ab057e9ff00bacd67bec24e9ae387b810407af545a6589b7f421defead23b9bc6c5ccfd3125fe758819e4312b3a300"}</code>
         </li>
         <li>
             GoToSocial/Nollamas (Server-Side Only for now, requires AVX-512 for now), the solution for the following

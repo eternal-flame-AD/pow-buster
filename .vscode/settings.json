@@ -5,7 +5,6 @@
         "server-wasm",
         "live-throughput-test",
         "cli",
-        "official",
         "rayon",
         "wasm-bindgen",
         "ignore-target-feature-checks",

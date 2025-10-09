@@ -14,13 +14,14 @@ use axum_extra::response::JavaScript;
 use tokio::sync::Semaphore;
 
 use crate::{
-    Align16, DecimalSolver,
+    Align16, CerberusSolver, DecimalSolver,
     adapter::{
-        AnubisChallengeDescriptor, CapJsChallengeDescriptor, GoAwayConfig, SolveCapJsResponse,
+        AnubisChallengeDescriptor, CapJsChallengeDescriptor, CerberusChallengeDescriptor,
+        GoAwayConfig, SolveCapJsResponse,
     },
     compute_target_anubis,
     message::DecimalMessage,
-    solver::{SOLVE_TYPE_LT, Solver},
+    solver::{SOLVE_TYPE_LT, SOLVE_TYPE_MASK, Solver},
 };
 
 #[cfg(feature = "server-wasm")]
@@ -256,13 +257,20 @@ async fn solve_generic(
     let challenge = &form.challenge[left_strip..right_strip];
 
     if let Ok(config) = serde_json::from_str(challenge) {
-        return solve_goaway(remote_addr, x_forwarded_for, state, config)
+        return solve_anubis(remote_addr, x_forwarded_for, state, config)
+            .await
+            .map(IntoResponse::into_response);
+    }
+
+    // Cerberus challenge format is a subtype of go-away, so it has to come before it
+    if let Ok(config) = serde_json::from_str(challenge) {
+        return solve_cerberus(remote_addr, x_forwarded_for, state, config)
             .await
             .map(IntoResponse::into_response);
     }
 
     if let Ok(config) = serde_json::from_str(challenge) {
-        return solve_anubis(remote_addr, x_forwarded_for, state, config)
+        return solve_goaway(remote_addr, x_forwarded_for, state, config)
             .await
             .map(IntoResponse::into_response);
     }
@@ -374,6 +382,136 @@ async fn solve_gotosocial(
     writeln!(response, "window.location.replace(redirectURL.toString());").unwrap();
 
     Ok(response)
+}
+
+#[tracing::instrument(skip(state, config), name = "solve_cerberus")]
+async fn solve_cerberus(
+    remote_addr: axum::extract::ConnectInfo<std::net::SocketAddr>,
+    x_forwarded_for: axum_extra::TypedHeader<XForwardedFor>,
+    State(state): State<AppState>,
+    config: CerberusChallengeDescriptor,
+) -> Result<String, SolveError> {
+    tracing::info!("solving cerberus challenge {:?}", config);
+
+    let msg = config.build_msg().ok_or(SolveError::InvalidChallenge)?;
+    let mask = config.mask();
+    let estimated_workload = config.estimated_workload();
+    let effective_limit = state.effective_limit().saturating_mul(2);
+    if estimated_workload > effective_limit {
+        return Err(SolveError::EstimatedWorkloadGreaterThanLimit {
+            limit: effective_limit,
+            estimated: estimated_workload,
+        });
+    }
+
+    let begin = std::time::Instant::now();
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+
+    tokio::task::spawn_blocking(move || {
+        let mut solver = CerberusSolver::from(msg);
+        solver.set_limit(effective_limit);
+        let Some((nonce, hash)) = solver.solve::<{ SOLVE_TYPE_MASK }>(0, mask as u64) else {
+            tx.send(Err(SolveError::SolverFailed {
+                limit: effective_limit,
+                attempted: solver.get_attempted_nonces(),
+            }))
+            .ok();
+            return;
+        };
+        let attempted_nonces = solver.get_attempted_nonces();
+
+        tx.send(Ok((nonce, hash, attempted_nonces))).ok();
+    });
+    let (nonce, hash, attempted_nonces) = rx.await.map_err(|_| SolveError::SolverFatal)??;
+    let elapsed = begin.elapsed();
+
+    let mut output = String::with_capacity(4096);
+
+    writeln!(
+        output,
+        "// elapsed time: {}ms; attempted nonces: {}; {:.2} MH/s; {:.2}% limit used",
+        elapsed.as_millis(),
+        attempted_nonces,
+        attempted_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0,
+        attempted_nonces as f32 / state.limit as f32 * 100.0
+    )
+    .unwrap();
+
+    output.push_str(r#"
+((hash,nonce) => {
+    const thisScript = document.getElementById('challenge-script');
+    function createAnswerForm(hash, solution, baseURL, nonce, ts, signature) {
+        /* 
+        Copyright (c) 2025 Yanning Chen <self@lightquantum.me>
+
+        Permission is hereby granted, free of charge, to any person obtaining a copy
+        of this software and associated documentation files (the "Software"), to deal
+        in the Software without restriction, including without limitation the rights
+        to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+        copies of the Software, and to permit persons to whom the Software is
+        furnished to do so, subject to the following conditions:
+
+        The above copyright notice and this permission notice shall be included in
+        all copies or substantial portions of the Software.
+
+        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+        AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+        THE SOFTWARE.
+        */
+
+        function addHiddenInput(form, name, value) {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = name;
+          input.value = value;
+          form.appendChild(input);
+        }
+      
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `${baseURL}/answer`;
+      
+        addHiddenInput(form, 'response', hash);
+        addHiddenInput(form, 'solution', solution);
+        addHiddenInput(form, 'nonce', nonce);
+        addHiddenInput(form, 'ts', ts);
+        addHiddenInput(form, 'signature', signature);
+        addHiddenInput(form, 'redir', window.location.href);
+      
+        document.body.appendChild(form);
+        return form;
+    }
+
+    const { difficulty, nonce: inputNonce, ts, signature } = JSON.parse(thisScript.getAttribute('x-challenge'));
+    const { baseURL } = JSON.parse(thisScript.getAttribute('x-meta'));
+    createAnswerForm(hash, nonce, baseURL, inputNonce, ts, signature).submit();
+})(""#);
+
+    hash.into_iter().for_each(|x| {
+        let sb = x.to_le_bytes();
+        for i in 0..4 {
+            let high_nibble = sb[i] >> 4;
+            let low_nibble = sb[i] & 0x0f;
+            output.push(if high_nibble < 10 {
+                (b'0' + high_nibble) as char
+            } else {
+                (b'a' + high_nibble - 10) as char
+            });
+            output.push(if low_nibble < 10 {
+                (b'0' + low_nibble) as char
+            } else {
+                (b'a' + low_nibble - 10) as char
+            });
+        }
+    });
+    writeln!(output, "\",{})", nonce).unwrap();
+
+    Ok(output)
 }
 
 #[tracing::instrument(skip(state, config), name = "solve_capjs")]

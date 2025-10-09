@@ -478,7 +478,7 @@ fn main() {
                         } else if let Scheme::Mcaptcha = scheme {
                             #[cfg(not(feature = "compare-64bit"))]
                             {
-                                assert_ne!(target >> 32, u32::MAX as _, "64-bit comparison is required for this difficulty, rebuild with `compare-64bit` feature");
+                                assert_ne!(target >> 32, u32::MAX as u64, "64-bit comparison is required for this difficulty, rebuild with `compare-64bit` feature");
                             }
                             for working_set in (ix..).step_by(num_threads.get() as usize) {
                                 let Some(message) = DecimalMessage::new(salt_bytes, working_set)

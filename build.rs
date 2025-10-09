@@ -1,6 +1,6 @@
 use std::{fs::File, io::Write, path::Path};
 
-fn build_lut<const ALIGNMENT: usize>(
+fn build_gts_lut<const ALIGNMENT: usize>(
     output: &mut impl Write,
     max_nonce_by_alignment: usize,
 ) -> std::io::Result<()> {
@@ -78,7 +78,7 @@ fn main() -> std::io::Result<()> {
         let len_path = Path::new(&out_dir).join("gts_lut_16.len");
         let mut output = File::create(out_path)?;
 
-        build_lut::<16>(&mut output, 1_000_000 / 16)?;
+        build_gts_lut::<16>(&mut output, 1_000_000 / 16)?;
         let mut len_output = File::create(len_path)?;
         writeln!(
             len_output,

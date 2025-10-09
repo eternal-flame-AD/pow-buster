@@ -38,6 +38,9 @@ cfg_if::cfg_if! {
 /// SHA-256 primitives
 mod sha256;
 
+/// BLAKE3 primitives
+mod blake3;
+
 /// Message builders
 pub mod message;
 
@@ -207,6 +210,8 @@ cfg_if::cfg_if! {
         pub type GoAwaySolver = crate::solver::avx512::GoAwaySolver;
         /// Binary solver
         pub type BinarySolver = crate::solver::avx512::BinarySolver;
+        /// Cerberus solver
+        pub type CerberusSolver = crate::solver::avx512::CerberusSolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "AVX-512";
     } else if #[cfg(target_feature = "sha")] {
@@ -220,6 +225,8 @@ cfg_if::cfg_if! {
         pub type GoAwaySolver = crate::solver::sha_ni::GoAwaySolver;
         /// Binary solver
         pub type BinarySolver = crate::solver::safe::BinarySolver;
+        /// Cerberus solver
+        pub type CerberusSolver = crate::solver::safe::CerberusSolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "SHA-NI";
     } else {
@@ -233,6 +240,8 @@ cfg_if::cfg_if! {
         pub type GoAwaySolver = crate::solver::safe::GoAwaySolver;
         /// Binary solver
         pub type BinarySolver = crate::solver::safe::BinarySolver;
+        /// Cerberus solver
+        pub type CerberusSolver = crate::solver::safe::CerberusSolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "Fallback";
     }
@@ -251,6 +260,8 @@ cfg_if::cfg_if! {
         pub type GoAwaySolver = crate::solver::simd128::GoAwaySolver;
         /// Binary solver
         pub type BinarySolver = crate::solver::safe::BinarySolver;
+        /// Cerberus solver
+        pub type CerberusSolver = crate::solver::safe::CerberusSolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "SIMD128";
     } else {
@@ -264,6 +275,8 @@ cfg_if::cfg_if! {
         pub type GoAwaySolver = crate::solver::safe::GoAwaySolver;
         /// Binary solver
         pub type BinarySolver = crate::solver::safe::BinarySolver;
+        /// Cerberus solver
+        pub type CerberusSolver = crate::solver::safe::CerberusSolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "Fallback";
     }
@@ -297,6 +310,11 @@ pub const fn compute_target_anubis(difficulty_factor: NonZeroU8) -> u64 {
 /// Compute the target for a GoAway PoW
 pub const fn compute_target_goaway(difficulty_factor: NonZeroU8) -> u64 {
     1u64 << (64 - difficulty_factor.get())
+}
+
+/// Compute a mask for a Cerberus PoW
+pub const fn compute_mask_cerberus(difficulty_factor: NonZeroU8) -> u32 {
+    !(!0u32 >> (difficulty_factor.get() * 2)).swap_bytes()
 }
 
 /// Extract top 128 bits from a 64-bit word array
@@ -422,5 +440,31 @@ mod tests {
         let mut official = Vec::new();
         build_prefix_official(&mut official, string, "z").unwrap();
         assert_eq!(homegrown, official);
+    }
+
+    #[test]
+    fn test_cerberus_mask() {
+        fn check_small(hash: &[u8; 32], n: usize) -> bool {
+            // https://github.com/sjtug/cerberus/blob/ee8f903f1311da7022aec68c8686739b40f4a168/pow/src/check_dubit.rs
+            let first_word: u32 = (hash[0] as u32) << 24
+                | (hash[1] as u32) << 16
+                | (hash[2] as u32) << 8
+                | (hash[3] as u32);
+            first_word.leading_zeros() >= (n as u32 * 2)
+        }
+
+        for i in 1..8 {
+            let mask = compute_mask_cerberus(NonZeroU8::new(i).unwrap());
+            eprintln!("mask: {:08x}", mask);
+        }
+
+        // hash[0] is the LSB of the H0 register
+
+        let mask = compute_mask_cerberus(NonZeroU8::new(7).unwrap());
+        let hash_partial = (!mask).to_le_bytes();
+        eprintln!("hash_partial: {:02x?}", hash_partial);
+        let mut test = [0; 32];
+        test[..4].copy_from_slice(&hash_partial);
+        assert!(check_small(&test, 7));
     }
 }

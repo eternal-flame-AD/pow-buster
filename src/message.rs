@@ -8,7 +8,7 @@ use sha2::digest::{
     typenum::UInt,
 };
 
-use crate::{Align16, Align64, AlignerTo, is_supported_lane_position, sha256};
+use crate::{Align16, Align64, AlignerTo, blake3, is_supported_lane_position, sha256};
 
 /// Solves an mCaptcha/Anubis/Cap.js SHA256 PoW where the SHA-256 message is a single block (512 bytes minus padding).
 ///
@@ -37,7 +37,9 @@ pub struct SingleBlockMessage {
 }
 
 #[derive(Debug, Clone, Copy)]
-/// a prefix for stretching nonces that are accepted as IEEE 754 double precision floats
+/// a prefix for stretching nonces whose vallidation accepts IEEE 754 double precision floats
+///
+/// This allows JS numbers to be stretched as long as a regular u64 integer allowing code reuse.
 pub struct IEEE754LosslessFixupPrefix {
     buf: [u8; 9],
     cut: usize,
@@ -653,6 +655,112 @@ impl BinaryMessage {
             nonce_byte_count,
             message_length: salt.len() + nonce_byte_count.get() as usize,
         }
+    }
+}
+
+/// A message in the cerberus format
+///
+/// Note cerberus only supports 32-bit range nonces and should always remain inter-block
+///
+/// Construct: Proof := (prefix || ASCII_U32_DECIMAL(nonce))
+#[derive(Debug, Clone)]
+pub struct CerberusMessage {
+    pub(crate) prefix_state: Align16<[u32; 8]>,
+    pub(crate) salt_residual: Align64<[u8; 64]>,
+    pub(crate) salt_residual_len: usize,
+    pub(crate) flags: u32,
+    pub(crate) nonce_addend: u32,
+}
+
+impl CerberusMessage {
+    /// Create a new Ceberus message
+    ///
+    /// End-to-end salt construction: `${challenge}|${inputNonce}|${ts}|${signature}|`
+    pub fn new(salt: &[u8], working_set: u32) -> Option<Self> {
+        // u32::MAX is 4294967295 (10 digits), we will pop the first digit as outer loop and at most 3 other blocks need to be mutated
+        // the last block is byte-order sensitive and needs a left shift to fix
+        let msb = working_set.wrapping_add(1);
+        if msb >= 4 || msb == 0 {
+            return None;
+        }
+        let msb = msb as u8;
+
+        // actual tree-based hashing is not supported yet
+        // it is also unlikely they will ship challenges so big
+        if salt.len() > 1000 {
+            return None;
+        }
+        let mut chunks = salt.chunks_exact(64);
+        let mut prefix_state = crate::Align16(blake3::IV);
+        let mut flags = blake3::FLAG_CHUNK_START | blake3::FLAG_CHUNK_END | blake3::FLAG_ROOT;
+
+        for (i, block) in (&mut chunks).enumerate() {
+            let block = core::array::from_fn(|i| {
+                u32::from_le_bytes([
+                    block[i * 4],
+                    block[i * 4 + 1],
+                    block[i * 4 + 2],
+                    block[i * 4 + 3],
+                ])
+            });
+            let this_flag = if i == 0 { blake3::FLAG_CHUNK_START } else { 0 };
+
+            let output = blake3::compress(&prefix_state, &block, 0, 64, this_flag);
+            prefix_state.copy_from_slice(&output[..8]);
+            flags &= !blake3::FLAG_CHUNK_START;
+        }
+        let remainder = chunks.remainder();
+        let mut salt_residual = crate::Align64([0; 64]);
+
+        let salt_residual_len = if remainder.len() == 63 {
+            let block = core::array::from_fn(|i| {
+                u32::from_le_bytes([
+                    remainder[i * 4],
+                    remainder[i * 4 + 1],
+                    remainder[i * 4 + 2],
+                    if i == 15 {
+                        msb + b'0'
+                    } else {
+                        remainder[i * 4 + 3]
+                    },
+                ])
+            });
+
+            let output = blake3::compress(
+                &prefix_state,
+                &block,
+                0,
+                64,
+                blake3::FLAG_CHUNK_START & flags,
+            );
+            prefix_state.copy_from_slice(&output[..8]);
+            flags &= !blake3::FLAG_CHUNK_START;
+
+            for i in 0..9 {
+                salt_residual[i] = b'0';
+            }
+
+            0
+        } else {
+            if remainder.len() + 9 >= 64 {
+                return None;
+            }
+            salt_residual[..remainder.len()].copy_from_slice(remainder);
+            salt_residual[remainder.len()] = msb + b'0';
+
+            for i in 0..9 {
+                salt_residual[remainder.len() + 1 + i] = b'0';
+            }
+            remainder.len() + 1
+        };
+
+        Some(Self {
+            prefix_state,
+            salt_residual_len,
+            salt_residual,
+            flags,
+            nonce_addend: msb as u32 * 1_000_000_000,
+        })
     }
 }
 

@@ -1,12 +1,44 @@
 use core::num::NonZeroU8;
 
 use crate::{
-    DecimalSolver, compute_target_anubis, compute_target_goaway,
-    message::{CapJSEmitter, DecimalMessage, GoAwayMessage},
+    DecimalSolver, compute_mask_cerberus, compute_target_anubis, compute_target_goaway,
+    message::{CapJSEmitter, CerberusMessage, DecimalMessage, GoAwayMessage},
     solver::{SOLVE_TYPE_LT, Solver},
 };
 use alloc::{string::String, vec::Vec};
 use sha2::Digest;
+
+#[derive(serde::Deserialize, Debug)]
+/// A Cerberus PoW challenge descriptor.
+pub struct CerberusChallengeDescriptor {
+    challenge: String,
+    difficulty: NonZeroU8,
+    nonce: u64,
+    ts: u64,
+    signature: String,
+}
+
+impl CerberusChallengeDescriptor {
+    /// Build a pre-formatted message for the challenge.
+    pub fn build_msg(&self) -> Option<CerberusMessage> {
+        let buf = format!(
+            "{}|{}|{}|{}|",
+            self.challenge, self.nonce, self.ts, self.signature
+        );
+
+        CerberusMessage::new(buf.as_bytes(), 0)
+    }
+
+    /// Return the estimated workload.
+    pub fn estimated_workload(&self) -> u64 {
+        4u64.saturating_pow(self.difficulty.get().try_into().unwrap())
+    }
+
+    /// Return the mask.
+    pub fn mask(&self) -> u32 {
+        compute_mask_cerberus(self.difficulty)
+    }
+}
 
 #[derive(serde::Deserialize, Debug)]
 /// Anubis PoW challenge descriptor.

@@ -25,7 +25,7 @@
   - [License and Acknowledgments](#license-and-acknowledgments)
   - [AI Disclaimer](#ai-disclaimer)
 
-A fast, data-parallel, adversarially [^3] implemented mCaptcha/Anubis/go-away/Cap.js/NolLamas PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features without wasting energy in the browser.
+A fast, data-parallel, adversarially [^3] implemented mCaptcha/Anubis/Cerberus/go-away/Cap.js/NolLamas PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features, without wasting energy in the browser.
 
 [^3]: Adversarial refers to challenges are solved using the path-of-least-resistance, sometimes involving massaging nonce space into favorable conditions or partially inverting hash images into lower-latency internal states. Most schemes supported do not have explicit specifications and depend on the cryptographic guarantees of the hash function, which I did not break (at least not in a previously unknown way). This code follows the original code to the letter of the law and sometimes emit awkward but computationally or statistically favorable solutions (such as `10000000073377131`, `-10.00000141128212`, etc.)
 
@@ -317,6 +317,7 @@ For us we have single thread:
 | DoubleBlock (mCaptcha edge case) | 53.28 MH/s              | 42.55 MH/s                    | Not Tested                               |
 | go-away (32 bytes)               | 98.42 MH/s              | 78.10 MH/s                    | Not Tested                               |
 | GoToSocial (Preimage Finding)    | 98.76 MH/s              | N/A                           | N/A                                      |
+| Cerberus (BLAKE3)                | 183.83 MH/s             | N/A                           | N/A                                      |
 
 On a mobile CPU (i7-11370H), similar performance can be achieved on AVX-512 (at a higher IPC due to Intel having faster register rotations):
 
@@ -338,6 +339,7 @@ The peak throughput on 7950X reported by `openssl speed -multi 32 sha256` is 239
 | DoubleBlock (mCaptcha edge case) | 850.75 MH/s | 827.74 MH/s |
 | go-away (32 bytes)               | 1.525 GH/s  | 1.291 GH/s  |
 | GoToSocial (Preimage Finding)    | 1.527 GH/s  | N/A         |
+| Cerberus (BLAKE3)                | 3.016 GH/s  | N/A         |
 
 On EPYC 9634 with better thermals, OpenSSL has 598.28 MH/s (38.29 GB/s) single block, 1.91 GH/s (122.54 GB/s) continuous.
 

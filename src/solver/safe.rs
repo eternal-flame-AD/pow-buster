@@ -3,8 +3,8 @@ use sha2::digest::generic_array::GenericArray;
 use crate::{
     Align16, Align64,
     message::{
-        BinaryMessage, DecimalMessage, DoubleBlockMessage, GoAwayMessage, GoToSocialMessage,
-        SingleBlockMessage,
+        BinaryMessage, CerberusMessage, DecimalMessage, DoubleBlockMessage, GoAwayMessage,
+        GoToSocialMessage, SingleBlockMessage,
     },
 };
 
@@ -432,6 +432,86 @@ impl crate::solver::Solver for BinarySolver {
     }
 }
 
+/// Safe Cerberus solver.
+///
+///
+/// Current implementation: scalar fallback.
+pub struct CerberusSolver {
+    message: CerberusMessage,
+    attempted_nonces: u64,
+    limit: u64,
+}
+
+impl From<CerberusMessage> for CerberusSolver {
+    fn from(message: CerberusMessage) -> Self {
+        Self {
+            message,
+            attempted_nonces: 0,
+            limit: u32::MAX as u64,
+        }
+    }
+}
+
+impl CerberusSolver {
+    /// Set the limit.
+    pub fn set_limit(&mut self, limit: u64) {
+        self.limit = limit.min(u32::MAX as u64);
+    }
+
+    /// Get the attempted nonces.   
+    pub fn get_attempted_nonces(&self) -> u64 {
+        self.attempted_nonces
+    }
+}
+
+impl crate::solver::Solver for CerberusSolver {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+        debug_assert_eq!(target, 0);
+
+        let remaining_limit = self
+            .limit
+            .saturating_sub(self.attempted_nonces)
+            .try_into()
+            .unwrap_or(u32::MAX);
+
+        for nonce in 0u32..remaining_limit {
+            if self.attempted_nonces >= self.limit {
+                return None;
+            }
+            let mut msg = self.message.salt_residual;
+            let mut nonce_copy = nonce;
+            for i in (0..9).rev() {
+                msg[self.message.salt_residual_len + i] = (nonce_copy % 10) as u8 + b'0';
+                nonce_copy /= 10;
+            }
+            debug_assert_eq!(nonce_copy, 0);
+
+            let msg = core::array::from_fn(|i| {
+                u32::from_le_bytes([msg[i * 4], msg[i * 4 + 1], msg[i * 4 + 2], msg[i * 4 + 3]])
+            });
+
+            let hash = crate::blake3::compress(
+                &mut self.message.prefix_state,
+                &msg,
+                0,
+                self.message.salt_residual_len as u32 + 9,
+                self.message.flags,
+            );
+            self.attempted_nonces += 1;
+            if hash[0] & mask as u32 == 0 {
+                crate::unlikely();
+
+                return Some((
+                    (nonce + self.message.nonce_addend) as u64,
+                    hash[..8].try_into().unwrap(),
+                ));
+            }
+        }
+
+        None
+    }
+}
+
 /// Safe GoToSocial solver.
 ///
 ///
@@ -572,6 +652,7 @@ impl crate::solver::Solver for GoToSocialSolver {
         None
     }
 }
+
 #[cfg(test)]
 mod tests {
     use crate::solver::Solver;
@@ -607,6 +688,13 @@ mod tests {
         let mut solution_hex = [0u8; 64];
         crate::encode_hex(&mut solution_hex, solution.1);
         assert_eq!(&solution_hex, image);
+    }
+
+    #[test]
+    fn test_solve_cerberus() {
+        crate::solver::tests::test_cerberus_validator::<CerberusSolver, _>(|prefix| {
+            CerberusMessage::new(prefix, 0).map(Into::into)
+        });
     }
 
     #[test]

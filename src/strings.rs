@@ -4,6 +4,41 @@ use crate::Align16;
 #[cfg(any(target_feature = "avx512f", target_feature = "avx2"))]
 use crate::Align64;
 
+pub(crate) static DIGIT_LUT_10000_LE: Align64<[u32; 10000]> = const {
+    let mut out = [0; 10000];
+    let mut i = 0;
+    while i < 10000 {
+        let mut copy = i;
+        let mut ds = [b'0'; 4];
+        let mut j = 0;
+        while j < 4 {
+            ds[j] = (copy % 10) as u8 + b'0';
+            copy /= 10;
+            j += 1;
+        }
+        out[i] = u32::from_be_bytes(ds);
+        i += 1;
+    }
+    Align64(out)
+};
+
+#[expect(dead_code)]
+mod static_asserts {
+    use super::DIGIT_LUT_10000_LE;
+
+    static ASSERT_DIGIT_LUT_10000_LE_0: [(); 1] =
+        [(); (DIGIT_LUT_10000_LE.0[0] == u32::from_be_bytes(*b"0000")) as usize];
+
+    static ASSERT_DIGIT_LUT_10000_LE_1: [(); 1] =
+        [(); (DIGIT_LUT_10000_LE.0[1] == u32::from_be_bytes(*b"1000")) as usize];
+
+    static ASSERT_DIGIT_LUT_10000_LE_10: [(); 1] =
+        [(); (DIGIT_LUT_10000_LE.0[10] == u32::from_be_bytes(*b"0100")) as usize];
+
+    static ASSERT_DIGIT_LUT_10000_LE_1234: [(); 1] =
+        [(); (DIGIT_LUT_10000_LE.0[1234] == u32::from_be_bytes(*b"4321")) as usize];
+}
+
 #[derive(Debug, Clone, Copy)]
 struct MagicNumber {
     m: i32,
