@@ -5,7 +5,7 @@ use axum::{
     Form, Json, Router,
     body::Body,
     extract::{Request, State},
-    http::{HeaderValue, header::ACCEPT},
+    http::{HeaderValue, header::ACCEPT_ENCODING},
     middleware::Next,
     response::{Html, IntoResponse, Response},
     routing::{get, post},
@@ -69,9 +69,9 @@ pub struct AppState {
     limit: u64,
 }
 
-struct Accept(u8);
+struct AcceptEncoding(u8);
 
-impl Accept {
+impl AcceptEncoding {
     const MASK_GZIP: u8 = 1 << 0;
 
     fn gzip(&self) -> bool {
@@ -79,9 +79,9 @@ impl Accept {
     }
 }
 
-impl Header for Accept {
+impl Header for AcceptEncoding {
     fn name() -> &'static headers::HeaderName {
-        &ACCEPT
+        &ACCEPT_ENCODING
     }
 
     fn decode<'i, I>(values: &mut I) -> Result<Self, headers::Error>
@@ -102,7 +102,7 @@ impl Header for Accept {
                 }
             }
         }
-        Ok(Accept(mask))
+        Ok(AcceptEncoding(mask))
     }
 
     fn encode<E>(&self, _values: &mut E)
@@ -116,7 +116,7 @@ impl Header for Accept {
 #[cfg(feature = "server-wasm")]
 async fn serve_wasm(
     axum::extract::Path(mut file): axum::extract::Path<String>,
-    axum_extra::TypedHeader(accept): axum_extra::TypedHeader<Accept>,
+    axum_extra::TypedHeader(accept): axum_extra::TypedHeader<AcceptEncoding>,
 ) -> Response {
     use assets::{StaticFile, WasmAssets};
 
@@ -149,7 +149,7 @@ async fn serve_wasm(
 #[cfg(not(feature = "server-wasm"))]
 async fn serve_wasm(
     axum::extract::Path(_file): axum::extract::Path<String>,
-    axum_extra::TypedHeader(_accept): axum_extra::TypedHeader<Accept>,
+    axum_extra::TypedHeader(_accept): axum_extra::TypedHeader<AcceptEncoding>,
 ) -> Response {
     (axum::http::StatusCode::NOT_FOUND, "404 Not Found").into_response()
 }
