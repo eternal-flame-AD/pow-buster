@@ -31,7 +31,7 @@ A fast, data-parallel, adversarially [^3] implemented mCaptcha/Anubis/Cerberus/g
 
 The benchmarks demonstrate a significant performance gap between browser-based JavaScript execution and native implementations, suggesting fundamental challenges for PoW-based browser CAPTCHA systems.
 
-[Public web demo running on a $4/month/core server, 80-100MHs/thread](https://powbuster.yumechi.jp/)
+[Public web demo running on Netcup (R) RS 2000 G12, 8vCPU server at MSRP 14.58EUR/month](https://powbuster.yumechi.jp/). Ballparking 80-100MH/s/thread for SHA-2 and 170MH/s/thread for BLAKE3.
 
 ## Motivation / Why?
 
