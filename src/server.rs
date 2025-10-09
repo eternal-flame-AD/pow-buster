@@ -5,12 +5,13 @@ use axum::{
     Form, Json, Router,
     body::Body,
     extract::{Request, State},
-    http::HeaderValue,
+    http::{HeaderValue, header::ACCEPT},
     middleware::Next,
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
 use axum_extra::response::JavaScript;
+use headers::Header;
 use tokio::sync::Semaphore;
 
 use crate::{
@@ -68,9 +69,58 @@ pub struct AppState {
     limit: u64,
 }
 
+struct Accept(u8);
+
+impl Accept {
+    const MASK_GZIP: u8 = 1 << 0;
+
+    fn gzip(&self) -> bool {
+        self.0 & Self::MASK_GZIP != 0
+    }
+}
+
+impl Header for Accept {
+    fn name() -> &'static headers::HeaderName {
+        &ACCEPT
+    }
+
+    fn decode<'i, I>(values: &mut I) -> Result<Self, headers::Error>
+    where
+        Self: Sized,
+        I: Iterator<Item = &'i HeaderValue>,
+    {
+        let mut mask = 0;
+        for value in values {
+            let Ok(value) = value.to_str() else {
+                continue;
+            };
+
+            for key in value.split(',') {
+                let key = key.trim();
+                if key == "gzip" {
+                    mask |= Self::MASK_GZIP;
+                }
+            }
+        }
+        Ok(Accept(mask))
+    }
+
+    fn encode<E>(&self, _values: &mut E)
+    where
+        E: Extend<HeaderValue>,
+    {
+        unimplemented!()
+    }
+}
+
 #[cfg(feature = "server-wasm")]
-async fn serve_wasm(axum::extract::Path(file): axum::extract::Path<String>) -> Response {
+async fn serve_wasm(
+    axum::extract::Path(mut file): axum::extract::Path<String>,
+    axum_extra::TypedHeader(accept): axum_extra::TypedHeader<Accept>,
+) -> Response {
     use assets::{StaticFile, WasmAssets};
+
+    let mut content_encoding = None;
     if file == "index.txt" {
         let mut index = String::new();
         WasmAssets::iter().for_each(|entry| {
@@ -82,12 +132,25 @@ async fn serve_wasm(axum::extract::Path(file): axum::extract::Path<String>) -> R
             index,
         )
             .into_response();
+    } else if accept.gzip() && file.ends_with(".wasm") {
+        file.push_str(".gz");
+        content_encoding = Some("gzip");
     }
-    StaticFile(file).into_response()
+    let mut response = StaticFile(file).into_response();
+    if let Some(content_encoding) = content_encoding {
+        response.headers_mut().insert(
+            "Content-Encoding",
+            HeaderValue::from_static(content_encoding),
+        );
+    }
+    response
 }
 
 #[cfg(not(feature = "server-wasm"))]
-async fn serve_wasm(axum::extract::Path(_file): axum::extract::Path<String>) -> Response {
+async fn serve_wasm(
+    axum::extract::Path(_file): axum::extract::Path<String>,
+    axum_extra::TypedHeader(_accept): axum_extra::TypedHeader<Accept>,
+) -> Response {
     (axum::http::StatusCode::NOT_FOUND, "404 Not Found").into_response()
 }
 

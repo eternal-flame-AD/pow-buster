@@ -52,6 +52,10 @@
             </ul>
         </li>
         <li>
+            Cerberus:
+            <code>{"challenge":"8676e9cefd7605e746987bf31262846259c2e550d4e308f66b74cb06a722a6c8","difficulty":12,"nonce":90144522,"ts":1000000000,"signature":"e3cae2bc91a2f303d272ba748a2fe82835ab057e9ff00bacd67bec24e9ae387b810407af545a6589b7f421defead23b9bc6c5ccfd3125fe758819e4312b3a300"}</code>
+        </li>
+        <li>
             Go-away (Server-Side Only for now):
             <code>{"challenge":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", "target": "000fff", "difficulty": 16}</code>
         </li>
@@ -66,10 +70,6 @@
                     <code>{"challenge":{"c":50,"s":57,"d":4},"token":"4b1b46efba002091eeff6cfb0a8c2210d4670d9ce013d6e773","expires":0}</code>
                 </li>
             </ul>
-        </li>
-        <li>
-            Cerberus (Server-Side Only for now):
-            <code>{"challenge":"8676e9cefd7605e746987bf31262846259c2e550d4e308f66b74cb06a722a6c8","difficulty":12,"nonce":90144522,"ts":1000000000,"signature":"e3cae2bc91a2f303d272ba748a2fe82835ab057e9ff00bacd67bec24e9ae387b810407af545a6589b7f421defead23b9bc6c5ccfd3125fe758819e4312b3a300"}</code>
         </li>
         <li>
             GoToSocial/Nollamas (Server-Side Only for now, requires AVX-512 for now), the solution for the following
@@ -95,12 +95,12 @@
 
         <div id="wasm-results-inner" class="hidden">
             <p><span id="wasm-error-value"></span></p>
-            <p>Attempted Nonces: <span id="attempted-nonces-value"></span></p>
+            <p>Nonce: <span id="nonce-value"></span> (<span id="attempted-nonces-value"></span> attempted)</p>
             <p>Latency: <span id="latency-value"></span></p>
             <p>Hash Rate: <span id="hash-rate-value"></span></p>
 
-            <p>Pass challenge link: <span id="pass-challenge-link-value"></span></p>
-            <button id="copy-pass-challenge-link-button" type="button">Copy Pass Challenge Link</button>
+            <p>Pass challenge script: <br><textarea rows="10" cols="80" id="pass-challenge-script-value"></textarea></p>
+            <button id="copy-pass-challenge-script-button" type="button">Copy Pass Challenge Script</button>
         </div>
     </div>
 
@@ -112,7 +112,7 @@
     </footer>
 
     <script type="module">
-        import init, { solve_anubis_json } from "/pkg/pow_buster.js";
+        import init, { solve_json } from "/pkg/pow_buster.js";
 
         let solver = null;
         let worker = null;
@@ -160,7 +160,15 @@
                 init();
                 moduleLoadedEl.innerText = "YES (Sync WASM)";
                 solver = async (json) => {
-                    return { ...solve_anubis_json(json), "method": "sync wasm" };
+                    const solution = solve_json(json);
+                    return {
+                        subtype: solution.subtype,
+                        delay: solution.delay,
+                        response: solution.response,
+                        nonce: solution.nonce,
+                        attempted_nonces: solution.attempted_nonces,
+                        "method": "sync wasm",
+                    };
                 };
             } catch (e) {
                 moduleLoadedEl.innerText = "ERROR: " + e;
@@ -182,19 +190,19 @@
         const wasmErrorEl = document.getElementById("wasm-error-value");
         const wasmResultsInnerEl = document.getElementById("wasm-results-inner");
 
+        const nonceEl = document.getElementById("nonce-value");
 
-        const passChallengeLinkEl = document.getElementById("pass-challenge-link-value");
+        const passChallengeScriptEl = document.getElementById("pass-challenge-script-value");
 
-        const copyPassChallengeLinkButton = document.getElementById("copy-pass-challenge-link-button");
-        copyPassChallengeLinkButton.addEventListener("click", () => {
-            copyToClipboard(passChallengeLinkEl.innerText);
+        const copyPassChallengeScriptButton = document.getElementById("copy-pass-challenge-script-button");
+        copyPassChallengeScriptButton.addEventListener("click", () => {
+            copyToClipboard(passChallengeScriptEl.value);
         });
 
         const attemptedNoncesEl = document.getElementById("attempted-nonces-value");
         const latencyEl = document.getElementById("latency-value");
         const hashRateEl = document.getElementById("hash-rate-value");
         const challengeEl = document.getElementById("challenge");
-        const passChallengeLink = document.getElementById("pass-challenge-link");
 
         function findJson(text) {
             try {
@@ -226,10 +234,71 @@
                     console.log("duration", duration);
 
                     setTimeout(() => {
-                        let finalUrl = "/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime=" + result.delay + "&response=" + result.response + "&nonce=" + result.nonce + "&redir=/";
-                        console.log("final url", finalUrl);
-                        passChallengeLinkEl.innerText = finalUrl;
-                        attemptedNoncesEl.innerText = result.attempted_nonces;
+                        if (result.subtype === "anubis") {
+                            let finalUrl = "/.within.website/x/cmd/anub is/api/pass-challenge?elapsedTime=" + result.delay + "&response=" + result.response + "&nonce=" + result.nonce + "&redir=";
+                            passChallengeScriptEl.value = `window.location.replace(${JSON.stringify(finalUrl)} + encodeURIComponent(window.location.href));`;
+                            nonceEl.innerText = result.nonce;
+                            attemptedNoncesEl.innerText = result.attempted_nonces;
+                        } else if (result.subtype === "cerberus") {
+                            let finalScript = `
+                            ((hash,nonce) => {
+    const thisScript = document.getElementById('challenge-script');
+    function createAnswerForm(hash, solution, baseURL, nonce, ts, signature) {
+        /* 
+        Copyright (c) 2025 Yanning Chen <self@lightquantum.me>
+
+        Permission is hereby granted, free of charge, to any person obtaining a copy
+        of this software and associated documentation files (the "Software"), to deal
+        in the Software without restriction, including without limitation the rights
+        to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+        copies of the Software, and to permit persons to whom the Software is
+        furnished to do so, subject to the following conditions:
+
+        The above copyright notice and this permission notice shall be included in
+        all copies or substantial portions of the Software.
+
+        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+        AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+        THE SOFTWARE.
+        */
+
+        function addHiddenInput(form, name, value) {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = name;
+          input.value = value;
+          form.appendChild(input);
+        }
+      
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = baseURL + "/answer";
+      
+        addHiddenInput(form, 'response', hash);
+        addHiddenInput(form, 'solution', solution);
+        addHiddenInput(form, 'nonce', nonce);
+        addHiddenInput(form, 'ts', ts);
+        addHiddenInput(form, 'signature', signature);
+        addHiddenInput(form, 'redir', window.location.href);
+      
+        document.body.appendChild(form);
+        return form;
+    }
+
+    const { difficulty, nonce: inputNonce, ts, signature } = JSON.parse(thisScript.getAttribute('x-challenge'));
+    const { baseURL } = JSON.parse(thisScript.getAttribute('x-meta'));
+    createAnswerForm(hash, nonce, baseURL, inputNonce, ts, signature).submit();
+})("`.trim();
+                            finalScript += `${result.response}",${result.nonce})`;
+                            nonceEl.innerText = result.nonce;
+                            attemptedNoncesEl.innerText = result.attempted_nonces;
+
+                            passChallengeScriptEl.value = finalScript;
+                        }
                         hashRateEl.innerText = "N/A";
                         if (duration >= 50) {
                             latencyEl.innerText = duration.toFixed(1) + "ms";

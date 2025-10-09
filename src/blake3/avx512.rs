@@ -265,14 +265,14 @@ pub(crate) fn compress_mb16_reduced<const CONSTANT_WORD_COUNT: usize, const PATC
                 g4!(3, 7, 11, 15, 6, 7);
             }
             if i > 0 || CONSTANT_WORD_COUNT < 10 {
-                g4!(0, 5, 10, 15, 8, 9);
-            }
-            if i > 0 || CONSTANT_WORD_COUNT < 12 {
                 if i < 6 {
-                    g4!(1, 6, 11, 12, 10, 11);
+                    g4!(0, 5, 10, 15, 8, 9);
                 } else {
-                    g4!(g4_a_only; 1, 6, 11, 12, 10, 11);
+                    g4!(g4_a_only; 0, 5, 10, 15, 8, 9);
                 }
+            }
+            if i < 6 && (i > 0 || CONSTANT_WORD_COUNT < 12) {
+                g4!(1, 6, 11, 12, 10, 11);
             }
             if i > 0 || CONSTANT_WORD_COUNT < 14 {
                 g4!(2, 7, 8, 13, 12, 13);

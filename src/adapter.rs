@@ -5,7 +5,7 @@ use crate::{
     message::{CapJSEmitter, CerberusMessage, DecimalMessage, GoAwayMessage},
     solver::{SOLVE_TYPE_LT, Solver},
 };
-use alloc::{string::String, vec::Vec};
+use alloc::{format, string::String, vec::Vec};
 use sha2::Digest;
 
 #[derive(serde::Deserialize, Debug)]

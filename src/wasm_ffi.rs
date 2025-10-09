@@ -1,9 +1,8 @@
-use alloc::string::String;
-use core::num::NonZeroU8;
+use alloc::string::{String, ToString};
 
 use wasm_bindgen::prelude::*;
 
-use crate::solver::{SOLVE_TYPE_LT, Solver};
+use crate::solver::Solver;
 
 #[wasm_bindgen(js_namespace = console)]
 extern "C" {
@@ -13,6 +12,7 @@ extern "C" {
 #[wasm_bindgen(js_name = "AnubisResponse")]
 #[derive(Debug, Clone)]
 pub struct AnubisResponse {
+    subtype: &'static str,
     delay: u32,
     nonce: u64,
     response: String,
@@ -21,6 +21,10 @@ pub struct AnubisResponse {
 
 #[wasm_bindgen]
 impl AnubisResponse {
+    #[wasm_bindgen(getter)]
+    pub fn subtype(&self) -> String {
+        self.subtype.to_string()
+    }
     #[wasm_bindgen(getter)]
     pub fn response(&self) -> String {
         self.response.clone()
@@ -40,32 +44,23 @@ impl AnubisResponse {
 }
 
 #[wasm_bindgen]
-pub fn solve_anubis(input: &[u8], difficulty_factor: u8) -> Option<AnubisResponse> {
-    let target = crate::compute_target_anubis(NonZeroU8::new(difficulty_factor).unwrap());
-    let ((nonce, result), attempted_nonces) = crate::message::DecimalMessage::new(input, 0)
-        .and_then(|message| {
-            let mut solver = crate::DecimalSolver::from(message);
-            Some((
-                solver.solve::<{ SOLVE_TYPE_LT }>(target, !0)?,
-                solver.get_attempted_nonces(),
-            ))
-        })?;
-
-    let mut response = [0u8; 64];
-    crate::encode_hex(&mut response, result);
-
-    Some(AnubisResponse {
-        delay: 0,
-        nonce,
-        response: unsafe { alloc::string::String::from_utf8_unchecked(response.to_vec()) },
-        attempted_nonces,
-    })
+pub fn solve_json(input: &str) -> Result<AnubisResponse, JsError> {
+    if let Ok(descriptor) =
+        serde_json::from_str::<crate::adapter::CerberusChallengeDescriptor>(input)
+    {
+        return solve_cerberus_json(&descriptor);
+    } else if let Ok(descriptor) =
+        serde_json::from_str::<crate::adapter::AnubisChallengeDescriptor>(input)
+    {
+        return solve_anubis_json(&descriptor);
+    } else {
+        return Err(JsError::new("invalid descriptor"));
+    };
 }
 
-#[wasm_bindgen]
-pub fn solve_anubis_json(input: &str) -> Result<AnubisResponse, JsError> {
-    let descriptor: crate::adapter::AnubisChallengeDescriptor = serde_json::from_str(input)?;
-
+fn solve_anubis_json(
+    descriptor: &crate::adapter::AnubisChallengeDescriptor,
+) -> Result<AnubisResponse, JsError> {
     if !descriptor.supported() {
         return Err(JsError::new(
             "unsupported algorithm (please choose one of fast, slow, preact)",
@@ -81,9 +76,32 @@ pub fn solve_anubis_json(input: &str) -> Result<AnubisResponse, JsError> {
     let mut response = [0u8; 64];
     crate::encode_hex(&mut response, result);
     Ok(AnubisResponse {
+        subtype: "anubis",
         delay: descriptor.delay() as u32,
         nonce,
         response: unsafe { alloc::string::String::from_utf8_unchecked(response.to_vec()) },
         attempted_nonces,
+    })
+}
+
+fn solve_cerberus_json(
+    descriptor: &crate::adapter::CerberusChallengeDescriptor,
+) -> Result<AnubisResponse, JsError> {
+    let mut solver = crate::CerberusSolver::from(descriptor.build_msg().unwrap());
+
+    let result = solver.solve::<{ crate::solver::SOLVE_TYPE_MASK }>(0, descriptor.mask() as u64);
+
+    let Some((nonce, result)) = result else {
+        return Err(JsError::new("solver failed"));
+    };
+
+    let mut response = [0u8; 64];
+    crate::encode_hex_le(&mut response, result);
+    Ok(AnubisResponse {
+        subtype: "cerberus",
+        delay: 0,
+        nonce,
+        response: unsafe { alloc::string::String::from_utf8_unchecked(response.to_vec()) },
+        attempted_nonces: solver.get_attempted_nonces(),
     })
 }

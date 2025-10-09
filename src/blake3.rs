@@ -1,6 +1,9 @@
 #[cfg(all(target_arch = "x86_64", any(doc, target_feature = "avx512f")))]
 pub mod avx512;
 
+#[cfg(target_arch = "wasm32")]
+pub mod simd128;
+
 /// Initial hash values for BLAKE3
 pub(crate) const IV: [u32; 8] = crate::sha256::IV;
 

@@ -261,7 +261,7 @@ cfg_if::cfg_if! {
         /// Binary solver
         pub type BinarySolver = crate::solver::safe::BinarySolver;
         /// Cerberus solver
-        pub type CerberusSolver = crate::solver::safe::CerberusSolver;
+        pub type CerberusSolver = crate::solver::simd128::CerberusSolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "SIMD128";
     } else {
@@ -362,6 +362,27 @@ pub fn is_supported_lane_position_wasm(lane_position: usize) -> bool {
 pub fn encode_hex(out: &mut [u8; 64], inp: [u32; 8]) {
     for w in 0..8 {
         let be_bytes = inp[w].to_be_bytes();
+        be_bytes.iter().enumerate().for_each(|(i, b)| {
+            let high_nibble = b >> 4;
+            let low_nibble = b & 0xf;
+            out[w * 8 + i * 2] = if high_nibble < 10 {
+                high_nibble + b'0'
+            } else {
+                high_nibble + b'a' - 10
+            };
+            out[w * 8 + i * 2 + 1] = if low_nibble < 10 {
+                low_nibble + b'0'
+            } else {
+                low_nibble + b'a' - 10
+            };
+        });
+    }
+}
+
+/// Encode a blake3 hash into hex
+pub fn encode_hex_le(out: &mut [u8; 64], inp: [u32; 8]) {
+    for w in 0..8 {
+        let be_bytes = inp[w].to_le_bytes();
         be_bytes.iter().enumerate().for_each(|(i, b)| {
             let high_nibble = b >> 4;
             let low_nibble = b & 0xf;
