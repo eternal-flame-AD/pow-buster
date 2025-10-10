@@ -1,0 +1,54 @@
+Command: RUSTFLAGS="-Ctarget-cpu=native" cargo bench --bench bench_blake3
+
+AMD(R) Ryzen(TM) 9 7950X:
+
+blake3_cerberus/blake3_cerberus
+                        time:   [4.9057 ms 5.0906 ms 5.2750 ms]
+                        thrpt:  [198.78 Melem/s 205.98 Melem/s 213.75 Melem/s]
+Found 2 outliers among 200 measurements (1.00%)
+  2 (1.00%) high mild
+
+spawning 32 threads
+blake3_cerberus_multi_threaded/blake3_cerberus_multi_threaded
+                        time:   [159.59 ms 159.71 ms 159.81 ms]
+                        thrpt:  [3.3593 Gelem/s 3.3616 Gelem/s 3.3640 Gelem/s]
+
+AMD(R) EPYC(TM) 9634:
+
+blake3_cerberus/blake3_cerberus
+                        time:   [6.8226 ms 7.0936 ms 7.3655 ms]
+                        thrpt:  [142.36 Melem/s 147.82 Melem/s 153.69 Melem/s]
+Found 1 outliers among 200 measurements (0.50%)
+  1 (0.50%) high mild
+
+spawning 64 threads
+blake3_cerberus_multi_threaded/blake3_cerberus_multi_threaded
+                        time:   [119.42 ms 120.99 ms 122.77 ms]
+                        thrpt:  [8.7461 Gelem/s 8.8744 Gelem/s 8.9917 Gelem/s]
+
+Intel(R) Core(TM) i7-11370H (Windows Operating System):
+
+blake3_cerberus/blake3_cerberus
+                        time:   [5.6194 ms 5.8558 ms 6.0974 ms]
+                        thrpt:  [171.97 Melem/s 179.07 Melem/s 186.60 Melem/s]
+Found 3 outliers among 200 measurements (1.50%)
+  3 (1.50%) high mild
+
+spawning 8 threads
+Benchmarking blake3_cerberus_multi_threaded/blake3_cerberus_multi_threaded: Collecting 50 samples in estimated 67.393 s blake3_cerberus_multi_threaded/blake3_cerberus_multi_threaded
+                        time:   [200.86 ms 202.24 ms 203.58 ms]
+                        thrpt:  [659.28 Melem/s 663.66 Melem/s 668.21 Melem/s]
+Found 12 outliers among 50 measurements (24.00%)
+  10 (20.00%) low mild
+  2 (4.00%) high mild
+
+Netcup(R) RS 2000 G12 (EPYC 9645 8vCPU, 14.58EUR/month):
+
+blake3_cerberus/blake3_cerberus
+                        time:   [5.5266 ms 5.7362 ms 5.9509 ms]
+                        thrpt:  [176.20 Melem/s 182.80 Melem/s 189.73 Melem/s]
+
+spawning 8 threads
+blake3_cerberus_multi_threaded/blake3_cerberus_multi_threaded
+                        time:   [95.241 ms 95.654 ms 96.082 ms]
+                        thrpt:  [1.3969 Gelem/s 1.4032 Gelem/s 1.4092 Gelem/s]
