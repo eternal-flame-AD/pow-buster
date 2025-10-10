@@ -144,6 +144,7 @@ impl SingleBlockSolver {
 
                     let mut inner_key = if NO_TRAILING_ZEROS { 1 } else { 0 };
                     let mut bumper = 1;
+                    let base_state = core::array::from_fn(|i| u32x4_splat(hotstart_state[i]));
                     while inner_key < 10_000_000 {
                         {
                             let message_bytes = decompose_blocks_mut(&mut this.message.message);
@@ -175,7 +176,7 @@ impl SingleBlockSolver {
                             );
                         }
 
-                        let mut state = core::array::from_fn(|i| u32x4_splat(hotstart_state[i]));
+                        let mut state = base_state;
                         crate::sha256::simd128::multiway_arx::<LANE_ID_0_WORD_IDX>(
                             &mut state,
                             &mut blocks,

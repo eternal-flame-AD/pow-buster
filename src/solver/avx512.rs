@@ -1446,14 +1446,15 @@ impl CerberusSolver {
                 if CENTER_WORD_IDX < LANE_ID_WORD_IDX {
                     lane_id_value = _mm512_srli_epi32(lane_id_value, 8);
                 }
+                let state_base =
+                    core::array::from_fn(|i| _mm512_set1_epi32(prepared_state[i] as _));
                 for (i, word) in crate::strings::DIGIT_LUT_10000_LE_EVEN.iter().enumerate() {
                     msg[CENTER_WORD_IDX] = *word;
                     if self.attempted_nonces >= self.limit {
                         return None;
                     }
 
-                    let mut state =
-                        core::array::from_fn(|i| _mm512_set1_epi32(prepared_state[i] as _));
+                    let mut state = state_base;
                     let patch = _mm512_or_epi32(
                         _mm512_set1_epi32(msg[LANE_ID_WORD_IDX] as _),
                         lane_id_value,
@@ -1467,7 +1468,7 @@ impl CerberusSolver {
 
                     msg[CENTER_WORD_IDX] |= u32::from_be_bytes([1, 0, 0, 0]);
 
-                    state = core::array::from_fn(|i| _mm512_set1_epi32(prepared_state[i] as _));
+                    state = state_base;
                     crate::blake3::avx512::compress_mb16_reduced::<
                         CONSTANT_WORD_COUNT,
                         LANE_ID_WORD_IDX,
