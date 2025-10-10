@@ -316,7 +316,7 @@ For us we have single thread:
 | SingleBlock/Anubis               | 89.16 MH/s              | 62.19 MH/s                    | 14.74 MH/s                               |
 | DoubleBlock (mCaptcha edge case) | 53.28 MH/s              | 42.55 MH/s                    | Not Tested                               |
 | go-away (32 bytes)               | 98.42 MH/s              | 78.10 MH/s                    | Not Tested                               |
-| Cerberus (BLAKE3)                | 196.34 MH/s             | N/A                           | 49.86 MH/s                               |
+| Cerberus (BLAKE3)                | 205.98 MH/s             | N/A                           | 49.86 MH/s                               |
 
 On a mobile CPU (i7-11370H), similar performance can be achieved on AVX-512 (at a higher IPC due to Intel having faster register rotations):
 
@@ -337,7 +337,7 @@ The peak throughput on 7950X reported by `openssl speed -multi 32 sha256` is 239
 | SingleBlock/Anubis               | 1.485 GH/s  | 1.143 GH/s  | ~250kH/s                         |
 | DoubleBlock (mCaptcha edge case) | 850.75 MH/s | 827.74 MH/s | N/A                              |
 | go-away (32 bytes)               | 1.525 GH/s  | 1.291 GH/s  | N/A                              |
-| Cerberus (BLAKE3)                | 3.163 GH/s  | N/A         | ~25MH/s                          |
+| Cerberus (BLAKE3)                | 3.361 GH/s  | N/A         | ~25MH/s                          |
 
 [^4]: Due to instablity of WASM optimization and runtime throttling behavior and lack of vendor provided benchmark harness, only approximate numbers can be provided.
 

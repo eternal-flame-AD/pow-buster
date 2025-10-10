@@ -1421,12 +1421,15 @@ impl CerberusSolver {
         const CONSTANT_WORD_COUNT: usize,
     >(
         &mut self,
-        mut msg: Align64<[u32; 16]>,
+        msg_tpl: Align64<[u32; 16]>,
         target: u64,
         mask: u64,
     ) -> Option<(u32, u32)> {
         debug_assert_eq!(target, 0);
 
+        // inform LLVM that padding is guaranteed to be zero
+        let mut msg = Align64([0u32; 16]);
+        msg.0[..=CENTER_WORD_IDX + 1].copy_from_slice(&msg_tpl.0[..=CENTER_WORD_IDX + 1]);
         let prepared_state = crate::blake3::ingest_message_prefix(
             *self.message.prefix_state,
             &msg[..CONSTANT_WORD_COUNT],
