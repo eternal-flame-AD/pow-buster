@@ -8,7 +8,6 @@ keywords = ["sha-2", "captcha", "proof-of-work", "mining"]
 authors = ["Yumechi <yume@yumechi.jp>"]
 version = "0.1.0"
 edition = "2024"
-build = "build.rs"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -54,10 +53,6 @@ num_cpus = { version = "1.17" }
 
 [[bench]]
 name = "bench_proof"
-harness = false
-
-[[bench]]
-name = "bench_go_to_social"
 harness = false
 
 [[bench]]
