@@ -87,21 +87,33 @@ fn solve_anubis_json(
 fn solve_cerberus_json(
     descriptor: &crate::adapter::CerberusChallengeDescriptor,
 ) -> Result<AnubisResponse, JsError> {
-    let mut solver = crate::CerberusSolver::from(descriptor.build_msg().unwrap());
+    let mut msg = descriptor
+        .build_msg(0)
+        .ok_or_else(|| JsError::new("invalid challenge"))?;
+    let mut solver = crate::CerberusSolver::from(msg);
 
-    let result = solver.solve::<{ crate::solver::SOLVE_TYPE_MASK }>(0, descriptor.mask() as u64);
+    for next_working_set in 1.. {
+        let result =
+            solver.solve::<{ crate::solver::SOLVE_TYPE_MASK }>(0, descriptor.mask() as u64);
 
-    let Some((nonce, result)) = result else {
-        return Err(JsError::new("solver failed"));
-    };
+        let Some((nonce, result)) = result else {
+            msg = descriptor
+                .build_msg(next_working_set)
+                .ok_or_else(|| JsError::new("search exhausted"))?;
+            solver = crate::CerberusSolver::from(msg);
+            continue;
+        };
 
-    let mut response = [0u8; 64];
-    crate::encode_hex_le(&mut response, result);
-    Ok(AnubisResponse {
-        subtype: "cerberus",
-        delay: 0,
-        nonce,
-        response: unsafe { alloc::string::String::from_utf8_unchecked(response.to_vec()) },
-        attempted_nonces: solver.get_attempted_nonces(),
-    })
+        let mut response = [0u8; 64];
+        crate::encode_hex_le(&mut response, result);
+        return Ok(AnubisResponse {
+            subtype: "cerberus",
+            delay: 0,
+            nonce,
+            response: unsafe { alloc::string::String::from_utf8_unchecked(response.to_vec()) },
+            attempted_nonces: solver.get_attempted_nonces(),
+        });
+    }
+
+    Err(JsError::new("search exhausted"))
 }

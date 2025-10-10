@@ -456,7 +456,7 @@ async fn solve_cerberus(
 ) -> Result<String, SolveError> {
     tracing::info!("solving cerberus challenge {:?}", config);
 
-    let msg = config.build_msg().ok_or(SolveError::InvalidChallenge)?;
+    let msg = config.build_msg(0).ok_or(SolveError::InvalidChallenge)?;
     let mask = config.mask();
     let estimated_workload = config.estimated_workload();
     let effective_limit = state.effective_limit().saturating_mul(2);

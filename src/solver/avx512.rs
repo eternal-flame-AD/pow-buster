@@ -1384,7 +1384,7 @@ impl crate::solver::Solver for GoAwaySolver {
 
 /// AVX-512 Ceberus solver.
 ///
-/// Current implementation: 9-digit out-of-order kernel with 16 way SIMD with quarter-round hotstart granularity.
+/// Current implementation: 9-digit out-of-order kernel with dual-wavefront 16 way SIMD and quarter-round hotstart granularity.
 pub struct CerberusSolver {
     message: CerberusMessage,
     attempted_nonces: u64,
