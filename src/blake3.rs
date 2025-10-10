@@ -4,6 +4,9 @@ pub mod avx512;
 #[cfg(target_arch = "wasm32")]
 pub mod simd128;
 
+#[macro_use]
+mod loop_macros;
+
 /// Initial hash values for BLAKE3
 pub(crate) const IV: [u32; 8] = crate::sha256::IV;
 
@@ -49,17 +52,81 @@ fn g(state: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize, mx: u32, my:
 }
 
 #[inline(always)]
-fn round(state: &mut [u32; 16], m: &[u32; 16]) {
+fn round_fixed(state: &mut [u32; 16], m: &[u32; 16], round: usize) {
     // Mix the columns.
-    g(state, 0, 4, 8, 12, m[0], m[1]);
-    g(state, 1, 5, 9, 13, m[2], m[3]);
-    g(state, 2, 6, 10, 14, m[4], m[5]);
-    g(state, 3, 7, 11, 15, m[6], m[7]);
+    g(
+        state,
+        0,
+        4,
+        8,
+        12,
+        m[MESSAGE_SCHEDULE[round][0]],
+        m[MESSAGE_SCHEDULE[round][1]],
+    );
+    g(
+        state,
+        1,
+        5,
+        9,
+        13,
+        m[MESSAGE_SCHEDULE[round][2]],
+        m[MESSAGE_SCHEDULE[round][3]],
+    );
+    g(
+        state,
+        2,
+        6,
+        10,
+        14,
+        m[MESSAGE_SCHEDULE[round][4]],
+        m[MESSAGE_SCHEDULE[round][5]],
+    );
+    g(
+        state,
+        3,
+        7,
+        11,
+        15,
+        m[MESSAGE_SCHEDULE[round][6]],
+        m[MESSAGE_SCHEDULE[round][7]],
+    );
     // Mix the diagonals.
-    g(state, 0, 5, 10, 15, m[8], m[9]);
-    g(state, 1, 6, 11, 12, m[10], m[11]);
-    g(state, 2, 7, 8, 13, m[12], m[13]);
-    g(state, 3, 4, 9, 14, m[14], m[15]);
+    g(
+        state,
+        0,
+        5,
+        10,
+        15,
+        m[MESSAGE_SCHEDULE[round][8]],
+        m[MESSAGE_SCHEDULE[round][9]],
+    );
+    g(
+        state,
+        1,
+        6,
+        11,
+        12,
+        m[MESSAGE_SCHEDULE[round][10]],
+        m[MESSAGE_SCHEDULE[round][11]],
+    );
+    g(
+        state,
+        2,
+        7,
+        8,
+        13,
+        m[MESSAGE_SCHEDULE[round][12]],
+        m[MESSAGE_SCHEDULE[round][13]],
+    );
+    g(
+        state,
+        3,
+        4,
+        9,
+        14,
+        m[MESSAGE_SCHEDULE[round][14]],
+        m[MESSAGE_SCHEDULE[round][15]],
+    );
 }
 
 #[inline(always)]
@@ -123,22 +190,14 @@ pub fn ingest_message_prefix(
 }
 
 #[inline(always)]
-fn permute(m: &mut [u32; 16]) {
-    let mut permuted = [0; 16];
-    for i in 0..16 {
-        permuted[i] = m[PERMUTATION[i]];
-    }
-    *m = permuted;
-}
-
-#[inline(always)]
-pub fn compress(
+/// Truncated BLAKE3 compression function.
+pub fn compress8(
     chaining_value: &[u32; 8],
     block_words: &[u32; 16],
     counter: u64,
     block_len: u32,
     flags: u32,
-) -> [u32; 16] {
+) -> [u32; 8] {
     let counter_low = counter as u32;
     let counter_high = (counter >> 32) as u32;
     #[rustfmt::skip]
@@ -148,27 +207,16 @@ pub fn compress(
         IV[0],             IV[1],             IV[2],             IV[3],
         counter_low,       counter_high,      block_len,         flags,
     ];
-    let mut block = *block_words;
+    let block = *block_words;
 
-    round(&mut state, &block); // round 1
-    permute(&mut block);
-    round(&mut state, &block); // round 2
-    permute(&mut block);
-    round(&mut state, &block); // round 3
-    permute(&mut block);
-    round(&mut state, &block); // round 4
-    permute(&mut block);
-    round(&mut state, &block); // round 5
-    permute(&mut block);
-    round(&mut state, &block); // round 6
-    permute(&mut block);
-    round(&mut state, &block); // round 7
+    repeat7!(i, {
+        round_fixed(&mut state, &block, i);
+    });
 
     for i in 0..8 {
         state[i] ^= state[i + 8];
-        state[i + 8] ^= chaining_value[i];
     }
-    state
+    state[..8].try_into().unwrap()
 }
 
 #[cfg(test)]
@@ -199,7 +247,7 @@ mod tests {
             let count_chunks = msg.len().div_ceil(64);
             ctr = 0;
             let mut chunks = msg.chunks_exact(64);
-            let mut output = [0u32; 16];
+            let mut output = [0u32; 8];
             while let Some(chunk) = chunks.next() {
                 let block = core::array::from_fn(|i| {
                     u32::from_le_bytes(chunk[i * 4..i * 4 + 4].try_into().unwrap())
@@ -211,10 +259,8 @@ mod tests {
                     } else {
                         0
                     };
-                output = compress(&chaining_value, &block, 0, 64, this_flag);
-                for i in 0..8 {
-                    chaining_value[i] = output[i];
-                }
+                output = compress8(&chaining_value, &block, 0, 64, this_flag);
+                chaining_value = output;
                 ctr += 1;
             }
 

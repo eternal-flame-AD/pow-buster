@@ -918,15 +918,13 @@ impl crate::solver::Solver for CerberusSolver {
                 u32::from_le_bytes([msg[i * 4], msg[i * 4 + 1], msg[i * 4 + 2], msg[i * 4 + 3]])
             });
 
-            let hash = crate::blake3::compress(
+            let hash = crate::blake3::compress8(
                 &mut output_state,
                 &mut msg,
                 0,
                 self.message.salt_residual_len as u32 + 9,
                 self.message.flags,
-            )[..8]
-                .try_into()
-                .unwrap();
+            );
 
             Some((nonce, hash))
         } else {

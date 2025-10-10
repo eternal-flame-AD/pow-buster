@@ -1446,7 +1446,7 @@ impl CerberusSolver {
                 if CENTER_WORD_IDX < LANE_ID_WORD_IDX {
                     lane_id_value = _mm512_srli_epi32(lane_id_value, 8);
                 }
-                for (i, word) in crate::strings::DIGIT_LUT_10000_LE.iter().enumerate() {
+                for (i, word) in crate::strings::DIGIT_LUT_10000_LE_EVEN.iter().enumerate() {
                     msg[CENTER_WORD_IDX] = *word;
                     if self.attempted_nonces >= self.limit {
                         return None;
@@ -1463,16 +1463,40 @@ impl CerberusSolver {
                         LANE_ID_WORD_IDX,
                     >(&mut state, &msg, patch);
 
-                    let hit = _mm512_testn_epi32_mask(state[0], _mm512_set1_epi32(mask as _));
+                    let s0 = state[0];
 
-                    self.attempted_nonces += 16;
+                    msg[CENTER_WORD_IDX] |= u32::from_be_bytes([1, 0, 0, 0]);
 
-                    if hit != 0 {
+                    state = core::array::from_fn(|i| _mm512_set1_epi32(prepared_state[i] as _));
+                    crate::blake3::avx512::compress_mb16_reduced::<
+                        CONSTANT_WORD_COUNT,
+                        LANE_ID_WORD_IDX,
+                    >(&mut state, &msg, patch);
+                    let s1 = state[0];
+
+                    let maskv = _mm512_set1_epi32(mask as _);
+                    let hit0 = _mm512_testn_epi32_mask(s0, maskv);
+                    let hit1 = _mm512_testn_epi32_mask(s1, maskv);
+
+                    self.attempted_nonces += 32;
+
+                    if hit0 != 0 || hit1 != 0 {
                         crate::unlikely();
 
-                        let success_lane_idx = hit.trailing_zeros() as u32;
+                        let success_lane_idx0 = hit0.trailing_zeros() as u32;
+                        let success_lane_idx1 = hit1.trailing_zeros() as u32;
 
-                        return Some((i as u32, lane_id_idx as u32 * 16 + success_lane_idx));
+                        if success_lane_idx0 < success_lane_idx1 {
+                            return Some((
+                                i as u32 * 2,
+                                lane_id_idx as u32 * 16 + success_lane_idx0,
+                            ));
+                        } else {
+                            return Some((
+                                i as u32 * 2 + 1,
+                                lane_id_idx as u32 * 16 + success_lane_idx1,
+                            ));
+                        }
                     }
                 }
             }
@@ -1607,15 +1631,13 @@ impl crate::solver::Solver for CerberusSolver {
                 u32::from_le_bytes([msg[i * 4], msg[i * 4 + 1], msg[i * 4 + 2], msg[i * 4 + 3]])
             });
 
-            let hash = crate::blake3::compress(
+            let hash = crate::blake3::compress8(
                 &mut output_state,
                 &mut msg,
                 0,
                 self.message.salt_residual_len as u32 + 9,
                 self.message.flags,
-            )[..8]
-                .try_into()
-                .unwrap();
+            );
 
             Some((nonce, hash))
         } else {

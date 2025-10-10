@@ -451,7 +451,6 @@ pub(crate) mod tests {
                         | (hash[1] as u32) << 16
                         | (hash[2] as u32) << 8
                         | (hash[3] as u32);
-                    eprintln!("leading zeros: {:?}", first_word.leading_zeros());
                     first_word.leading_zeros() >= (n as u32 * 2)
                 }
 

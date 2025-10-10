@@ -490,7 +490,7 @@ impl crate::solver::Solver for CerberusSolver {
                 u32::from_le_bytes([msg[i * 4], msg[i * 4 + 1], msg[i * 4 + 2], msg[i * 4 + 3]])
             });
 
-            let hash = crate::blake3::compress(
+            let hash = crate::blake3::compress8(
                 &mut self.message.prefix_state,
                 &msg,
                 0,
@@ -501,10 +501,7 @@ impl crate::solver::Solver for CerberusSolver {
             if hash[0] & mask as u32 == 0 {
                 crate::unlikely();
 
-                return Some((
-                    (nonce + self.message.nonce_addend) as u64,
-                    hash[..8].try_into().unwrap(),
-                ));
+                return Some(((nonce + self.message.nonce_addend) as u64, hash));
             }
         }
 

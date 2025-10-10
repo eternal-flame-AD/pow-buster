@@ -186,6 +186,7 @@ fn main() {
                 "entering busy loop, attach profiler to this process now (difficulty: {})",
                 difficulty
             );
+
             for prefix in 0..u64::MAX {
                 // mimick an anubis-like situation
                 let mut prefix_bytes = [0; 64];

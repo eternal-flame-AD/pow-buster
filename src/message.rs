@@ -705,8 +705,8 @@ impl CerberusMessage {
             });
             let this_flag = if i == 0 { blake3::FLAG_CHUNK_START } else { 0 };
 
-            let output = blake3::compress(&prefix_state, &block, 0, 64, this_flag);
-            prefix_state.copy_from_slice(&output[..8]);
+            let output = blake3::compress8(&prefix_state, &block, 0, 64, this_flag);
+            prefix_state.copy_from_slice(&output);
             flags &= !blake3::FLAG_CHUNK_START;
         }
         let remainder = chunks.remainder();
@@ -726,14 +726,14 @@ impl CerberusMessage {
                 ])
             });
 
-            let output = blake3::compress(
+            let output = blake3::compress8(
                 &prefix_state,
                 &block,
                 0,
                 64,
                 blake3::FLAG_CHUNK_START & flags,
             );
-            prefix_state.copy_from_slice(&output[..8]);
+            prefix_state.copy_from_slice(&output);
             flags &= !blake3::FLAG_CHUNK_START;
 
             for i in 0..9 {

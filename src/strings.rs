@@ -4,11 +4,11 @@ use crate::Align16;
 #[cfg(any(target_feature = "avx512f", target_feature = "avx2"))]
 use crate::Align64;
 
-pub(crate) static DIGIT_LUT_10000_LE: Align64<[u32; 10000]> = const {
-    let mut out = [0; 10000];
+pub(crate) static DIGIT_LUT_10000_LE_EVEN: Align64<[u32; 10000 / 2]> = const {
+    let mut out = [0; 10000 / 2];
     let mut i = 0;
-    while i < 10000 {
-        let mut copy = i;
+    while i < 10000 / 2 {
+        let mut copy = i * 2;
         let mut ds = [b'0'; 4];
         let mut j = 0;
         while j < 4 {
@@ -24,19 +24,19 @@ pub(crate) static DIGIT_LUT_10000_LE: Align64<[u32; 10000]> = const {
 
 #[expect(dead_code)]
 mod static_asserts {
-    use super::DIGIT_LUT_10000_LE;
+    use super::DIGIT_LUT_10000_LE_EVEN;
 
     static ASSERT_DIGIT_LUT_10000_LE_0: [(); 1] =
-        [(); (DIGIT_LUT_10000_LE.0[0] == u32::from_be_bytes(*b"0000")) as usize];
+        [(); (DIGIT_LUT_10000_LE_EVEN.0[0] == u32::from_be_bytes(*b"0000")) as usize];
 
     static ASSERT_DIGIT_LUT_10000_LE_1: [(); 1] =
-        [(); (DIGIT_LUT_10000_LE.0[1] == u32::from_be_bytes(*b"1000")) as usize];
+        [(); (DIGIT_LUT_10000_LE_EVEN.0[1] == u32::from_be_bytes(*b"2000")) as usize];
 
-    static ASSERT_DIGIT_LUT_10000_LE_10: [(); 1] =
-        [(); (DIGIT_LUT_10000_LE.0[10] == u32::from_be_bytes(*b"0100")) as usize];
+    static ASSERT_DIGIT_LUT_10000_LE_5: [(); 1] =
+        [(); (DIGIT_LUT_10000_LE_EVEN.0[5] == u32::from_be_bytes(*b"0100")) as usize];
 
     static ASSERT_DIGIT_LUT_10000_LE_1234: [(); 1] =
-        [(); (DIGIT_LUT_10000_LE.0[1234] == u32::from_be_bytes(*b"4321")) as usize];
+        [(); (DIGIT_LUT_10000_LE_EVEN.0[1234] == u32::from_be_bytes(*b"8642")) as usize];
 }
 
 #[derive(Debug, Clone, Copy)]

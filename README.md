@@ -63,10 +63,11 @@ All load tests were performed using the `live` command with the following method
 
 ## Features
 
+- SHA-2 and BLAKE3 hotstarting with round-level precomputation granularity
+- Structure of Array hashing backed by register-resident SIMD.
 - 4 searching modes: Prefix greater than (mCaptcha), prefix less than (Anubis/go-away), prefix mask test (Cap.js), and preimage finding (GoToSocial/NolLamas).
 - Greedy padding logic with 64-bit integer and floating point nonce stretching
 - Efficient outer loop and SIMD nonce encoding
-- SHA-2 hotstarting with round-level granularity
 - Fully unrolled and monomorphic core friendly to pipelining and ternary logic instruction lowering
 - Short-circuiting comparison with $H_1 \to H_7$ feed-forward elision with optional 64-bit support
 - Switch to octal nonces when success rate is overwhelming
@@ -317,7 +318,7 @@ For us we have single thread:
 | DoubleBlock (mCaptcha edge case) | 53.28 MH/s              | 42.55 MH/s                    | Not Tested                               |
 | go-away (32 bytes)               | 98.42 MH/s              | 78.10 MH/s                    | Not Tested                               |
 | GoToSocial (Preimage Finding)    | 98.76 MH/s              | N/A                           | N/A                                      |
-| Cerberus (BLAKE3)                | 183.83 MH/s             | N/A                           | N/A                                      |
+| Cerberus (BLAKE3)                | 183.83 MH/s             | N/A                           | 49.86 MH/s                               |
 
 On a mobile CPU (i7-11370H), similar performance can be achieved on AVX-512 (at a higher IPC due to Intel having faster register rotations):
 
@@ -333,13 +334,15 @@ The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and 
 
 The peak throughput on 7950X reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous.
 
-| Workload                         | AVX-512     | SHA-NI      |
-| -------------------------------- | ----------- | ----------- |
-| SingleBlock/Anubis               | 1.485 GH/s  | 1.143 GH/s  |
-| DoubleBlock (mCaptcha edge case) | 850.75 MH/s | 827.74 MH/s |
-| go-away (32 bytes)               | 1.525 GH/s  | 1.291 GH/s  |
-| GoToSocial (Preimage Finding)    | 1.527 GH/s  | N/A         |
-| Cerberus (BLAKE3)                | 3.016 GH/s  | N/A         |
+| Workload                         | AVX-512     | SHA-NI      | Vendor Official on Chromium [^4] |
+| -------------------------------- | ----------- | ----------- | -----------                      |
+| SingleBlock/Anubis               | 1.485 GH/s  | 1.143 GH/s  | ~250kH/s                         |
+| DoubleBlock (mCaptcha edge case) | 850.75 MH/s | 827.74 MH/s | N/A                              |
+| go-away (32 bytes)               | 1.525 GH/s  | 1.291 GH/s  | N/A                              |
+| GoToSocial (Preimage Finding)    | 1.527 GH/s  | N/A         | N/A                              |
+| Cerberus (BLAKE3)                | 3.054 GH/s  | N/A         | ~25MH/s                          |
+
+[^4]: Due to instablity of WASM optimization and runtime throttling behavior and lack of vendor provided benchmark harness, only approximate numbers can be provided.
 
 On EPYC 9634 with better thermals, OpenSSL has 598.28 MH/s (38.29 GB/s) single block, 1.91 GH/s (122.54 GB/s) continuous.
 
