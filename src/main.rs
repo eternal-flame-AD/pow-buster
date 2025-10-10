@@ -10,9 +10,10 @@ use std::{
 use clap::{Parser, Subcommand};
 
 use pow_buster::{
-    Align16, BinarySolver, DecimalSolver, DoubleBlockSolver, GoAwaySolver, SingleBlockSolver,
-    compute_target_anubis, compute_target_goaway, compute_target_mcaptcha,
-    message::{BinaryMessage, DecimalMessage, GoAwayMessage},
+    Align16, BinarySolver, CerberusSolver, DecimalSolver, DoubleBlockSolver, GoAwaySolver,
+    SingleBlockSolver, compute_mask_cerberus, compute_target_anubis, compute_target_goaway,
+    compute_target_mcaptcha,
+    message::{BinaryMessage, CerberusMessage, DecimalMessage, GoAwayMessage},
     solver::Solver,
 };
 
@@ -46,6 +47,7 @@ impl std::str::FromStr for ApiType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Scheme {
     Anubis,
+    Cerberus,
     GoAway,
     Mcaptcha,
 }
@@ -57,6 +59,7 @@ impl std::str::FromStr for Scheme {
             "anubis" => Ok(Scheme::Anubis),
             "mcaptcha" => Ok(Scheme::Mcaptcha),
             "goaway" | "go-away" => Ok(Scheme::GoAway),
+            "cerberus" => Ok(Scheme::Cerberus),
             _ => Err(format!("invalid scheme: {}", s)),
         }
     }
@@ -64,35 +67,32 @@ impl std::str::FromStr for Scheme {
 
 #[derive(Subcommand)]
 enum SubCommand {
-    /// Live throughput test using multiple workers
-    #[cfg(feature = "live-throughput-test")]
-    Live {
-        #[clap(long, default_value = "mcaptcha")]
-        api_type: String,
+    /// Spin-loop a solver for profiling
+    Profile {
+        #[clap(short, long, default_value = "10000000")]
+        difficulty: u64,
 
-        #[clap(long, default_value = "http://localhost:7000")]
-        host: String,
-
-        #[clap(long, default_value = "x")]
-        site_key: String,
-
-        #[clap(short, long, default_value = "32")]
-        n_workers: Option<u32>,
-
-        #[clap(short, long)]
-        n_threads: Option<u32>,
+        #[clap(short, long, default_value = "64")]
+        prefix_length: usize,
     },
-    /// Solve Cap.js with a real URL
-    #[cfg(feature = "client")]
-    CapJs {
-        #[clap(long, default_value = "http://localhost:3000/")]
-        url: String,
+    /// Spin-loop a solver on multiple threads for profiling
+    ProfileMt {
+        #[clap(short, long, default_value = "10000000")]
+        difficulty: u64,
 
         #[clap(long)]
-        site_key: String,
+        speed: bool,
 
-        #[clap(long)]
-        num_threads: Option<u32>,
+        #[clap(short, long, default_value = "1")]
+        n_threads: Option<u32>,
+
+        #[clap(short, long, default_value = "64")]
+        prefix_length: usize,
+    },
+    /// Print solver timing data
+    Time {
+        #[clap(short, long, default_value = "10000000")]
+        difficulty: u64,
     },
     /// Solve a generic PoW
     Solve {
@@ -110,18 +110,6 @@ enum SubCommand {
 
         #[clap(long, help = "show progress")]
         progress: bool,
-    },
-    /// Solve an Anubis PoW with a real URL
-    #[cfg(feature = "client")]
-    Anubis {
-        #[clap(long, default_value = "http://localhost:8923/")]
-        url: String,
-    },
-    /// Solve a GoAway PoW with a real URL
-    #[cfg(feature = "client")]
-    GoAway {
-        #[clap(long, default_value = "http://localhost:8080/")]
-        url: String,
     },
     /// Start a server for a solver service
     #[cfg(feature = "server")]
@@ -146,32 +134,47 @@ enum SubCommand {
         #[clap(long)]
         check_origin: Option<String>,
     },
-    /// Spin-loop profile a solver
-    Profile {
-        #[clap(short, long, default_value = "10000000")]
-        difficulty: u64,
-
-        #[clap(short, long, default_value = "64")]
-        prefix_length: usize,
+    /// Solve an Anubis PoW with a real URL
+    #[cfg(feature = "client")]
+    Anubis {
+        #[clap(long, default_value = "http://localhost:8923/")]
+        url: String,
     },
-    /// Spin-loop profile a solver with multiple threads
-    ProfileMt {
-        #[clap(short, long, default_value = "10000000")]
-        difficulty: u64,
+    /// Solve Cap.js with a real URL
+    #[cfg(feature = "client")]
+    CapJs {
+        #[clap(long, default_value = "http://localhost:3000/")]
+        url: String,
 
         #[clap(long)]
-        speed: bool,
+        site_key: String,
 
-        #[clap(short, long, default_value = "1")]
-        n_threads: Option<u32>,
-
-        #[clap(short, long, default_value = "64")]
-        prefix_length: usize,
+        #[clap(long)]
+        num_threads: Option<u32>,
     },
-    /// Time a solver
-    Time {
-        #[clap(short, long, default_value = "10000000")]
-        difficulty: u64,
+    /// Solve a GoAway PoW with a real URL
+    #[cfg(feature = "client")]
+    GoAway {
+        #[clap(long, default_value = "http://localhost:8080/")]
+        url: String,
+    },
+    /// Live throughput test using multiple workers
+    #[cfg(feature = "live-throughput-test")]
+    Live {
+        #[clap(long, default_value = "mcaptcha")]
+        api_type: String,
+
+        #[clap(long, default_value = "http://localhost:7000")]
+        host: String,
+
+        #[clap(long, default_value = "x")]
+        site_key: String,
+
+        #[clap(short, long, default_value = "32")]
+        n_workers: Option<u32>,
+
+        #[clap(short, long)]
+        n_threads: Option<u32>,
     },
 }
 
@@ -421,6 +424,42 @@ fn main() {
                 difficulty,
                 total_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0
             );
+            let cerberus_difficulty = (0u8..=15)
+                .rev()
+                .find(|&i| 4u64.saturating_pow(i as u32) <= difficulty * 8)
+                .unwrap_or(15);
+            let mask = compute_mask_cerberus(
+                cerberus_difficulty
+                    .try_into()
+                    .expect("difficulty out of range"),
+            );
+            let mut salt = *b"849c253990ebc3dc23e265f52692d5a53b89e72b76527a3e35a41c6bedad5867|3959614364|1759954402|803eb7fa618142da5c8ab89cc1109775f6c37d25520deae1e3bd2b1803aa9a8e15b2aae8a9ad2cc4f58f4c9ff2cf4999f2bef0ff5e389b15895d0cc2200d4a03|";
+
+            let begin = Instant::now();
+            let mut total_nonces = 0;
+            for i in 0..40u8 {
+                salt[0] = i;
+                let mut solver = CerberusSolver::from(CerberusMessage::new(&salt, 0).unwrap());
+                let inner_begin = Instant::now();
+                let nonce = solver
+                    .solve_nonce_only::<{ pow_buster::solver::SOLVE_TYPE_MASK }>(0, mask as u64)
+                    .expect("solver failed");
+                eprintln!(
+                    "[{}]: in {:.3} seconds ({})",
+                    core::any::type_name::<CerberusSolver>(),
+                    inner_begin.elapsed().as_secs_f32(),
+                    nonce,
+                );
+                total_nonces += solver.get_attempted_nonces();
+            }
+            let elapsed = begin.elapsed();
+            println!(
+                "[{}]: {} seconds at difficulty {} ({:.2} MH/s)",
+                core::any::type_name::<CerberusSolver>(),
+                elapsed.as_secs_f32() / 40.0,
+                cerberus_difficulty,
+                total_nonces as f32 / elapsed.as_secs_f32() / 1024.0 / 1024.0
+            );
         }
         SubCommand::Solve {
             salt,
@@ -431,12 +470,18 @@ fn main() {
         } => {
             let scheme = scheme
                 .parse()
-                .expect("invalid scheme, must be one of anubis, mcaptcha, goaway");
+                .expect("invalid scheme, must be one of anubis, mcaptcha, goaway, cerberus");
             let target = match scheme {
                 Scheme::Anubis => {
                     compute_target_anubis(difficulty.try_into().expect("difficulty out of range"))
                 }
                 Scheme::Mcaptcha => compute_target_mcaptcha(difficulty.get()),
+                Scheme::Cerberus => compute_mask_cerberus(
+                    u8::try_from(difficulty.get())
+                        .expect("difficulty out of range")
+                        .try_into()
+                        .expect("difficulty cannot be zero"),
+                ) as u64,
                 Scheme::GoAway => {
                     compute_target_goaway(difficulty.try_into().expect("difficulty out of range"))
                 }
@@ -470,6 +515,20 @@ fn main() {
                                     .solve::<{ pow_buster::solver::SOLVE_TYPE_LT }>(target, !0);
                                 nonce_attempted
                                     .fetch_add(solver.get_attempted_nonces(), Ordering::Relaxed);
+                                ws_churn.fetch_add(1, Ordering::Relaxed);
+                                let Some(result) = result else {
+                                    continue;
+                                };
+                                tx.send(result).unwrap();
+                            }
+                        } else if let Scheme::Cerberus = scheme {
+                            for working_set in (ix..).step_by(num_threads.get() as usize) {
+                                let Some(message) = CerberusMessage::new(salt_bytes, working_set) else {
+                                    return;
+                                };
+                                let mut solver = CerberusSolver::from(message);
+                                let result = solver.solve::<{ pow_buster::solver::SOLVE_TYPE_MASK }>(0, target);
+                                nonce_attempted.fetch_add(solver.get_attempted_nonces(), Ordering::Relaxed);
                                 ws_churn.fetch_add(1, Ordering::Relaxed);
                                 let Some(result) = result else {
                                     continue;
@@ -547,8 +606,6 @@ fn main() {
                     eprintln!("no solution found");
                     std::process::exit(1);
                 };
-                let mut hex = [0u8; 64];
-                pow_buster::encode_hex(&mut hex, result);
                 match scheme {
                     Scheme::GoAway => {
                         let mut goaway_token = Align16([b'0'; 64 + 8 * 2]);
@@ -595,7 +652,17 @@ fn main() {
                             core::str::from_utf8(&goaway_id[..]).unwrap()
                         );
                     }
+                    Scheme::Cerberus => {
+                        let mut hex = [0u8; 64];
+                        pow_buster::encode_hex_le(&mut hex, result);
+                        println!(
+                            "nonce={nonce}&response={}",
+                            core::str::from_utf8(&hex).unwrap()
+                        );
+                    }
                     Scheme::Anubis | Scheme::Mcaptcha => {
+                        let mut hex = [0u8; 64];
+                        pow_buster::encode_hex(&mut hex, result);
                         println!(
                             "nonce={nonce}&response={}",
                             core::str::from_utf8(&hex).unwrap()
