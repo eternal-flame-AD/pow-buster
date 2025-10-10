@@ -25,7 +25,7 @@
   - [License and Acknowledgments](#license-and-acknowledgments)
   - [AI Disclaimer](#ai-disclaimer)
 
-A fast, data-parallel, adversarially [^3] implemented mCaptcha/Anubis/Cerberus/go-away/Cap.js/NolLamas PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features, without wasting energy in the browser.
+A fast, data-parallel, adversarially [^3] implemented mCaptcha/Anubis/Cerberus/go-away/Cap.js PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features, without wasting energy in the browser.
 
 [^3]: Adversarial refers to challenges are solved using the path-of-least-resistance, sometimes involving massaging nonce space into favorable conditions or partially inverting hash images into lower-latency internal states. Most schemes supported do not have explicit specifications and depend on the cryptographic guarantees of the hash function, which I did not break (at least not in a previously unknown way). This code follows the original code to the letter of the law and sometimes emit awkward but computationally or statistically favorable solutions (such as `10000000073377131`, `-10.00000141128212`, etc.)
 
@@ -65,7 +65,7 @@ All load tests were performed using the `live` command with the following method
 
 - SHA-2 and BLAKE3 hotstarting with round-level precomputation granularity
 - Structure of Array hashing backed by register-resident SIMD.
-- 4 searching modes: Prefix greater than (mCaptcha), prefix less than (Anubis/go-away), prefix mask test (Cap.js), and preimage finding (GoToSocial/NolLamas).
+- 3 searching modes: Prefix greater than (mCaptcha), prefix less than (Anubis/go-away), mask test (Cerberus/Cap.js)
 - Greedy padding logic with 64-bit integer and floating point nonce stretching
 - Efficient outer loop and SIMD nonce encoding
 - Fully unrolled and monomorphic core friendly to pipelining and ternary logic instruction lowering
@@ -126,7 +126,6 @@ We assume you have a relatively modern and powerful platform, specifically:
 
 - A cold optimized build with end-to-end features may take up to 5 minutes as this program aggressively generates specialized kernels and build time isn't my priority.
 - For Anubis target, this assumes the server is 64-bit (i.e. is able to accept a signed 64-bit nonce).
-- Mode 4 (Preimage finding) optimizations are currently only implemented for AVX-512.
 - AVX-512 build requires Rust 1.89 or later.
 - All solvers are single-threaded and are intended to be scaled up using multiple workers optionally pinned to specific cores.
 - This is designed for "low", practical-for-a-website difficulty settings, A worst-case $1 - P_{geom}(80e7, 1/\text{difficulty})$ chance of failure for any particular messaeg offset with most offset cases almost guaranteed to succeed eventually, which for 1e8 (takes about 10 seconds on a browser for mCaptcha and an eternity for Anubis) is about 0.03%. Go-away solver explores the full solution space and guarantees a solution if one exists.
@@ -317,7 +316,6 @@ For us we have single thread:
 | SingleBlock/Anubis               | 89.16 MH/s              | 62.19 MH/s                    | 14.74 MH/s                               |
 | DoubleBlock (mCaptcha edge case) | 53.28 MH/s              | 42.55 MH/s                    | Not Tested                               |
 | go-away (32 bytes)               | 98.42 MH/s              | 78.10 MH/s                    | Not Tested                               |
-| GoToSocial (Preimage Finding)    | 98.76 MH/s              | N/A                           | N/A                                      |
 | Cerberus (BLAKE3)                | 196.34 MH/s             | N/A                           | 49.86 MH/s                               |
 
 On a mobile CPU (i7-11370H), similar performance can be achieved on AVX-512 (at a higher IPC due to Intel having faster register rotations):
@@ -339,7 +337,6 @@ The peak throughput on 7950X reported by `openssl speed -multi 32 sha256` is 239
 | SingleBlock/Anubis               | 1.485 GH/s  | 1.143 GH/s  | ~250kH/s                         |
 | DoubleBlock (mCaptcha edge case) | 850.75 MH/s | 827.74 MH/s | N/A                              |
 | go-away (32 bytes)               | 1.525 GH/s  | 1.291 GH/s  | N/A                              |
-| GoToSocial (Preimage Finding)    | 1.527 GH/s  | N/A         | N/A                              |
 | Cerberus (BLAKE3)                | 3.163 GH/s  | N/A         | ~25MH/s                          |
 
 [^4]: Due to instablity of WASM optimization and runtime throttling behavior and lack of vendor provided benchmark harness, only approximate numbers can be provided.
