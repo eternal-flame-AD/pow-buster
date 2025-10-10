@@ -1448,6 +1448,10 @@ impl CerberusSolver {
                 }
                 let state_base =
                     core::array::from_fn(|i| _mm512_set1_epi32(prepared_state[i] as _));
+                let patch =
+                    _mm512_or_epi32(_mm512_set1_epi32(msg[LANE_ID_WORD_IDX] as _), lane_id_value);
+                let maskv = _mm512_set1_epi32(mask as _);
+
                 for (i, word) in crate::strings::DIGIT_LUT_10000_LE_EVEN.iter().enumerate() {
                     msg[CENTER_WORD_IDX] = *word;
                     if self.attempted_nonces >= self.limit {
@@ -1455,10 +1459,7 @@ impl CerberusSolver {
                     }
 
                     let mut state = state_base;
-                    let patch = _mm512_or_epi32(
-                        _mm512_set1_epi32(msg[LANE_ID_WORD_IDX] as _),
-                        lane_id_value,
-                    );
+
                     crate::blake3::avx512::compress_mb16_reduced::<
                         CONSTANT_WORD_COUNT,
                         LANE_ID_WORD_IDX,
@@ -1475,7 +1476,6 @@ impl CerberusSolver {
                     >(&mut state, &msg, patch);
                     let s1 = state[0];
 
-                    let maskv = _mm512_set1_epi32(mask as _);
                     let hit0 = _mm512_testn_epi32_mask(s0, maskv);
                     let hit1 = _mm512_testn_epi32_mask(s1, maskv);
 
