@@ -119,8 +119,10 @@ async fn serve_wasm(
     axum_extra::TypedHeader(accept): axum_extra::TypedHeader<AcceptEncoding>,
 ) -> Response {
     use assets::{StaticFile, WasmAssets};
+    use axum::http::HeaderName;
 
     let mut content_encoding = None;
+    let mut override_content_type = None;
     if file == "index.txt" {
         let mut index = String::new();
         WasmAssets::iter().for_each(|entry| {
@@ -135,12 +137,19 @@ async fn serve_wasm(
     } else if accept.gzip() && file.ends_with(".wasm") {
         file.push_str(".gz");
         content_encoding = Some("gzip");
+        override_content_type = Some(HeaderValue::from_static("application/wasm"));
     }
     let mut response = StaticFile(file).into_response();
     if let Some(content_encoding) = content_encoding {
         response.headers_mut().insert(
-            "Content-Encoding",
+            HeaderName::from_static("content-encoding"),
             HeaderValue::from_static(content_encoding),
+        );
+    }
+    if let Some(override_content_type) = override_content_type {
+        response.headers_mut().insert(
+            HeaderName::from_static("content-type"),
+            override_content_type,
         );
     }
     response

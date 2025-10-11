@@ -213,32 +213,40 @@
         solveButton.addEventListener("click", () => {
             let json = findJson(challengeEl.value);
             if (json) {
+                let jsonParsed = null;
+
+                try {
+                    jsonParsed = JSON.parse(json)
+                } catch (e) {
+                    alert("Input cannot be parsed as valid JSON.");
+                    return
+                }
+
                 solveButton.disabled = true;
                 solveButton.innerText = "Busy...";
-                const jsonParsed = JSON.parse(json)
                 const start = performance.now();
                 console.log("solving anubis json", json);
 
+                setTimeout(() =>
+                    solver(json).then((result) => {
+                        const end = performance.now();
+                        const duration = end - start;
 
-                solver(json).then((result) => {
-                    const end = performance.now();
-                    const duration = end - start;
+                        console.log("result", result);
+                        console.log("duration", duration);
 
-                    console.log("result", result);
-                    console.log("duration", duration);
-
-                    setTimeout(() => {
-                        if (result.subtype === "anubis") {
-                            let finalUrl = "/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime=" + result.delay + "&response=" + result.response + "&nonce=" + result.nonce;
-                            if (jsonParsed.challenge && jsonParsed.challenge.id) {
-                                finalUrl += "&id=" + encodeURIComponent(jsonParsed.challenge.id)
-                            }
-                            finalUrl += "&redir=";
-                            passChallengeScriptEl.value = `window.location.replace(${JSON.stringify(finalUrl)} + encodeURIComponent(window.location.href));`;
-                            nonceEl.innerText = result.nonce;
-                            attemptedNoncesEl.innerText = result.attempted_nonces;
-                        } else if (result.subtype === "cerberus") {
-                            let finalScript = `
+                        setTimeout(() => {
+                            if (result.subtype === "anubis") {
+                                let finalUrl = "/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime=" + result.delay + "&response=" + result.response + "&nonce=" + result.nonce;
+                                if (jsonParsed.challenge && jsonParsed.challenge.id) {
+                                    finalUrl += "&id=" + encodeURIComponent(jsonParsed.challenge.id)
+                                }
+                                finalUrl += "&redir=";
+                                passChallengeScriptEl.value = `window.location.replace(${JSON.stringify(finalUrl)} + encodeURIComponent(window.location.href));`;
+                                nonceEl.innerText = result.nonce;
+                                attemptedNoncesEl.innerText = result.attempted_nonces;
+                            } else if (result.subtype === "cerberus") {
+                                let finalScript = `
                             ((hash,nonce) => {
     const thisScript = document.getElementById('challenge-script');
     function createAnswerForm(hash, solution, baseURL, nonce, ts, signature) {
@@ -291,29 +299,31 @@
     const { baseURL } = JSON.parse(thisScript.getAttribute('x-meta'));
     createAnswerForm(hash, nonce, baseURL, inputNonce, ts, signature).submit();
 })("`.trim();
-                            finalScript += `${result.response}",${result.nonce})`;
-                            nonceEl.innerText = result.nonce;
-                            attemptedNoncesEl.innerText = result.attempted_nonces;
+                                finalScript += `${result.response}",${result.nonce})`;
+                                nonceEl.innerText = result.nonce;
+                                attemptedNoncesEl.innerText = result.attempted_nonces;
 
-                            passChallengeScriptEl.value = finalScript;
-                        }
-                        hashRateEl.innerText = "N/A";
-                        if (duration >= 50) {
-                            latencyEl.innerText = duration.toFixed(1) + "ms";
-                            hashRateEl.innerText = (Number(result.attempted_nonces) / duration / 1024).toFixed(3) + " MH/s";
-                        } else {
-                            latencyEl.innerText = "<50ms";
-                        }
+                                passChallengeScriptEl.value = finalScript;
+                            }
+                            hashRateEl.innerText = "N/A";
+                            if (duration >= 50) {
+                                latencyEl.innerText = duration.toFixed(1) + "ms";
+                                hashRateEl.innerText = (Number(result.attempted_nonces) / duration / 1024).toFixed(3) + " MH/s";
+                            } else {
+                                latencyEl.innerText = "<50ms";
+                            }
+                            wasmResultsInnerEl.classList.remove("hidden");
+                        }, Math.max(0, result.delay - duration));
+                    }).catch((e) => {
+                        console.error("error in wasm solver", e);
+                        wasmErrorEl.innerText = "ERROR: " + e;
                         wasmResultsInnerEl.classList.remove("hidden");
-                    }, Math.max(0, result.delay - duration));
-                }).catch((e) => {
-                    console.error("error in wasm solver", e);
-                    wasmErrorEl.innerText = "ERROR: " + e;
-                    wasmResultsInnerEl.classList.remove("hidden");
-                }).finally(() => {
-                    solveButton.disabled = false;
-                    solveButton.innerText = "Solve in WASM";
-                });
+                    }).finally(() => {
+                        solveButton.disabled = false;
+                        solveButton.innerText = "Solve in WASM";
+                    }), 0);
+            } else {
+                alert("No JSON detected in form.");
             }
         });
         solveButton.disabled = false;
