@@ -215,8 +215,10 @@
             if (json) {
                 solveButton.disabled = true;
                 solveButton.innerText = "Busy...";
+                const jsonParsed = JSON.parse(json)
                 const start = performance.now();
                 console.log("solving anubis json", json);
+
 
                 solver(json).then((result) => {
                     const end = performance.now();
@@ -227,7 +229,11 @@
 
                     setTimeout(() => {
                         if (result.subtype === "anubis") {
-                            let finalUrl = "/.within.website/x/cmd/anub is/api/pass-challenge?elapsedTime=" + result.delay + "&response=" + result.response + "&nonce=" + result.nonce + "&redir=";
+                            let finalUrl = "/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime=" + result.delay + "&response=" + result.response + "&nonce=" + result.nonce;
+                            if (jsonParsed.challenge && jsonParsed.challenge.id) {
+                                finalUrl += "&id=" + encodeURIComponent(jsonParsed.challenge.id)
+                            }
+                            finalUrl += "&redir=";
                             passChallengeScriptEl.value = `window.location.replace(${JSON.stringify(finalUrl)} + encodeURIComponent(window.location.href));`;
                             nonceEl.innerText = result.nonce;
                             attemptedNoncesEl.innerText = result.attempted_nonces;
