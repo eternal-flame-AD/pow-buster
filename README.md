@@ -202,7 +202,7 @@ Fake Proof Control: 3732 requests in 10.1 seconds, 369.2 rps
 [60.0s] succeeded: 13761, failed: 0, 5s: 251.2rps, 5s_failed: 0.0rps
 ```
 
-Anubis "extreme suspicion" (4, saturated Anubis Go runtime):
+Anubis "mild suspicion" (4, saturated Anubis Go runtime):
 
 ```sh
 > target/release/pow-buster live --api-type anubis --host http://localhost:8923/ \
@@ -224,7 +224,7 @@ You are hitting host http://localhost:8923/, n_workers: 64
 [60.0s] proofs accepted: 681909, failed: 0, 5s: 11507.2pps, 5s_failed: 0.0rps, 71.99% iowait
 ```
 
-Anubis nightmare (6, doesn't exist in reality because it takes >1 hour on a 200kH/s browser solver, 256x harder than extreme suspicion):
+Anubis "extreme suspiction" (6):
 
 ```sh
 > target/release/pow-buster live --api-type anubis --host http://localhost:8923/ \
@@ -335,7 +335,7 @@ The peak throughput on 7950X reported by `openssl speed -multi 32 sha256` is 239
 
 | Workload                         | AVX-512     | SHA-NI      | Vendor Official on Chromium [^4] |
 | -------------------------------- | ----------- | ----------- | -----------                      |
-| SingleBlock/Anubis               | 1.485 GH/s  | 1.143 GH/s  | ~250kH/s                         |
+| SingleBlock/Anubis               | 1.485 GH/s  | 1.143 GH/s  | ~650kH/s                         |
 | DoubleBlock (mCaptcha edge case) | 850.75 MH/s | 827.74 MH/s | N/A                              |
 | go-away (32 bytes)               | 1.525 GH/s  | 1.291 GH/s  | N/A                              |
 | Cerberus (BLAKE3)                | 3.361 GH/s  | N/A         | ~25MH/s                          |
