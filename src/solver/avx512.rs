@@ -1449,6 +1449,7 @@ impl CerberusSolver {
                 if CENTER_WORD_IDX < LANE_ID_WORD_IDX {
                     lane_id_value = _mm512_srli_epi32(lane_id_value, 8);
                 }
+
                 let state_base =
                     core::array::from_fn(|i| _mm512_set1_epi32(prepared_state[i] as _));
                 let patch =

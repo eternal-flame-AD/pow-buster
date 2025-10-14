@@ -293,6 +293,19 @@ pub(crate) const fn decompose_blocks_mut(inp: &mut [u32; 16]) -> &mut [u8; 64] {
     unsafe { core::mem::transmute(inp) }
 }
 
+/// Compute a plausible time for a SHA-256 PoW to prevent tainting metrics
+///
+/// # Arguments
+///
+/// * `hashes`: The number of hashes that have been computed
+///
+/// # Returns
+///
+/// The plausible time in milliseconds
+pub(crate) fn compute_plausible_time_sha256(hashes: u64) -> u64 {
+    hashes / 512
+}
+
 /// Compute the target for an mCaptcha PoW
 pub const fn compute_target_mcaptcha(difficulty_factor: u64) -> u64 {
     u64::MAX - u64::MAX / difficulty_factor
@@ -312,7 +325,7 @@ pub const fn compute_target_goaway(difficulty_factor: NonZeroU8) -> u64 {
     1u64 << (64 - difficulty_factor.get())
 }
 
-/// Compute a mask for a Cerberus PoW
+/// Compute a mask for a Cerberus PoW (mask & V[0] == 0)
 pub const fn compute_mask_cerberus(difficulty_factor: NonZeroU8) -> u32 {
     !(!0u32 >> (difficulty_factor.get() * 2)).swap_bytes()
 }

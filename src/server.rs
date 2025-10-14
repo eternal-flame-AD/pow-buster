@@ -20,7 +20,7 @@ use crate::{
         AnubisChallengeDescriptor, CapJsChallengeDescriptor, CerberusChallengeDescriptor,
         GoAwayConfig, SolveCapJsResponse,
     },
-    compute_target_anubis,
+    compute_plausible_time_sha256, compute_target_anubis,
     message::DecimalMessage,
     solver::{SOLVE_TYPE_LT, SOLVE_TYPE_MASK, Solver},
 };
@@ -567,7 +567,7 @@ async fn solve_goaway(
         attempted: attempted_nonces,
     })?;
 
-    let plausible_time = nonce / 1024;
+    let plausible_time = compute_plausible_time_sha256(nonce);
 
     let nonce_bytes = nonce.to_be_bytes();
     for i in 0..8 {
@@ -830,7 +830,7 @@ async fn solve_anubis(
         attempted: attempted_nonces,
     })?;
 
-    let plausible_time = (attempted_nonces / 1024).max(delay + 100);
+    let plausible_time = compute_plausible_time_sha256(attempted_nonces).max(delay + 100);
 
     write!(final_url, "elapsedTime={}&response=", plausible_time).unwrap();
 

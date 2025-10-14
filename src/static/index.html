@@ -237,7 +237,7 @@
 
                         setTimeout(() => {
                             if (result.subtype === "anubis") {
-                                let finalUrl = "/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime=" + result.delay + "&response=" + result.response + "&nonce=" + result.nonce;
+                                let finalUrl = "/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime=" + duration + "&response=" + result.response + "&nonce=" + result.nonce;
                                 if (jsonParsed.challenge && jsonParsed.challenge.id) {
                                     finalUrl += "&id=" + encodeURIComponent(jsonParsed.challenge.id)
                                 }
