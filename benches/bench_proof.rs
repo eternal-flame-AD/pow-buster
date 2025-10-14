@@ -391,10 +391,10 @@ pub fn bench_proof_multi_threaded(c: &mut Criterion) {
     group.warm_up_time(Duration::from_secs(8));
     group.measurement_time(Duration::from_secs(15));
 
-    let target = compute_target_mcaptcha(1_000_000);
+    let target = compute_target_mcaptcha(2_000_000);
     let num_threads = num_cpus::get();
-    let work_count = num_threads * 16;
-    group.throughput(Throughput::Elements(work_count as u64 * 1_000_000));
+    let work_count = num_threads * 32;
+    group.throughput(Throughput::Elements(work_count as u64 * 2_000_000));
 
     eprintln!("spawning {} threads", num_threads);
 
