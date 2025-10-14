@@ -385,107 +385,143 @@ pub fn bench_proof(c: &mut Criterion) {
     }
 }
 
-#[cfg(feature = "rayon")]
-pub fn bench_proof_rayon(c: &mut Criterion) {
-    let mut group = c.benchmark_group("bench_rayon_hashrate");
+pub fn bench_proof_multi_threaded(c: &mut Criterion) {
+    let mut group = c.benchmark_group("bench_multi_threaded_hashrate");
     group.sample_size(50);
     group.warm_up_time(Duration::from_secs(8));
     group.measurement_time(Duration::from_secs(15));
-    group.throughput(Throughput::Elements(1024 * 1_000_000));
 
-    let target = compute_target_mcaptcha(1_000_000);
+    let target = compute_target_mcaptcha(2_000_000);
+    let num_threads = num_cpus::get();
+    let work_count = num_threads * 32;
+    group.throughput(Throughput::Elements(work_count as u64 * 2_000_000));
 
-    group.bench_function("proof_rayon", |b| {
-        let mut counter = 0u64;
-        b.iter_batched(
-            || {
-                counter += 1;
-                counter * 1024
-            },
-            |start| {
-                use rayon::iter::{IntoParallelIterator, ParallelIterator};
+    eprintln!("spawning {} threads", num_threads);
 
-                (0..1024)
-                    .into_par_iter()
-                    .map(|addend| {
-                        let mut prefix = [0; 64];
-                        prefix[..8].copy_from_slice(&(addend + start).to_ne_bytes());
-                        let mut solver = SingleBlockSolver::from(
-                            SingleBlockMessage::new(&prefix, 0).expect("solver is None"),
-                        );
+    group.bench_function("proof_multi_threaded", |b| {
+        b.iter_custom(|iters| {
+            let work_ctr = std::sync::atomic::AtomicUsize::new(0);
+            let barrier = std::sync::Barrier::new(num_threads + 1);
+            std::thread::scope(|s| {
+                let work_ctr = &work_ctr;
+                let barrier = &barrier;
 
-                        let start = std::time::Instant::now();
-                        solver
-                            .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)
-                            .expect("solver failed");
-                        start.elapsed()
-                    })
-                    .sum::<Duration>()
-            },
-            criterion::BatchSize::SmallInput,
-        )
+                for _ in 0..num_threads {
+                    s.spawn(move || {
+                        barrier.wait();
+
+                        loop {
+                            let this_work =
+                                work_ctr.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if this_work >= work_count * iters as usize {
+                                break;
+                            }
+                            let mut prefix = [0; 64];
+                            prefix[..8].copy_from_slice(&this_work.to_le_bytes());
+                            let mut solver = SingleBlockSolver::from(
+                                SingleBlockMessage::new(&prefix, 0).expect("solver is None"),
+                            );
+                            core::hint::black_box(
+                                solver
+                                    .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)
+                                    .expect("solver failed"),
+                            );
+                        }
+
+                        barrier.wait();
+                    });
+                }
+
+                barrier.wait();
+                let begin = std::time::Instant::now();
+                barrier.wait();
+                begin.elapsed()
+            })
+        });
     });
 
-    group.bench_function("proof_rayon (double block)", |b| {
-        let mut counter = 0u64;
-        b.iter_batched(
-            || {
-                counter += 1;
-                counter * 1024
-            },
-            |start| {
-                use rayon::iter::{IntoParallelIterator, ParallelIterator};
+    group.bench_function("proof_multi_threaded (double block)", |b| {
+        b.iter_custom(|iters| {
+            let work_ctr = std::sync::atomic::AtomicUsize::new(0);
+            let barrier = std::sync::Barrier::new(num_threads + 1);
+            std::thread::scope(|s| {
+                let work_ctr = &work_ctr;
+                let barrier = &barrier;
 
-                (0..1024)
-                    .into_par_iter()
-                    .map(|addend| {
-                        let mut prefix: [u8; 48] = [0; 48];
-                        prefix[..8].copy_from_slice(&(addend + start).to_ne_bytes());
-                        let mut solver = DoubleBlockSolver::from(
-                            DoubleBlockMessage::new(&prefix, 0).expect("solver is None"),
-                        );
+                for _ in 0..num_threads {
+                    s.spawn(move || {
+                        barrier.wait();
 
-                        let start = std::time::Instant::now();
-                        solver
-                            .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)
-                            .expect("solver failed");
-                        start.elapsed()
-                    })
-                    .sum::<Duration>()
-            },
-            criterion::BatchSize::SmallInput,
-        )
+                        loop {
+                            let this_work =
+                                work_ctr.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if this_work >= work_count * iters as usize {
+                                break;
+                            }
+                            let mut prefix: [u8; 48] = [0; 48];
+                            prefix[..8].copy_from_slice(&this_work.to_le_bytes());
+                            let mut solver = DoubleBlockSolver::from(
+                                DoubleBlockMessage::new(&prefix, 0).expect("solver is None"),
+                            );
+                            core::hint::black_box(
+                                solver
+                                    .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)
+                                    .expect("solver failed"),
+                            );
+                        }
+
+                        barrier.wait();
+                    });
+                }
+
+                barrier.wait();
+                let begin = std::time::Instant::now();
+                barrier.wait();
+                begin.elapsed()
+            })
+        });
     });
 
-    group.bench_function("proof_rayon (go away)", |b| {
-        let mut counter = 0u64;
-        b.iter_batched(
-            || {
-                counter += 1;
-                counter * 1024
-            },
-            |start| {
-                use rayon::iter::{IntoParallelIterator, ParallelIterator};
+    group.bench_function("proof_multi_threaded (go away)", |b| {
+        b.iter_custom(|iters| {
+            let work_ctr = std::sync::atomic::AtomicUsize::new(0);
+            let barrier = std::sync::Barrier::new(num_threads + 1);
+            std::thread::scope(|s| {
+                let work_ctr = &work_ctr;
+                let barrier = &barrier;
 
-                (0..1024)
-                    .into_par_iter()
-                    .map(|addend| {
+                for _ in 0..num_threads {
+                    s.spawn(move || {
                         use pow_buster::{GoAwaySolver, message::GoAwayMessage};
 
-                        let mut prefix = [0; 32];
-                        prefix[..8].copy_from_slice(&(addend + start).to_ne_bytes());
-                        let mut solver = GoAwaySolver::from(GoAwayMessage::new_bytes(&prefix));
+                        barrier.wait();
 
-                        let start = std::time::Instant::now();
-                        solver
-                            .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)
-                            .expect("solver failed");
-                        start.elapsed()
-                    })
-                    .sum::<Duration>()
-            },
-            criterion::BatchSize::SmallInput,
-        )
+                        loop {
+                            let this_work =
+                                work_ctr.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if this_work >= work_count * iters as usize {
+                                break;
+                            }
+                            let mut prefix = [0; 32];
+                            prefix[..8].copy_from_slice(&this_work.to_le_bytes());
+                            let mut solver = GoAwaySolver::from(GoAwayMessage::new_bytes(&prefix));
+                            core::hint::black_box(
+                                solver
+                                    .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)
+                                    .expect("solver failed"),
+                            );
+                        }
+
+                        barrier.wait();
+                    });
+                }
+
+                barrier.wait();
+                let begin = std::time::Instant::now();
+                barrier.wait();
+                begin.elapsed()
+            })
+        });
     });
 }
 
@@ -597,13 +633,7 @@ criterion_group!(
     bench_sha2_crate_single,
     bench_sha2_crate_bulk,
     bench_capjs_verbatim,
+    bench_proof_multi_threaded,
 );
 
-#[cfg(feature = "rayon")]
-criterion_group!(benches_rayon, bench_proof_rayon);
-
-#[cfg(not(feature = "rayon"))]
 criterion_main!(benches);
-
-#[cfg(feature = "rayon")]
-criterion_main!(benches, benches_rayon);
