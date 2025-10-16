@@ -1439,6 +1439,9 @@ impl CerberusSolver {
         );
 
         for lane_id_idx in 0..(LANE_ID_STR_COMBINED_LE_HI.len() / 16) {
+            if self.attempted_nonces >= self.limit {
+                return None;
+            }
             unsafe {
                 let mut lane_id_value = _mm512_load_si512(
                     LANE_ID_STR_COMBINED_LE_HI
@@ -1458,9 +1461,6 @@ impl CerberusSolver {
 
                 for (i, word) in crate::strings::DIGIT_LUT_10000_LE_EVEN.iter().enumerate() {
                     msg[CENTER_WORD_IDX] = *word;
-                    if self.attempted_nonces >= self.limit {
-                        return None;
-                    }
 
                     let mut state = state_base;
 
