@@ -468,13 +468,9 @@ impl crate::solver::Solver for CerberusSolver {
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         debug_assert_eq!(target, 0);
 
-        let remaining_limit = self
-            .limit
-            .saturating_sub(self.attempted_nonces)
-            .try_into()
-            .unwrap_or(u32::MAX);
+        let remaining_limit = self.limit.saturating_sub(self.attempted_nonces);
 
-        for nonce in 0u32..remaining_limit {
+        for nonce in 0u64..remaining_limit {
             if self.attempted_nonces >= self.limit {
                 return None;
             }

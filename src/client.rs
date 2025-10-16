@@ -1,12 +1,13 @@
-use std::fmt::Write;
+use std::{fmt::Write, sync::LazyLock};
 
 use reqwest::Client;
+use url::form_urlencoded;
 
 use crate::{
     Align16,
     adapter::{
-        AnubisChallengeDescriptor, CapJsChallengeDescriptor, CapJsResponse, GoAwayConfig,
-        SolveCapJsResponseMeta,
+        AnubisChallengeDescriptor, CapJsChallengeDescriptor, CapJsResponse,
+        CerberusChallengeDescriptor, GoAwayConfig, SolveCapJsResponseMeta,
     },
     compute_target_goaway, compute_target_mcaptcha,
     message::{DecimalMessage, GoAwayMessage},
@@ -325,9 +326,6 @@ pub async fn solve_anubis(client: &Client, base_url: &str) -> Result<String, Sol
 
 /// Solve an Anubis PoW with extended functionality.
 ///
-/// If `really_solve` is false, the solver will not be used and a dummy nonce and result will be returned.
-/// This is useful for testing and benchmarking.
-///
 /// `time_iowait` is a pointer to a u32 that will be incremented by the time spent waiting for the IO instead of solving the PoW.
 pub async fn solve_anubis_ex(
     client: &Client,
@@ -362,11 +360,14 @@ pub async fn solve_anubis_ex(
         .to_string();
 
     fn extract_challenge(body: &str) -> Result<AnubisChallengeDescriptor, SolveError> {
+        static ELEMENT_ANUBIS_CHALLENGE: LazyLock<scraper::Selector> = LazyLock::new(|| {
+            scraper::Selector::parse("script#anubis_challenge")
+                .map_err(|_| SolveError::ScrapeElementNotFound("anubis_challenge"))
+                .unwrap()
+        });
         let document = scraper::Html::parse_document(&body);
-        let selector = scraper::Selector::parse("script#anubis_challenge")
-            .map_err(|_| SolveError::ScrapeElementNotFound("anubis_challenge"))?;
         let element = document
-            .select(&selector)
+            .select(&ELEMENT_ANUBIS_CHALLENGE)
             .next()
             .ok_or(SolveError::ScrapeElementNotFound("anubis_challenge"))?;
         let json_text = element.text().collect::<String>();
@@ -453,6 +454,139 @@ pub async fn solve_anubis_ex(
         .filter(|(k, _)| k.as_str().eq_ignore_ascii_case("set-cookie"))
         .filter_map(|(_, v)| v.to_str().unwrap().split(';').next())
         .filter(|v| v.contains("-anubis-auth") && !v.ends_with('='))
+        .next()
+        .ok_or(SolveError::GoldenTicketNotFound)?
+        .to_string();
+
+    Ok(auth_cookie)
+}
+
+/// Solve a Cerberus PoW.
+pub async fn solve_cerberus(client: &Client, base_url: &str) -> Result<String, SolveError> {
+    solve_cerberus_ex(client, base_url, &mut 0).await
+}
+
+/// Solve a Cerberus PoW.
+///
+/// `time_iowait` is a pointer to a u32 that will be incremented by the time spent waiting for the IO instead of solving the PoW.
+pub async fn solve_cerberus_ex(
+    client: &Client,
+    base_url: &str,
+    time_iowait: &mut u32,
+) -> Result<String, SolveError> {
+    let mut url_parsed = url::Url::parse(base_url)?;
+
+    let iotime = std::time::Instant::now();
+    let response = client
+        .get(base_url)
+        .header("Accept", "text/html")
+        .header("Sec-Gpc", "1")
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Android 15; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0",
+        )
+        .send()
+        .await?
+        .error_for_status()?;
+    let iotime = iotime.elapsed();
+    *time_iowait += iotime.as_micros() as u32;
+
+    fn extract_challenge(body: &str) -> Result<(String, CerberusChallengeDescriptor), SolveError> {
+        static ELEMENT_CHALLENGE_SCRIPT: LazyLock<scraper::Selector> = LazyLock::new(|| {
+            scraper::Selector::parse("script#challenge-script[x-challenge]")
+                .map_err(|_| {
+                    SolveError::ScrapeElementNotFound("script#challenge-script[x-challenge]")
+                })
+                .unwrap()
+        });
+        let document = scraper::Html::parse_document(&body);
+
+        let element = document.select(&ELEMENT_CHALLENGE_SCRIPT).next().ok_or(
+            SolveError::ScrapeElementNotFound("script#challenge-script[x-challenge]"),
+        )?;
+        let json_text = element
+            .attr("x-challenge")
+            .ok_or(SolveError::ScrapeElementNotFound(
+                "script#challenge-script[x-challenge]",
+            ))?;
+        let meta = element
+            .attr("x-meta")
+            .ok_or(SolveError::ScrapeElementNotFound(
+                "script#challenge-script[x-meta]",
+            ))?;
+        #[derive(serde::Deserialize, Debug)]
+        struct Meta {
+            #[serde(rename = "baseURL")]
+            base_url: String,
+        }
+        let meta: Meta = serde_json::from_str(&meta)?;
+        let challenge = serde_json::from_str(&json_text)?;
+
+        Ok((meta.base_url, challenge))
+    }
+
+    let text = response.text().await?;
+    let (mut answer_url, challenge) = extract_challenge(&text)?;
+    answer_url.push_str("/answer");
+    let mask = challenge.mask();
+    let (nonce, result) = tokio::task::block_in_place(|| {
+        let mut msg = challenge.build_msg(0)?;
+        for next_working_set in 1.. {
+            let mut solver = crate::CerberusSolver::from(msg);
+            let result = solver.solve::<{ crate::solver::SOLVE_TYPE_MASK }>(0, mask as u64);
+            if let Some(res) = result {
+                return Some(res);
+            }
+            msg = challenge.build_msg(next_working_set)?;
+        }
+        None
+    })
+    .ok_or(SolveError::SolverFailed)?;
+
+    let mut response_hex = [0u8; 64];
+    crate::encode_hex_le(&mut response_hex, result);
+
+    url_parsed = url_parsed.join(&answer_url)?;
+
+    let body = form_urlencoded::Serializer::new(String::with_capacity(256))
+        .append_pair("response", &unsafe {
+            std::str::from_utf8_unchecked(&response_hex)
+        })
+        .append_pair("solution", &nonce.to_string())
+        .append_pair("nonce", &challenge.nonce().to_string())
+        .append_pair("ts", &challenge.ts().to_string())
+        .append_pair("signature", challenge.signature())
+        .append_pair("redir", "/")
+        .finish();
+
+    let iotime = std::time::Instant::now();
+    let golden_response = client
+        .post(url_parsed)
+        .body(body)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .header("Accept", "text/html")
+        .header("Referer", base_url)
+        .header("Sec-Gpc", "1")
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Android 15; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0",
+        )
+        .send()
+        .await?;
+    let iotime = iotime.elapsed();
+    *time_iowait += iotime.as_micros() as u32;
+
+    if golden_response.status().is_client_error() || golden_response.status().is_server_error() {
+        let status = golden_response.status();
+        let body = golden_response.text().await?;
+        return Err(SolveError::UnexpectedStatusRequest(status, body));
+    }
+    let auth_cookie = golden_response
+        .headers()
+        .iter()
+        .filter(|(k, _)| k.as_str().eq_ignore_ascii_case("set-cookie"))
+        .filter_map(|(_, v)| v.to_str().unwrap().split(';').next())
+        .filter(|v| v.contains("cerberus-auth") && !v.ends_with('='))
         .next()
         .ok_or(SolveError::GoldenTicketNotFound)?
         .to_string();

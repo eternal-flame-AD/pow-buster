@@ -365,7 +365,7 @@ async fn solve_cerberus(
 ) -> Result<String, SolveError> {
     tracing::info!("solving cerberus challenge {:?}", config);
 
-    let msg = config.build_msg(0).ok_or(SolveError::InvalidChallenge)?;
+    let mut msg = config.build_msg(0).ok_or(SolveError::InvalidChallenge)?;
     let mask = config.mask();
     let estimated_workload = config.estimated_workload();
     let effective_limit = state.effective_limit().saturating_mul(2);
@@ -381,19 +381,29 @@ async fn solve_cerberus(
     let (tx, rx) = tokio::sync::oneshot::channel();
 
     tokio::task::spawn_blocking(move || {
-        let mut solver = CerberusSolver::from(msg);
-        solver.set_limit(effective_limit);
-        let Some((nonce, hash)) = solver.solve::<{ SOLVE_TYPE_MASK }>(0, mask as u64) else {
-            tx.send(Err(SolveError::SolverFailed {
-                limit: effective_limit,
-                attempted: solver.get_attempted_nonces(),
-            }))
-            .ok();
+        let mut attempted_nonces = 0;
+        for next_set in 1.. {
+            let mut solver = CerberusSolver::from(msg);
+            solver.set_limit(effective_limit.saturating_sub(attempted_nonces));
+            let res = solver.solve::<{ SOLVE_TYPE_MASK }>(0, mask as u64);
+            attempted_nonces += solver.get_attempted_nonces();
+            let Some((nonce, hash)) = res else {
+                match config.build_msg(next_set) {
+                    Some(next_msg) => {
+                        msg = next_msg;
+                        continue;
+                    }
+                    None => break,
+                }
+            };
+            tx.send(Ok((nonce, hash, attempted_nonces))).ok();
             return;
-        };
-        let attempted_nonces = solver.get_attempted_nonces();
-
-        tx.send(Ok((nonce, hash, attempted_nonces))).ok();
+        }
+        tx.send(Err(SolveError::SolverFailed {
+            limit: effective_limit,
+            attempted: attempted_nonces,
+        }))
+        .ok();
     });
     let (nonce, hash, attempted_nonces) = rx.await.map_err(|_| SolveError::SolverFatal)??;
     let elapsed = begin.elapsed();

@@ -28,6 +28,7 @@ struct Cli {
 enum ApiType {
     Mcaptcha,
     Anubis,
+    Cerberus,
     CapJs,
 }
 
@@ -39,6 +40,7 @@ impl std::str::FromStr for ApiType {
             "mcaptcha" => Ok(ApiType::Mcaptcha),
             "anubis" => Ok(ApiType::Anubis),
             "capjs" | "cap-js" => Ok(ApiType::CapJs),
+            "cerberus" => Ok(ApiType::Cerberus),
             _ => Err(format!("invalid api type: {}", s)),
         }
     }
@@ -138,6 +140,12 @@ enum SubCommand {
     #[cfg(feature = "client")]
     Anubis {
         #[clap(long, default_value = "http://localhost:8923/")]
+        url: String,
+    },
+    /// Solve a Cerberus PoW with a real URL
+    #[cfg(feature = "client")]
+    Cerberus {
+        #[clap(long, default_value = "http://127.0.0.1:9000/")]
         url: String,
     },
     /// Solve Cap.js with a real URL
@@ -656,7 +664,7 @@ fn main() {
                         let mut hex = [0u8; 64];
                         pow_buster::encode_hex_le(&mut hex, result);
                         println!(
-                            "nonce={nonce}&response={}",
+                            "solution={nonce}&response={}",
                             core::str::from_utf8(&hex).unwrap()
                         );
                     }
@@ -686,6 +694,23 @@ fn main() {
                     .build()
                     .unwrap();
                 let response = pow_buster::client::solve_anubis(&client, &url)
+                    .await
+                    .unwrap();
+                println!("set-cookie: {}", response);
+            });
+        }
+        #[cfg(feature = "client")]
+        SubCommand::Cerberus { url } => {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async move {
+                let client = reqwest::ClientBuilder::new()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .unwrap();
+                let response = pow_buster::client::solve_cerberus(&client, &url)
                     .await
                     .unwrap();
                 println!("set-cookie: {}", response);
@@ -802,6 +827,24 @@ fn main() {
                                         failed_clone.fetch_add(1, Ordering::Relaxed);
                                     }
                                 };
+                                let mut packed_time = start.elapsed().as_micros() as u64 / 16;
+                                packed_time <<= 32;
+                                packed_time += iotime as u64 / 16;
+                                packed_time_clone.fetch_add(packed_time, Ordering::Relaxed);
+                            },
+                            ApiType::Cerberus => loop {
+                                let mut iotime = 0;
+                                let start = Instant::now();
+                                match pow_buster::client::solve_cerberus_ex(&client, &host_clone, &mut iotime)
+                                    .await {
+                                        Ok(_) => {
+                                            succeeded_clone.fetch_add(1, Ordering::Relaxed);
+                                        }
+                                        Err(e) => {
+                                            eprintln!("cerberus error: {:?}", e);
+                                            failed_clone.fetch_add(1, Ordering::Relaxed);
+                                        }
+                                    };
                                 let mut packed_time = start.elapsed().as_micros() as u64 / 16;
                                 packed_time <<= 32;
                                 packed_time += iotime as u64 / 16;

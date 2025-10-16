@@ -1424,7 +1424,7 @@ impl CerberusSolver {
         msg_tpl: Align64<[u32; 16]>,
         target: u64,
         mask: u64,
-    ) -> Option<(u32, u32)> {
+    ) -> Option<(u64, u64)> {
         debug_assert_eq!(target, 0);
 
         // inform LLVM that padding is guaranteed to be zero
@@ -1488,18 +1488,18 @@ impl CerberusSolver {
                     if hit0 != 0 || hit1 != 0 {
                         crate::unlikely();
 
-                        let success_lane_idx0 = hit0.trailing_zeros() as u32;
-                        let success_lane_idx1 = hit1.trailing_zeros() as u32;
+                        let success_lane_idx0 = hit0.trailing_zeros();
+                        let success_lane_idx1 = hit1.trailing_zeros();
 
                         if success_lane_idx0 < success_lane_idx1 {
                             return Some((
-                                i as u32 * 2,
-                                lane_id_idx as u32 * 16 + success_lane_idx0,
+                                i as u64 * 2,
+                                lane_id_idx as u64 * 16 + success_lane_idx0 as u64,
                             ));
                         } else {
                             return Some((
-                                i as u32 * 2 + 1,
-                                lane_id_idx as u32 * 16 + success_lane_idx1,
+                                i as u64 * 2 + 1,
+                                lane_id_idx as u64 * 16 + success_lane_idx1 as u64,
                             ));
                         }
                     }
@@ -1521,8 +1521,8 @@ impl crate::solver::Solver for CerberusSolver {
         let center_word_idx = self.message.salt_residual_len / 4 + 1;
         let position_mod = self.message.salt_residual_len % 4;
 
-        for resid0 in 0..10 {
-            for resid1 in 0..10 {
+        for resid0 in 0..10u64 {
+            for resid1 in 0..10u64 {
                 if self.attempted_nonces >= self.limit {
                     return None;
                 }
@@ -1589,31 +1589,31 @@ impl crate::solver::Solver for CerberusSolver {
                             0 => {
                                 10 * middle_word
                                     + 100_000 * success_lane_idx
-                                    + 100_000_000 * resid0 as u32
-                                    + resid1 as u32
+                                    + 100_000_000 * resid0
+                                    + resid1
                             }
                             1 => {
                                 100 * middle_word
                                     + 1_000_000 * success_lane_idx
-                                    + 10 * resid0 as u32
-                                    + resid1 as u32
+                                    + 10 * resid0
+                                    + resid1
                             }
                             2 => {
                                 1000 * middle_word
                                     + success_lane_idx
-                                    + 100_000_000 * resid0 as u32
-                                    + 10_000_000 * resid1 as u32
+                                    + 100_000_000 * resid0
+                                    + 10_000_000 * resid1
                             }
                             3 => {
                                 10000 * middle_word
                                     + 10 * success_lane_idx
-                                    + 100_000_000 * resid0 as u32
-                                    + resid1 as u32
+                                    + 100_000_000 * resid0
+                                    + resid1
                             }
                             _ => unreachable!(),
                         };
 
-                    return Some(output_nonce as u64);
+                    return Some(output_nonce);
                 }
             }
         }

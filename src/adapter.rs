@@ -38,6 +38,21 @@ impl CerberusChallengeDescriptor {
     pub fn mask(&self) -> u32 {
         compute_mask_cerberus(self.difficulty)
     }
+
+    /// Get the nonce of a Cerberus PoW.
+    pub fn nonce(&self) -> u64 {
+        self.nonce
+    }
+
+    /// Get the timestamp of a Cerberus PoW.
+    pub fn ts(&self) -> u64 {
+        self.ts
+    }
+
+    /// Get the signature of a Cerberus PoW.
+    pub fn signature(&self) -> &str {
+        &self.signature
+    }
 }
 
 #[derive(serde::Deserialize, Debug)]

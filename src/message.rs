@@ -663,7 +663,7 @@ pub struct CerberusMessage {
     pub(crate) salt_residual: Align64<[u8; 64]>,
     pub(crate) salt_residual_len: usize,
     pub(crate) flags: u32,
-    pub(crate) nonce_addend: u32,
+    pub(crate) nonce_addend: u64,
 }
 
 impl CerberusMessage {
@@ -674,7 +674,7 @@ impl CerberusMessage {
         // u32::MAX is 4294967295 (10 digits), we will pop the first digit as outer loop and at most 3 other blocks need to be mutated
         // the last block is byte-order sensitive and needs a left shift to fix
         let msb = working_set.wrapping_add(1);
-        if msb >= 4 || msb == 0 {
+        if msb >= 10 || msb == 0 {
             return None;
         }
         let msb = msb as u8;
@@ -753,7 +753,7 @@ impl CerberusMessage {
             salt_residual_len,
             salt_residual,
             flags,
-            nonce_addend: msb as u32 * 1_000_000_000,
+            nonce_addend: msb as u64 * 1_000_000_000,
         })
     }
 }
