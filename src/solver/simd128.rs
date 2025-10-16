@@ -729,7 +729,7 @@ impl CerberusSolver {
         mut msg: Align16<[u32; 16]>,
         target: u64,
         mask: u64,
-    ) -> Option<(u32, u32)> {
+    ) -> Option<(u64, u64)> {
         debug_assert_eq!(target, 0);
 
         let prepared_state = crate::blake3::ingest_message_prefix(
@@ -782,9 +782,9 @@ impl CerberusSolver {
                         let mut extract = [0u32; 4];
                         v128_store(extract.as_mut_ptr().cast(), masked);
                         let success_lane_idx =
-                            extract.iter().position(|x| *x & mask as u32 == 0).unwrap();
+                            extract.iter().position(|x| *x & mask as u32 == 0).unwrap() as u64;
 
-                        return Some((word, lane_id_idx as u32 * 4 + success_lane_idx as u32));
+                        return Some((word as u64, lane_id_idx as u64 * 4 + success_lane_idx));
                     }
                 }
             }
@@ -804,8 +804,8 @@ impl crate::solver::Solver for CerberusSolver {
         let center_word_idx = self.message.salt_residual_len / 4 + 1;
         let position_mod = self.message.salt_residual_len % 4;
 
-        for resid0 in 0..10 {
-            for resid1 in 0..10 {
+        for resid0 in 0..10u64 {
+            for resid1 in 0..10u64 {
                 if self.attempted_nonces >= self.limit {
                     return None;
                 }
@@ -872,26 +872,26 @@ impl crate::solver::Solver for CerberusSolver {
                             0 => {
                                 10 * middle_word
                                     + 100_000 * success_lane_idx
-                                    + 100_000_000 * resid0 as u32
-                                    + resid1 as u32
+                                    + 100_000_000 * resid0
+                                    + resid1
                             }
                             1 => {
                                 100 * middle_word
                                     + 1_000_000 * success_lane_idx
-                                    + 10 * resid0 as u32
-                                    + resid1 as u32
+                                    + 10 * resid0
+                                    + resid1
                             }
                             2 => {
                                 1000 * middle_word
                                     + success_lane_idx
-                                    + 100_000_000 * resid0 as u32
-                                    + 10_000_000 * resid1 as u32
+                                    + 100_000_000 * resid0
+                                    + 10_000_000 * resid1
                             }
                             3 => {
                                 10000 * middle_word
                                     + 10 * success_lane_idx
-                                    + 100_000_000 * resid0 as u32
-                                    + resid1 as u32
+                                    + 100_000_000 * resid0
+                                    + resid1
                             }
                             _ => unreachable!(),
                         };
