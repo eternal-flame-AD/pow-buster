@@ -1,5 +1,3 @@
-import init, { solve_json } from '/pkg/pow_buster.js';
-
 let portFromCS;
 
 const availableConcurrency = Math.max(Math.min(navigator.hardwareConcurrency || 4, 8), 1);
@@ -94,35 +92,31 @@ async function solveByOffload(challenge) {
     }
 }
 
-init().then(() => {
-    browser.runtime.onConnect.addListener(p => {
-        portFromCS = p;
-        console.log("connected to content script");
-        portFromCS.onDisconnect.addListener(() => {
-            terminateWorkers();
-        });
-        portFromCS.onMessage.addListener((m) => {
-            let solvedByOffload = false;
-            solveByOffload(m.challenge).then((script) => {
-                if (script) {
-                    solvedByOffload = true;
-                    portFromCS.postMessage({ type: "script", script });
+browser.runtime.onConnect.addListener(p => {
+    portFromCS = p;
+    console.log("connected to content script");
+    portFromCS.onDisconnect.addListener(() => {
+        terminateWorkers();
+    });
+    portFromCS.onMessage.addListener((m) => {
+        let solvedByOffload = false;
+        solveByOffload(m.challenge).then((script) => {
+            if (script) {
+                solvedByOffload = true;
+                portFromCS.postMessage({ type: "script", script });
+            }
+        }).finally(() => {
+            if (!solvedByOffload) {
+                if (m.multithreaded) {
+                    solveSet(m.challenge, (solution) => {
+                        portFromCS.postMessage({ type: "solution", solution });
+                    });
+                } else {
+                    solveOne(m.challenge, (solution) => {
+                        portFromCS.postMessage({ type: "solution", solution });
+                    });
                 }
-            }).finally(() => {
-                if (!solvedByOffload) {
-                    if (m.multithreaded) {
-                        solveSet(m.challenge, (solution) => {
-                            portFromCS.postMessage({ type: "solution", solution });
-                        });
-                    } else {
-                        solveOne(m.challenge, (solution) => {
-                            portFromCS.postMessage({ type: "solution", solution });
-                        });
-                    }
-                }
-            });
+            }
         });
     });
-}).catch((error) => {
-    console.error("error initializing pow_buster", error);
 });
