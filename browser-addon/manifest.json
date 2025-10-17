@@ -1,0 +1,51 @@
+{
+  "manifest_version": 2,
+  "name": "PoW Buster",
+  "description": "A fast, data-parallel interactive Proof of Work Challenge Solver",
+  "version": "0.1.0",
+  "icons": {
+    "64": "icons/icon.png"
+  },
+  "permissions": [
+    "declarativeNetRequest",
+    "scripting",
+    "storage",
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*/*",
+        "http://*/*"
+      ],
+      "js": [
+        "content_script.js"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "ruleset",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "options_ui": {
+    "page": "options/index.html"
+  },
+  "background": {
+    "page": "background/index.html"
+  },
+  "web_accessible_resources": [
+    "pkg/*"
+  ],
+  "applications": {
+    "gecko": {
+      "id": "pow-buster@yumechi.jp",
+      "strict_min_version": "100.0.0"
+    }
+  }
+}

@@ -1,0 +1,38 @@
+[
+    {
+        "id": 1,
+        "priority": 1,
+        "action": {
+            "type": "block"
+        },
+        "condition": {
+            "urlFilter": "|*/.within.website/x/cmd/anubis/*"
+        },
+        "resourceTypes": [
+            "script",
+            "image",
+            "imageset",
+            "media",
+            "font",
+            "other"
+        ]
+    },
+    {
+        "id": 2,
+        "priority": 1,
+        "action": {
+            "type": "block"
+        },
+        "condition": {
+            "urlFilter": "|*/.cerberus/static/*"
+        },
+        "resourceTypes": [
+            "script",
+            "image",
+            "imageset",
+            "media",
+            "font",
+            "other"
+        ]
+    }
+]

@@ -654,7 +654,7 @@ impl BinaryMessage {
 
 /// A message in the cerberus format
 ///
-/// Note cerberus only supports 32-bit range nonces and should always remain inter-block
+/// Note cerberus official solver only supports 32-bit range nonces, but the validator accepts machine sized nonces and should always remain inter-block
 ///
 /// Construct: Proof := (prefix || ASCII_U32_DECIMAL(nonce))
 #[derive(Debug, Clone)]

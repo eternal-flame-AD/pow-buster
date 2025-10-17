@@ -970,6 +970,9 @@ async fn check_origin(
     let Ok(parsed) = url::Url::parse(origin) else {
         return SolveError::UnexpectedOrigin.into_response();
     };
+    if parsed.scheme() == "chrome-extension" || parsed.scheme() == "moz-extension" {
+        return next.run(req).await;
+    }
     if parsed.host_str() != expected_origin.host_str() {
         return SolveError::UnexpectedOrigin.into_response();
     }

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <link href="style.css" rel="stylesheet" />
+</head>
+
+<body>
+  <h1 id="myHeading">PoW Buster</h1>
+  <form id="options-form">
+    <label for="offload_url">Offload URL (leave blank to use built-in WASM SIMD128 solver)</label>
+    <input type="text" id="offload_url" name="offload_url" placeholder="https://powbuster.yumechi.jp/solve" /><br>
+    <button type="submit">Save</button><br>
+    <span class="warning">This WILL run whatever script the server requested. Use only with server that you
+      trust.</span>
+  </form>
+  <script src="script.js"></script>
+</body>
+
+</html>

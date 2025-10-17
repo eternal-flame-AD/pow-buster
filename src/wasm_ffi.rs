@@ -48,11 +48,22 @@ pub fn solve_json(input: &str) -> Result<AnubisResponse, JsError> {
     if let Ok(descriptor) =
         serde_json::from_str::<crate::adapter::CerberusChallengeDescriptor>(input)
     {
-        return solve_cerberus_json(&descriptor);
+        return solve_cerberus_json(&descriptor, None);
     } else if let Ok(descriptor) =
         serde_json::from_str::<crate::adapter::AnubisChallengeDescriptor>(input)
     {
         return solve_anubis_json(&descriptor);
+    } else {
+        return Err(JsError::new("invalid descriptor"));
+    };
+}
+
+#[wasm_bindgen]
+pub fn solve_json_set(input: &str, set: u32, iterand: u32) -> Result<AnubisResponse, JsError> {
+    if let Ok(descriptor) =
+        serde_json::from_str::<crate::adapter::CerberusChallengeDescriptor>(input)
+    {
+        return solve_cerberus_json(&descriptor, Some((set, iterand)));
     } else {
         return Err(JsError::new("invalid descriptor"));
     };
@@ -86,13 +97,23 @@ fn solve_anubis_json(
 
 fn solve_cerberus_json(
     descriptor: &crate::adapter::CerberusChallengeDescriptor,
+    fixed_set: Option<(u32, u32)>,
 ) -> Result<AnubisResponse, JsError> {
+    let mut starting_set = 0;
+    let mut loop_iterand = 1;
     let mut msg = descriptor
         .build_msg(0)
         .ok_or_else(|| JsError::new("invalid challenge"))?;
+    if let Some((set, iterand)) = fixed_set {
+        starting_set = set;
+        loop_iterand = iterand;
+        msg = descriptor
+            .build_msg(set)
+            .ok_or_else(|| JsError::new("reached maximum supported inner parallelism"))?;
+    }
     let mut solver = crate::CerberusSolver::from(msg);
 
-    for next_working_set in 1.. {
+    for next_working_set in (starting_set..).step_by(loop_iterand as usize).skip(1) {
         let result =
             solver.solve::<{ crate::solver::SOLVE_TYPE_MASK }>(0, descriptor.mask() as u64);
 

@@ -8,6 +8,7 @@
   - [Upstream Response](#upstream-response)
   - [Features](#features)
   - [Building](#building)
+    - [Building the browser extension (experimental)](#building-the-browser-extension-experimental)
   - [Limitations](#limitations)
   - [Ethical Disclaimer (i.e. the "How Dare you Publish this?" question)](#ethical-disclaimer-ie-the-how-dare-you-publish-this-question)
   - [Benchmark](#benchmark)
@@ -120,6 +121,17 @@ Executed in  491.36 millis    fish           external
 // elapsed time: 29ms; attempted nonces: 2535920; 81.04 MH/s; 1.27% limit used
 window.location.replace("/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime=2476&response=000000434df465134b51abbde017562b007c8239764d9fdce61817b4c306d304&nonce=11111111140158495&redir=" + encodeURIComponent(window.location.href));
 ```
+
+### Building the browser extension (experimental)
+
+The browser extension bundles a SIMD128 WASM solver for Anubis and Cerberus that is much more performant and energy-efficient than vendor-provided solvers and optionally can be configured to fetch solutions from a remote `pow-buster` server.
+
+```sh
+> ./build_wasm.sh
+> cd browser-addon && web-ext build
+```
+
+I do not plan on distributing signed builds, so you will need to install the extension manually. Also, I highly recommend trying out the [NoPoW](https://git.gay/49016/NoPoW) extension (which is signed by Mozilla) which simply exploits over-fit heuristics in the vendor code and would suffice for most websites except the most paranoid ones that indiscriminately PoW every visitor.
 
 ## Limitations
 
