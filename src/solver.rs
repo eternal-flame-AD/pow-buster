@@ -5,6 +5,13 @@ use sha2::Digest;
 #[cfg(all(target_arch = "x86_64", any(doc, target_feature = "avx512f")))]
 pub mod avx512;
 
+/// AVX2 solver
+#[cfg(all(
+    any(target_arch = "x86_64", target_arch = "x86"),
+    any(doc, target_feature = "avx2")
+))]
+pub mod avx2;
+
 #[cfg(all(
     any(target_arch = "x86_64", target_arch = "x86"),
     any(doc, target_feature = "sha")
@@ -425,7 +432,7 @@ pub(crate) mod tests {
     ) {
         use std::io::Write;
 
-        for df in 5..7 {
+        for df in (5..=7).chain(core::iter::once(9)) {
             let mask = compute_mask_cerberus(df.try_into().unwrap());
             eprintln!("mask: {:08x}", mask);
 

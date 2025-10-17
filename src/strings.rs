@@ -26,16 +26,16 @@ pub(crate) static DIGIT_LUT_10000_LE_EVEN: Align64<[u32; 10000 / 2]> = const {
 mod static_asserts {
     use super::DIGIT_LUT_10000_LE_EVEN;
 
-    static ASSERT_DIGIT_LUT_10000_LE_0: [(); 1] =
+    const ASSERT_DIGIT_LUT_10000_LE_0: [(); 1] =
         [(); (DIGIT_LUT_10000_LE_EVEN.0[0] == u32::from_be_bytes(*b"0000")) as usize];
 
-    static ASSERT_DIGIT_LUT_10000_LE_1: [(); 1] =
+    const ASSERT_DIGIT_LUT_10000_LE_1: [(); 1] =
         [(); (DIGIT_LUT_10000_LE_EVEN.0[1] == u32::from_be_bytes(*b"2000")) as usize];
 
-    static ASSERT_DIGIT_LUT_10000_LE_5: [(); 1] =
+    const ASSERT_DIGIT_LUT_10000_LE_5: [(); 1] =
         [(); (DIGIT_LUT_10000_LE_EVEN.0[5] == u32::from_be_bytes(*b"0100")) as usize];
 
-    static ASSERT_DIGIT_LUT_10000_LE_1234: [(); 1] =
+    const ASSERT_DIGIT_LUT_10000_LE_1234: [(); 1] =
         [(); (DIGIT_LUT_10000_LE_EVEN.0[1234] == u32::from_be_bytes(*b"8642")) as usize];
 }
 

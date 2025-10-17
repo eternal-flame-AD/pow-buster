@@ -85,7 +85,8 @@ Recommended CPU feature flags in order of preference:
 - `-Ctarget-feature=+avx512vbmi`
 - `-Ctarget-feature=+avx512f`
 - `-Ctarget-feature=+sha,+avx2`
-- `-Ctarget-feature=+sha,+sse4_1`
+- `-Ctarget-feature=+avx2` (only BLAKE3 will be accelerated!)
+- `-Ctarget-feature=+sha,+sse4_1` (only SHA-2 will be accelerated!)
 
 ```sh
 RUSTFLAGS="-Ctarget-cpu=native" cargo build --release --features cli

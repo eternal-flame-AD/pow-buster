@@ -210,8 +210,6 @@ cfg_if::cfg_if! {
         pub type GoAwaySolver = crate::solver::avx512::GoAwaySolver;
         /// Binary solver
         pub type BinarySolver = crate::solver::avx512::BinarySolver;
-        /// Cerberus solver
-        pub type CerberusSolver = crate::solver::avx512::CerberusSolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "AVX-512";
     } else if #[cfg(target_feature = "sha")] {
@@ -225,8 +223,6 @@ cfg_if::cfg_if! {
         pub type GoAwaySolver = crate::solver::sha_ni::GoAwaySolver;
         /// Binary solver
         pub type BinarySolver = crate::solver::safe::BinarySolver;
-        /// Cerberus solver
-        pub type CerberusSolver = crate::solver::safe::CerberusSolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "SHA-NI";
     } else {
@@ -240,10 +236,28 @@ cfg_if::cfg_if! {
         pub type GoAwaySolver = crate::solver::safe::GoAwaySolver;
         /// Binary solver
         pub type BinarySolver = crate::solver::safe::BinarySolver;
-        /// Cerberus solver
-        pub type CerberusSolver = crate::solver::safe::CerberusSolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "Fallback";
+    }
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+cfg_if::cfg_if! {
+    if #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))] {
+        /// Cerberus solver
+        pub type CerberusSolver = crate::solver::avx512::CerberusSolver;
+        /// Blake3 solver name
+        pub const BLAKE3_SOLVER_NAME: &str = "AVX-512";
+    } else if #[cfg(target_feature = "avx2")] {
+        /// Cerberus solver
+        pub type CerberusSolver = crate::solver::avx2::CerberusSolver;
+        /// Blake3 solver name
+        pub const BLAKE3_SOLVER_NAME: &str = "AVX2";
+    } else {
+        /// Cerberus solver
+        pub type CerberusSolver = crate::solver::safe::CerberusSolver;
+        /// Blake3 solver name
+        pub const BLAKE3_SOLVER_NAME: &str = "Fallback";
     }
 }
 
@@ -264,6 +278,8 @@ cfg_if::cfg_if! {
         pub type CerberusSolver = crate::solver::simd128::CerberusSolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "SIMD128";
+        /// Blake3 solver name
+        pub const BLAKE3_SOLVER_NAME: &str = "SIMD128";
     } else {
         /// Single block solver
         pub type SingleBlockSolver = crate::solver::safe::SingleBlockSolver;
@@ -279,6 +295,8 @@ cfg_if::cfg_if! {
         pub type CerberusSolver = crate::solver::safe::CerberusSolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "Fallback";
+        /// Blake3 solver name
+        pub const BLAKE3_SOLVER_NAME: &str = "Fallback";
     }
 }
 

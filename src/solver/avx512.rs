@@ -44,13 +44,13 @@ static LANE_ID_STR_COMBINED_LE_HI: Align64<[u32; 1000 / 16 * 16]> = {
 mod static_asserts {
     use super::*;
 
-    static ASSERT_LANE_ID_STR_COMBINED_LE_HI_0: [(); 1] =
+    const ASSERT_LANE_ID_STR_COMBINED_LE_HI_0: [(); 1] =
         [(); (LANE_ID_STR_COMBINED_LE_HI.0[0] == u32::from_be_bytes(*b"000\x00")) as usize];
 
-    static ASSERT_LANE_ID_STR_COMBINED_LE_HI_1: [(); 1] =
+    const ASSERT_LANE_ID_STR_COMBINED_LE_HI_1: [(); 1] =
         [(); (LANE_ID_STR_COMBINED_LE_HI.0[1] == u32::from_be_bytes(*b"100\x00")) as usize];
 
-    static ASSERT_LANE_ID_STR_COMBINED_LE_HI_123: [(); 1] =
+    const ASSERT_LANE_ID_STR_COMBINED_LE_HI_123: [(); 1] =
         [(); (LANE_ID_STR_COMBINED_LE_HI.0[123] == u32::from_be_bytes(*b"321\x00")) as usize];
 }
 

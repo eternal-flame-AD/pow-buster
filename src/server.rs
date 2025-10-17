@@ -921,6 +921,15 @@ static SERVER_HEADER_VALUE_BUF_LEN: ([u8; 256], usize) = {
         j += 1;
         i += 1;
     }
+    buf[i] = b'/';
+    i += 1;
+    j = 0;
+    let blake3_solver_name = crate::BLAKE3_SOLVER_NAME.as_bytes();
+    while i < 256 && j < blake3_solver_name.len() {
+        buf[i] = blake3_solver_name[j];
+        j += 1;
+        i += 1;
+    }
     buf[i] = b')';
     i += 1;
     (buf, i)
