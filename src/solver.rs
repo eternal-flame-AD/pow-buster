@@ -440,6 +440,9 @@ pub(crate) mod tests {
 
             for seed_len in 0..128 {
                 let Some(mut solver) = factory(&test_seed[..seed_len]) else {
+                    if seed_len < 64 {
+                        eprintln!("solver is None for seed_len: {}", seed_len);
+                    }
                     continue;
                 };
 

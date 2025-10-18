@@ -656,7 +656,7 @@ impl BinaryMessage {
 ///
 /// Note cerberus official solver only supports 32-bit range nonces, but the validator accepts machine sized nonces and should always remain inter-block
 ///
-/// Construct: Proof := (prefix || ASCII_U32_DECIMAL(nonce))
+/// Construct: Proof := (prefix || ASCII_GO_INT_DECIMAL(nonce))
 #[derive(Debug, Clone)]
 pub struct CerberusMessage {
     pub(crate) prefix_state: Align16<[u32; 8]>,
@@ -670,17 +670,18 @@ impl CerberusMessage {
     /// Create a new Ceberus message
     ///
     /// End-to-end salt construction: `${challenge}|${inputNonce}|${ts}|${signature}|`
-    pub fn new(salt: &[u8], working_set: u32) -> Option<Self> {
+    pub fn new(salt: &[u8], mut working_set: u32) -> Option<Self> {
+        // nonce placement in blake3 is less important than sha256, both early and late salts have strategies to elide computation.
+        //
+        // so we will keep it in 32-bit range just in case we met a 32-bit server, but in practice this is rarely seen.
+        //
         // u32::MAX is 4294967295 (10 digits), we will pop the first digit as outer loop and at most 3 other blocks need to be mutated
         // the last block is byte-order sensitive and needs a left shift to fix
-        let msb = working_set.wrapping_add(1);
-        if msb >= 10 || msb == 0 {
-            return None;
-        }
-        let msb = msb as u8;
 
-        // actual tree-based hashing is not supported yet
-        // it is also unlikely they will ship challenges so big
+        // actual tree-based hashing is not supported yet, it kicks in at 1024 bytes
+        // we can leave 24 bytes of headroom for nonce maneuvering.
+        //
+        // it is also unlikely any challenge will hash such big chunks
         if salt.len() > 1000 {
             return None;
         }
@@ -705,18 +706,32 @@ impl CerberusMessage {
         }
         let remainder = chunks.remainder();
         let mut salt_residual = crate::Align64([0; 64]);
+        salt_residual.0[..remainder.len()].copy_from_slice(remainder);
+        let mut ptr = remainder.len();
 
-        let salt_residual_len = if remainder.len() == 63 {
+        let mut nonce_addend = 0;
+        // TODO: figure out how to search more than 9G of nonce space for the edge case of 54 bytes modulo 64
+        // this is far from the typical case for Cerberus so not very important (even the official solver only searches 4G of nonce space)
+        if remainder.len() >= 55 {
+            // not enough room for 9 digits, assume 64-bit server and pad generously
+            let head_digit = (working_set % 8) as u8 + 1; // i64::MAX starts with 9 so we can only use 1-8 as head digit
+            nonce_addend = head_digit as u64;
+            salt_residual.0[remainder.len()] = head_digit as u8 + b'0';
+            working_set /= 8;
+            for x in (remainder.len() + 1)..64 {
+                let digit = working_set % 10;
+                salt_residual.0[x] = digit as u8 + b'0';
+                nonce_addend *= 10;
+                nonce_addend += digit as u64;
+                working_set /= 10;
+            }
+            ptr = 0;
             let block = core::array::from_fn(|i| {
                 u32::from_le_bytes([
-                    remainder[i * 4],
-                    remainder[i * 4 + 1],
-                    remainder[i * 4 + 2],
-                    if i == 15 {
-                        msb + b'0'
-                    } else {
-                        remainder[i * 4 + 3]
-                    },
+                    salt_residual[i * 4],
+                    salt_residual[i * 4 + 1],
+                    salt_residual[i * 4 + 2],
+                    salt_residual[i * 4 + 3],
                 ])
             });
 
@@ -729,31 +744,39 @@ impl CerberusMessage {
             );
             prefix_state.copy_from_slice(&output);
             flags &= !blake3::FLAG_CHUNK_START;
+            salt_residual.fill(0);
+        }
 
-            for i in 0..9 {
-                salt_residual[i] = b'0';
-            }
+        let head_digit = (working_set % 9) as u8 + 1;
+        salt_residual[ptr] = head_digit as u8 + b'0';
+        nonce_addend *= 10;
+        nonce_addend += head_digit as u64;
+        working_set /= 9;
+        while working_set != 0 {
+            ptr += 1;
+            let digit = working_set % 10;
+            salt_residual[ptr] = digit as u8 + b'0';
+            nonce_addend *= 10;
+            nonce_addend += digit as u64;
+            working_set /= 10;
+        }
 
-            0
-        } else {
-            if remainder.len() + 9 >= 64 {
-                return None;
-            }
-            salt_residual[..remainder.len()].copy_from_slice(remainder);
-            salt_residual[remainder.len()] = msb + b'0';
+        if ptr + 9 >= 64 {
+            return None;
+        }
 
-            for i in 0..9 {
-                salt_residual[remainder.len() + 1 + i] = b'0';
-            }
-            remainder.len() + 1
-        };
+        ptr += 1;
+
+        for i in 0..9 {
+            salt_residual[ptr + i] = b'0';
+        }
 
         Some(Self {
             prefix_state,
-            salt_residual_len,
+            salt_residual_len: ptr,
             salt_residual,
             flags,
-            nonce_addend: msb as u64 * 1_000_000_000,
+            nonce_addend: nonce_addend * 1_000_000_000,
         })
     }
 }
