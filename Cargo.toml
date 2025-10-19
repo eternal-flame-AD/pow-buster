@@ -16,7 +16,6 @@ crate-type = ["cdylib", "rlib"]
 sha2 = { version = "0.10", default-features = false, features = ["compress"] }
 cfg-if = "1.0"
 
-wasm-bindgen = { version = "0.2", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "http2", "rustls-tls", "gzip"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
@@ -44,6 +43,12 @@ panic = "abort"
 inherits = "release"
 panic = "unwind"
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "0.2" }
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O4", "--enable-bulk-memory", "--enable-simd"]
+
 [dev-dependencies]
 bincode = "1.3"
 pow_sha256 = { git = "https://github.com/mcaptcha/pow_sha256", tag = "0.3.1" }
@@ -70,7 +75,6 @@ alloc = []
 std = ["alloc"]
 compare-64bit = []
 adapter = ["alloc", "dep:serde", "dep:serde_json"]
-wasm-bindgen = ["adapter", "dep:wasm-bindgen"]
 client = ["std", "adapter", "rayon", "tokio", "tokio/rt-multi-thread", "dep:url", "dep:reqwest", "dep:thiserror", "dep:num_cpus", "dep:scraper"]
 live-throughput-test = ["client"]
 cli = ["std", "dep:clap", "rayon", "dep:num_cpus"]

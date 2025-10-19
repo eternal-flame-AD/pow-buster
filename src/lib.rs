@@ -6,7 +6,7 @@ use sha2::digest::{
     consts::{B1, U0, U16, U64},
     typenum::{IsGreater, PowerOfTwo, Unsigned},
 };
-#[cfg(feature = "wasm-bindgen")]
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 use core::num::NonZeroU8;
@@ -22,7 +22,7 @@ pub mod client;
 /// Server for end-to-end PoW solving
 pub mod server;
 
-#[cfg(feature = "wasm-bindgen")]
+#[cfg(target_arch = "wasm32")]
 mod wasm_ffi;
 
 #[cfg(any(target_feature = "avx512f", target_feature = "avx2"))]
@@ -174,8 +174,7 @@ impl<T> core::ops::DerefMut for Align64<T> {
 #[cold]
 fn unlikely() {}
 
-#[cfg(feature = "wasm-bindgen")]
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 /// Convert a prefix offset to a lane position
 pub fn prefix_offset_to_lane_position(offset: usize) -> usize {
     PREFIX_OFFSET_TO_LANE_POSITION[offset % 64]
@@ -382,9 +381,11 @@ pub const fn is_supported_lane_position(lane_position: usize) -> bool {
     }
 }
 
-#[cfg(feature = "wasm-bindgen")]
 /// Check if a lane position is supported in the current build
-#[wasm_bindgen(js_name = "is_supported_lane_position")]
+#[cfg_attr(
+    target_arch = "wasm32",
+    wasm_bindgen(js_name = "is_supported_lane_position")
+)]
 pub fn is_supported_lane_position_wasm(lane_position: usize) -> bool {
     is_supported_lane_position(lane_position)
 }

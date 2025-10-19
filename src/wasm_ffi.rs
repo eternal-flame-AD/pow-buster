@@ -4,11 +4,6 @@ use wasm_bindgen::prelude::*;
 
 use crate::solver::Solver;
 
-#[wasm_bindgen(js_namespace = console)]
-extern "C" {
-    fn log(s: &str);
-}
-
 #[wasm_bindgen(js_name = "AnubisResponse")]
 #[derive(Debug, Clone)]
 pub struct AnubisResponse {
@@ -43,7 +38,27 @@ impl AnubisResponse {
     }
 }
 
+#[wasm_bindgen(js_name = "CerberusWorkerResponse")]
+#[derive(Debug, Clone)]
+struct CerberusWorkerResponse {
+    hash: String,
+    nonce: u64,
+}
+
 #[wasm_bindgen]
+impl CerberusWorkerResponse {
+    #[wasm_bindgen(getter)]
+    pub fn hash(&self) -> String {
+        self.hash.clone()
+    }
+    #[wasm_bindgen(getter)]
+    pub fn nonce(&self) -> u64 {
+        self.nonce
+    }
+}
+
+#[wasm_bindgen]
+#[cfg(feature = "adapter")]
 pub fn solve_json(input: &str) -> Result<AnubisResponse, JsError> {
     if let Ok(descriptor) =
         serde_json::from_str::<crate::adapter::CerberusChallengeDescriptor>(input)
@@ -59,6 +74,7 @@ pub fn solve_json(input: &str) -> Result<AnubisResponse, JsError> {
 }
 
 #[wasm_bindgen]
+#[cfg(feature = "adapter")]
 pub fn solve_json_set(input: &str, set: u32, iterand: u32) -> Result<AnubisResponse, JsError> {
     if let Ok(descriptor) =
         serde_json::from_str::<crate::adapter::CerberusChallengeDescriptor>(input)
@@ -69,6 +85,7 @@ pub fn solve_json_set(input: &str, set: u32, iterand: u32) -> Result<AnubisRespo
     };
 }
 
+#[cfg(feature = "adapter")]
 fn solve_anubis_json(
     descriptor: &crate::adapter::AnubisChallengeDescriptor,
 ) -> Result<AnubisResponse, JsError> {
@@ -95,6 +112,7 @@ fn solve_anubis_json(
     })
 }
 
+#[cfg(feature = "adapter")]
 fn solve_cerberus_json(
     descriptor: &crate::adapter::CerberusChallengeDescriptor,
     fixed_set: Option<(u32, u32)>,

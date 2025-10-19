@@ -120,11 +120,11 @@ pub(crate) fn bcst_multiway_arx<const LEAD_ZEROES: usize>(state: &mut [v128; 8],
     }
 }
 
-#[cfg(feature = "wasm-bindgen")]
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
     fn test_simd128_ror() {
         unsafe {
             for amount in 0..32 {
@@ -143,6 +143,7 @@ mod tests {
         }
     }
 
+    #[test]
     fn test_sha256_simd128_single_block() {
         // Test vector from NIST FIPS 180-4
         // Input: "abc" repeated 16 times

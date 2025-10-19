@@ -1,22 +1,23 @@
 {
     "rust-analyzer.cargo.features": [
-        "client",
-        "server",
-        "server-wasm",
-        "live-throughput-test",
-        "cli",
-        "rayon",
-        "wasm-bindgen",
-        "ignore-target-feature-checks",
-        "compare-64bit"
+        "adapter",
+        // "client",
+        // "server",
+        // "server-wasm",
+        // "live-throughput-test",
+        // "cli",
+        // "rayon",
+        // "ignore-target-feature-checks",
+        // "compare-64bit"
     ],
     "rust-analyzer.cargo.cfgs": [
         "debug_assertions",
         "miri"
     ],
-    // "rust-analyzer.cargo.target": "wasm32-unknown-unknown",
+    "rust-analyzer.cargo.target": "wasm32-unknown-unknown",
     "rust-analyzer.cargo.extraEnv": {
+        "RUSTFLAGS": "-C target-feature=+simd128",
         //"RUSTFLAGS": "-C target-feature=+sha,+sse4_1"
-        "RUSTFLAGS": "-C target-feature=+sha,+sse4_1,+avx512f"
+        //"RUSTFLAGS": "-C target-feature=+sha,+sse4_1,+avx512f"
     }
 }

@@ -7,6 +7,51 @@ use pow_buster::message::CerberusMessage;
 use pow_buster::solver::Solver;
 use pow_buster::{CerberusSolver, compute_mask_cerberus};
 
+#[allow(unused)]
+mod cerberus_verbatim {
+    pub fn check_leading_zero_dubits(n: usize) -> fn(&[u8; 32], usize) -> bool {
+        match n {
+            0..=16 => check_small,
+            _ => check_general,
+        }
+    }
+
+    fn check_small(hash: &[u8; 32], n: usize) -> bool {
+        let first_word: u32 = (hash[0] as u32) << 24
+            | (hash[1] as u32) << 16
+            | (hash[2] as u32) << 8
+            | (hash[3] as u32);
+        first_word.leading_zeros() >= (n as u32 * 2)
+    }
+
+    fn check_general(hash: &[u8; 32], n: usize) -> bool {
+        panic!("I'm lazy")
+    }
+
+    pub fn process_task(data: &[u8], difficulty: u32, thread_id: u32, threads: u32) -> u32 {
+        use std::io::Write;
+        let dubit_checker: fn(&[u8; 32], usize) -> bool =
+            check_leading_zero_dubits(difficulty as usize);
+        let mut hasher = blake3::Hasher::new();
+
+        for i in (thread_id..).step_by(threads as usize) {
+            hasher.reset();
+
+            let mut attempt = data.to_vec();
+            write!(&mut attempt, "{}", i).unwrap();
+
+            hasher.update(attempt.as_slice());
+            let hash = hasher.finalize();
+
+            if dubit_checker(hash.as_bytes(), difficulty as usize) {
+                return i;
+            }
+        }
+
+        unreachable!()
+    }
+}
+
 pub fn bench_blake3_cerberus(c: &mut Criterion) {
     const SAMPLE_SALT: [u8; 216] = *b"849c253990ebc3dc23e265f52692d5a53b89e72b76527a3e35a41c6bedad5867|3959614364|1759954402|803eb7fa618142da5c8ab89cc1109775f6c37d25520deae1e3bd2b1803aa9a8e15b2aae8a9ad2cc4f58f4c9ff2cf4999f2bef0ff5e389b15895d0cc2200d4a03|";
 
@@ -26,6 +71,17 @@ pub fn bench_blake3_cerberus(c: &mut Criterion) {
             let mut solver = CerberusSolver::from(CerberusMessage::new(&salt, 0).unwrap());
             ctr += 1;
             solver.solve::<{ pow_buster::solver::SOLVE_TYPE_MASK }>(0, difficulty as u64)
+        });
+    });
+
+    group.sample_size(100);
+
+    group.bench_function("cerberus_verbatim", |b| {
+        let mut salt = SAMPLE_SALT;
+        b.iter(|| {
+            salt[..8].copy_from_slice(&ctr.to_le_bytes());
+            ctr += 1;
+            cerberus_verbatim::process_task(salt.as_slice(), 10, 0, 1)
         });
     });
 }
@@ -67,7 +123,7 @@ pub fn bench_blake3_cerberus_multi_threaded(c: &mut Criterion) {
                             if this_work >= work_count * iters as usize {
                                 break;
                             }
-                            salt[..8].copy_from_slice(&this_work.to_le_bytes());
+                            salt[..8].copy_from_slice(&(this_work as u64).to_le_bytes());
                             let mut solver =
                                 CerberusSolver::from(CerberusMessage::new(&salt, 0).unwrap());
                             core::hint::black_box(

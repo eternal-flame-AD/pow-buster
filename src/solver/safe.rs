@@ -1,7 +1,7 @@
 use sha2::digest::generic_array::GenericArray;
 
 use crate::{
-    Align16, Align64,
+    Align16, Align64, decompose_blocks_mut,
     message::{
         BinaryMessage, CerberusMessage, DecimalMessage, DoubleBlockMessage, GoAwayMessage,
         SingleBlockMessage,
@@ -447,7 +447,7 @@ impl From<CerberusMessage> for CerberusSolver {
         Self {
             message,
             attempted_nonces: 0,
-            limit: u32::MAX as u64,
+            limit: !0,
         }
     }
 }
@@ -455,7 +455,7 @@ impl From<CerberusMessage> for CerberusSolver {
 impl CerberusSolver {
     /// Set the limit.
     pub fn set_limit(&mut self, limit: u64) {
-        self.limit = limit.min(u32::MAX as u64);
+        self.limit = limit;
     }
 
     /// Get the attempted nonces.   
@@ -470,21 +470,35 @@ impl crate::solver::Solver for CerberusSolver {
 
         let remaining_limit = self.limit.saturating_sub(self.attempted_nonces);
 
+        let mut msg = core::array::from_fn(|i| {
+            u32::from_le_bytes([
+                self.message.salt_residual[i * 4],
+                self.message.salt_residual[i * 4 + 1],
+                self.message.salt_residual[i * 4 + 2],
+                self.message.salt_residual[i * 4 + 3],
+            ])
+        });
+        assert!(
+            self.message.salt_residual_len + 8 < msg.len() * core::mem::size_of::<u32>(),
+            "there must be at least 9 bytes of headroom for the nonce"
+        );
         for nonce in 0u64..remaining_limit {
-            if self.attempted_nonces >= self.limit {
-                return None;
-            }
-            let mut msg = self.message.salt_residual;
             let mut nonce_copy = nonce;
             for i in (0..9).rev() {
-                msg[self.message.salt_residual_len + i] = (nonce_copy % 10) as u8 + b'0';
+                let msg = decompose_blocks_mut(&mut msg);
+                #[cfg(target_endian = "little")]
+                unsafe {
+                    *msg.get_unchecked_mut(self.message.salt_residual_len + i) =
+                        (nonce_copy % 10) as u8 + b'0';
+                }
+                #[cfg(target_endian = "big")]
+                {
+                    *msg.get_unchecked_mut(self.message.salt_residual_len + i) =
+                        (nonce_copy % 10) as u8 + b'0';
+                }
                 nonce_copy /= 10;
             }
             debug_assert_eq!(nonce_copy, 0);
-
-            let msg = core::array::from_fn(|i| {
-                u32::from_le_bytes([msg[i * 4], msg[i * 4 + 1], msg[i * 4 + 2], msg[i * 4 + 3]])
-            });
 
             let hash = crate::blake3::compress8(
                 &mut self.message.prefix_state,

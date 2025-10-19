@@ -713,7 +713,7 @@ impl From<CerberusMessage> for CerberusSolver {
         Self {
             message,
             attempted_nonces: 0,
-            limit: u32::MAX as u64,
+            limit: !0,
         }
     }
 }
