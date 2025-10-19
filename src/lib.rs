@@ -344,6 +344,9 @@ pub const fn compute_target_goaway(difficulty_factor: NonZeroU8) -> u64 {
 
 /// Compute a mask for a Cerberus PoW (mask & V[0] == 0)
 pub const fn compute_mask_cerberus(difficulty_factor: NonZeroU8) -> u32 {
+    if difficulty_factor.get() == 16 {
+        return !0;
+    }
     !(!0u32 >> (difficulty_factor.get() * 2)).swap_bytes()
 }
 
