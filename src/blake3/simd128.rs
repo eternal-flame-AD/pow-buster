@@ -7,43 +7,34 @@ mod loop_macros;
 
 #[inline(always)]
 fn u32x4_ror(x: v128, shift: u32) -> v128 {
-    #[allow(unused_unsafe, reason = "workaround rust-analyzer #20640")]
-    unsafe {
-        v128_or(u32x4_shr(x, shift), u32x4_shl(x, 32 - shift))
-    }
+    v128_or(u32x4_shr(x, shift), u32x4_shl(x, 32 - shift))
 }
 
 #[inline(always)]
 fn g4(va: &mut v128, vb: &mut v128, vc: &mut v128, vd: &mut v128, x: v128, y: v128) {
-    #[allow(unused_unsafe)]
-    unsafe {
-        *va = u32x4_add(*va, u32x4_add(*vb, x));
-        *vd = v128_xor(*vd, *va);
-        *vd = u32x4_ror(*vd, 16);
-        *vc = u32x4_add(*vc, *vd);
-        *vb = v128_xor(*vb, *vc);
-        *vb = u32x4_ror(*vb, 12);
-        *va = u32x4_add(*va, u32x4_add(*vb, y));
-        *vd = v128_xor(*vd, *va);
-        *vd = u32x4_ror(*vd, 8);
-        *vc = u32x4_add(*vc, *vd);
-        *vb = v128_xor(*vb, *vc);
-        *vb = u32x4_ror(*vb, 7);
-    }
+    *va = u32x4_add(*va, u32x4_add(*vb, x));
+    *vd = v128_xor(*vd, *va);
+    *vd = u32x4_ror(*vd, 16);
+    *vc = u32x4_add(*vc, *vd);
+    *vb = v128_xor(*vb, *vc);
+    *vb = u32x4_ror(*vb, 12);
+    *va = u32x4_add(*va, u32x4_add(*vb, y));
+    *vd = v128_xor(*vd, *va);
+    *vd = u32x4_ror(*vd, 8);
+    *vc = u32x4_add(*vc, *vd);
+    *vb = v128_xor(*vb, *vc);
+    *vb = u32x4_ror(*vb, 7);
 }
 
 #[inline(always)]
-#[allow(unused_unsafe, reason = "workaround rust-analyzer #20640")]
 fn g4_a_only(va: &mut v128, vb: &mut v128, vc: &mut v128, vd: &mut v128, x: v128, y: v128) {
-    unsafe {
-        *va = u32x4_add(*va, u32x4_add(*vb, x));
-        *vd = v128_xor(*vd, *va);
-        *vd = u32x4_ror(*vd, 16);
-        *vc = u32x4_add(*vc, *vd);
-        *vb = v128_xor(*vb, *vc);
-        *vb = u32x4_ror(*vb, 12);
-        *va = u32x4_add(*va, u32x4_add(*vb, y));
-    }
+    *va = u32x4_add(*va, u32x4_add(*vb, x));
+    *vd = v128_xor(*vd, *va);
+    *vd = u32x4_ror(*vd, 16);
+    *vc = u32x4_add(*vc, *vd);
+    *vb = v128_xor(*vb, *vc);
+    *vb = u32x4_ror(*vb, 12);
+    *va = u32x4_add(*va, u32x4_add(*vb, y));
 }
 
 #[inline(always)]
@@ -116,7 +107,6 @@ pub(crate) fn compress_mb4_reduced<const CONSTANT_WORD_COUNT: usize, const PATCH
 }
 
 #[cfg(test)]
-#[allow(unused_unsafe)]
 mod tests {
     use blake3::Hasher;
 
@@ -137,7 +127,7 @@ mod tests {
     #[test]
     fn test_g_function() {
         let mut state = core::array::from_fn(|i| crate::sha256::IV[i % 8].wrapping_add(i as u32));
-        let mut state_v: [_; 16] = core::array::from_fn(|i| unsafe { u32x4_splat(state[i] as _) });
+        let mut state_v: [_; 16] = core::array::from_fn(|i| u32x4_splat(state[i] as _));
         gref(
             &mut state,
             0,
@@ -153,18 +143,18 @@ mod tests {
             vb,
             vc,
             vd,
-            unsafe { u32x4_splat(crate::sha256::IV[0] as _) },
-            unsafe { u32x4_splat(crate::sha256::IV[1] as _) },
+            u32x4_splat(crate::sha256::IV[0] as _),
+            u32x4_splat(crate::sha256::IV[1] as _),
         );
 
         for i in 0..16 {
             assert_eq!(
-                unsafe { u32x4_extract_lane::<0>(state_v[i]) as u32 },
+                u32x4_extract_lane::<0>(state_v[i]) as u32,
                 state[i],
                 "word {}: expected: {:08x}, results: {:08x}",
                 i,
                 state[i],
-                unsafe { u32x4_extract_lane::<0>(state_v[i]) as u32 }
+                u32x4_extract_lane::<0>(state_v[i]) as u32
             );
         }
     }

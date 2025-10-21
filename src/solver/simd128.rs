@@ -16,15 +16,12 @@ static LANE_ID_LSB_STR: Align16<[u8; 5 * 16]> =
 
 #[inline(always)]
 fn load_lane_id_epi32(src: &Align16<[u8; 5 * 16]>, set_idx: usize) -> v128 {
-    #[allow(unused_unsafe)]
-    unsafe {
-        u32x4(
-            src[set_idx * 4] as _,
-            src[set_idx * 4 + 1] as _,
-            src[set_idx * 4 + 2] as _,
-            src[set_idx * 4 + 3] as _,
-        )
-    }
+    u32x4(
+        src[set_idx * 4] as _,
+        src[set_idx * 4 + 1] as _,
+        src[set_idx * 4 + 2] as _,
+        src[set_idx * 4 + 3] as _,
+    )
 }
 
 static LANE_ID_STR_COMBINED_LE_HI: Align16<[u32; 1000]> = {
