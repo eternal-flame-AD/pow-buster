@@ -159,8 +159,6 @@ TLDR; My extrapolated throughput for each approach, corroborated by empirical an
 
 ![Extrapolated throughput](plots/time.png)
 
-Note: To reproduce, you don't need to clone the submodule, it is only used as a pointer for what I used to for benchmarking.
-
 ### Formal Benchmark (mCaptcha only)
 
 Speedup against official solution, reported by Criterion.rs, single-threaded except for "mCaptcha User Survey extrapolated" column which uses all worker threads on the user's browser:

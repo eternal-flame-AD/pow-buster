@@ -1,3 +1,0 @@
-[submodule "vendor/mcaptcha"]
-	path = vendor/mcaptcha
-	url = https://github.com/mCaptcha/mcaptcha
