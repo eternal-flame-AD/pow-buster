@@ -385,7 +385,7 @@ impl crate::solver::Solver for BinarySolver {
             cur_block = 1;
         }
         blocks[cur_block][(64 - 8)..]
-            .copy_from_slice(&(self.message.message_length * 8).to_be_bytes());
+            .copy_from_slice(&(self.message.message_length as u64 * 8).to_be_bytes());
 
         let used_blocks = &mut blocks[..=cur_block];
 
