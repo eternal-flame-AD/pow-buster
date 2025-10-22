@@ -161,15 +161,6 @@ impl crate::solver::Solver for SingleBlockSolver {
                     };
             }
 
-            if this.attempted_nonces >= this.limit {
-                return None;
-            }
-
-            let mut remaining_limit = this.limit.saturating_sub(this.attempted_nonces);
-            if remaining_limit == 0 {
-                return None;
-            }
-
             let lane_id_0_byte_idx = this.message.digit_index % 4;
             let lane_id_1_byte_idx = (this.message.digit_index + 1) % 4;
 
@@ -178,6 +169,10 @@ impl crate::solver::Solver for SingleBlockSolver {
             } else {
                 5
             }) {
+                if this.attempted_nonces >= this.limit {
+                    return None;
+                }
+
                 let mut inner_key_buf = if MUTATION_TYPE & MUTATION_TYPE_OCTAL != 0 {
                     Align16(*b"1111\x80111")
                 } else {
@@ -216,13 +211,18 @@ impl crate::solver::Solver for SingleBlockSolver {
                         lane_id_0_or_value
                     };
 
-                    let inner_iteration_end = if MUTATION_TYPE & MUTATION_TYPE_OCTAL != 0 {
+                    let mut inner_iteration_end = if MUTATION_TYPE & MUTATION_TYPE_OCTAL != 0 {
                         0o10_000_000
                     } else {
                         10_000_000
                     };
-                    let max_iterations = inner_iteration_end;
-                    remaining_limit -= max_iterations as u64;
+
+                    // clamp it to the number of remaining iterations
+                    inner_iteration_end =
+                        this.limit
+                            .saturating_sub(this.attempted_nonces)
+                            .div_ceil(16)
+                            .min(inner_iteration_end as u64) as u32;
 
                     // soft pipeline this to compute the new message after the hash
                     // LLVM seems to handle cases where high register pressure work happens first better
