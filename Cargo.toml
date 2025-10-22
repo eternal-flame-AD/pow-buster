@@ -34,6 +34,7 @@ axum-extra = { version = "0.10.1", features = ["typed-header"], optional = true 
 headers = { version = "0.4", optional = true }
 rust-embed = { version = "8.7", optional = true, features = ["mime-guess"] }
 blake3 = { version = "1.8.2", default-features = false }
+generic-array = { version = "=0.14.7" } # TODO: remove this pin once RustCrypt migrate off of it
 
 [profile.release]
 opt-level = 3
