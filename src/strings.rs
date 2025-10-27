@@ -154,7 +154,7 @@ impl<const N: usize, const PLACEHOLDER: u8> ComputeMask<N, PLACEHOLDER> {
 /// - PLACEHOLDER: The placeholder character to use for the rest of the bytes
 #[cfg_attr(
     any(target_feature = "avx512f", target_feature = "avx2"),
-    expect(unreachable_code)
+    expect(unused)
 )]
 #[inline(always)]
 pub fn simd_itoa8<const N: usize, const REGISTER_BSWAP: bool, const PLACEHOLDER: u8>(

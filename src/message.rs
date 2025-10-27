@@ -26,7 +26,7 @@ pub struct SingleBlockMessage {
     /// the approximate working set count
     pub approx_working_set_count: core::num::NonZeroU32,
 
-    /// whether there are no trailing zeros
+    /// whether no trailing zeros are allowed
     pub no_trailing_zeros: bool,
 }
 
