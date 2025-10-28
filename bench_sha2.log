@@ -1,0 +1,425 @@
+   Compiling pow-buster v0.1.0 (/home/yume/source/simd-mcaptcha)
+    Finished `bench` profile [optimized] target(s) in 46.39s
+     Running benches/bench_proof.rs (target/release/deps/bench_proof-3ccd16461e82c873)
+Gnuplot not found, using plotters backend
+Benchmarking bench_proof/proof/native (50000)
+Benchmarking bench_proof/proof/native (50000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof/native (50000): Collecting 50 samples in estimated 33.021 s (6375 iterations)
+Benchmarking bench_proof/proof/native (50000): Analyzing
+bench_proof/proof/native (50000)
+                        time:   [515.39 µs 519.34 µs 523.05 µs]
+                        thrpt:  [95.594 Melem/s 96.276 Melem/s 97.014 Melem/s]
+Found 6 outliers among 50 measurements (12.00%)
+  2 (4.00%) low mild
+  4 (8.00%) high mild
+Benchmarking bench_proof/proof (capjs)/native (50000)
+Benchmarking bench_proof/proof (capjs)/native (50000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof (capjs)/native (50000): Collecting 50 samples in estimated 35.869 s (7650 iterations)
+Benchmarking bench_proof/proof (capjs)/native (50000): Analyzing
+bench_proof/proof (capjs)/native (50000)
+                        time:   [469.63 µs 472.76 µs 476.01 µs]
+                        thrpt:  [105.04 Melem/s 105.76 Melem/s 106.47 Melem/s]
+Found 3 outliers among 50 measurements (6.00%)
+  1 (2.00%) low mild
+  2 (4.00%) high severe
+Benchmarking bench_proof/proof (double block)/native (50000)
+Benchmarking bench_proof/proof (double block)/native (50000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof (double block)/native (50000): Collecting 50 samples in estimated 33.833 s (3825 iterations)
+Benchmarking bench_proof/proof (double block)/native (50000): Analyzing
+bench_proof/proof (double block)/native (50000)
+                        time:   [871.79 µs 880.01 µs 889.08 µs]
+                        thrpt:  [56.238 Melem/s 56.818 Melem/s 57.353 Melem/s]
+Found 3 outliers among 50 measurements (6.00%)
+  1 (2.00%) low mild
+  2 (4.00%) high mild
+Benchmarking bench_proof/proof (binary u32)/native (50000)
+Benchmarking bench_proof/proof (binary u32)/native (50000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof (binary u32)/native (50000): Collecting 50 samples in estimated 33.843 s (6375 iterations)
+Benchmarking bench_proof/proof (binary u32)/native (50000): Analyzing
+bench_proof/proof (binary u32)/native (50000)
+                        time:   [532.15 µs 535.34 µs 538.21 µs]
+                        thrpt:  [92.901 Melem/s 93.399 Melem/s 93.958 Melem/s]
+Found 1 outliers among 50 measurements (2.00%)
+  1 (2.00%) low severe
+Benchmarking bench_proof/proof/safe (sha2) (50000)
+Benchmarking bench_proof/proof/safe (sha2) (50000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof/safe (sha2) (50000): Collecting 50 samples in estimated 37.304 s (2550 iterations)
+Benchmarking bench_proof/proof/safe (sha2) (50000): Analyzing
+bench_proof/proof/safe (sha2) (50000)
+                        time:   [1.4723 ms 1.4931 ms 1.5146 ms]
+                        thrpt:  [33.013 Melem/s 33.487 Melem/s 33.962 Melem/s]
+Found 1 outliers among 50 measurements (2.00%)
+  1 (2.00%) low mild
+Benchmarking bench_proof/proof/mCaptcha (50000)
+Benchmarking bench_proof/proof/mCaptcha (50000): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 30.0s. You may wish to increase target time to 33.3s, enable flat sampling, or reduce sample count to 30.
+Benchmarking bench_proof/proof/mCaptcha (50000): Collecting 50 samples in estimated 33.339 s (1275 iterations)
+Benchmarking bench_proof/proof/mCaptcha (50000): Analyzing
+bench_proof/proof/mCaptcha (50000)
+                        time:   [2.3196 ms 2.3610 ms 2.4032 ms]
+                        thrpt:  [20.805 Melem/s 21.177 Melem/s 21.556 Melem/s]
+Found 4 outliers among 50 measurements (8.00%)
+  1 (2.00%) low mild
+  3 (6.00%) high severe
+Benchmarking bench_proof/proof (double block)/mCaptcha (50000)
+Benchmarking bench_proof/proof (double block)/mCaptcha (50000): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 30.0s. You may wish to increase target time to 49.4s, enable flat sampling, or reduce sample count to 20.
+Benchmarking bench_proof/proof (double block)/mCaptcha (50000): Collecting 50 samples in estimated 49.378 s (1275 iterations)
+Benchmarking bench_proof/proof (double block)/mCaptcha (50000): Analyzing
+bench_proof/proof (double block)/mCaptcha (50000)
+                        time:   [3.4771 ms 3.5383 ms 3.6009 ms]
+                        thrpt:  [13.885 Melem/s 14.131 Melem/s 14.380 Melem/s]
+Found 2 outliers among 50 measurements (4.00%)
+  1 (2.00%) low mild
+  1 (2.00%) high severe
+Benchmarking bench_proof/proof/native (100000)
+Benchmarking bench_proof/proof/native (100000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof/native (100000): Collecting 50 samples in estimated 39.692 s (3825 iterations)
+Benchmarking bench_proof/proof/native (100000): Analyzing
+bench_proof/proof/native (100000)
+                        time:   [1.0288 ms 1.0391 ms 1.0493 ms]
+                        thrpt:  [95.301 Melem/s 96.238 Melem/s 97.201 Melem/s]
+Found 1 outliers among 50 measurements (2.00%)
+  1 (2.00%) high mild
+Benchmarking bench_proof/proof (capjs)/native (100000)
+Benchmarking bench_proof/proof (capjs)/native (100000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof (capjs)/native (100000): Collecting 50 samples in estimated 36.350 s (3825 iterations)
+Benchmarking bench_proof/proof (capjs)/native (100000): Analyzing
+bench_proof/proof (capjs)/native (100000)
+                        time:   [933.69 µs 944.93 µs 955.85 µs]
+                        thrpt:  [104.62 Melem/s 105.83 Melem/s 107.10 Melem/s]
+Found 3 outliers among 50 measurements (6.00%)
+  2 (4.00%) high mild
+  1 (2.00%) high severe
+Benchmarking bench_proof/proof (double block)/native (100000)
+Benchmarking bench_proof/proof (double block)/native (100000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof (double block)/native (100000): Collecting 50 samples in estimated 45.857 s (2550 iterations)
+Benchmarking bench_proof/proof (double block)/native (100000): Analyzing
+bench_proof/proof (double block)/native (100000)
+                        time:   [1.7622 ms 1.7884 ms 1.8151 ms]
+                        thrpt:  [55.095 Melem/s 55.915 Melem/s 56.747 Melem/s]
+Found 4 outliers among 50 measurements (8.00%)
+  2 (4.00%) low mild
+  1 (2.00%) high mild
+  1 (2.00%) high severe
+Benchmarking bench_proof/proof (binary u32)/native (100000)
+Benchmarking bench_proof/proof (binary u32)/native (100000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof (binary u32)/native (100000): Collecting 50 samples in estimated 42.066 s (3825 iterations)
+Benchmarking bench_proof/proof (binary u32)/native (100000): Analyzing
+bench_proof/proof (binary u32)/native (100000)
+                        time:   [1.0750 ms 1.0875 ms 1.1001 ms]
+                        thrpt:  [90.899 Melem/s 91.954 Melem/s 93.020 Melem/s]
+Benchmarking bench_proof/proof/safe (sha2) (100000)
+Benchmarking bench_proof/proof/safe (sha2) (100000): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 30.0s. You may wish to increase target time to 38.1s, enable flat sampling, or reduce sample count to 30.
+Benchmarking bench_proof/proof/safe (sha2) (100000): Collecting 50 samples in estimated 38.118 s (1275 iterations)
+Benchmarking bench_proof/proof/safe (sha2) (100000): Analyzing
+bench_proof/proof/safe (sha2) (100000)
+                        time:   [2.9405 ms 2.9742 ms 3.0099 ms]
+                        thrpt:  [33.223 Melem/s 33.622 Melem/s 34.007 Melem/s]
+Found 3 outliers among 50 measurements (6.00%)
+  1 (2.00%) low severe
+  2 (4.00%) high mild
+Benchmarking bench_proof/proof/mCaptcha (100000)
+Benchmarking bench_proof/proof/mCaptcha (100000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof/mCaptcha (100000): Collecting 50 samples in estimated 30.935 s (550 iterations)
+Benchmarking bench_proof/proof/mCaptcha (100000): Analyzing
+bench_proof/proof/mCaptcha (100000)
+                        time:   [4.7090 ms 4.8250 ms 4.9453 ms]
+                        thrpt:  [20.221 Melem/s 20.726 Melem/s 21.236 Melem/s]
+Benchmarking bench_proof/proof (double block)/mCaptcha (100000)
+Benchmarking bench_proof/proof (double block)/mCaptcha (100000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof (double block)/mCaptcha (100000): Collecting 50 samples in estimated 30.204 s (400 iterations)
+Benchmarking bench_proof/proof (double block)/mCaptcha (100000): Analyzing
+bench_proof/proof (double block)/mCaptcha (100000)
+                        time:   [6.9530 ms 7.2092 ms 7.4696 ms]
+                        thrpt:  [13.388 Melem/s 13.871 Melem/s 14.382 Melem/s]
+Benchmarking bench_proof/proof/native (1000000)
+Benchmarking bench_proof/proof/native (1000000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof/native (1000000): Collecting 50 samples in estimated 30.273 s (300 iterations)
+Benchmarking bench_proof/proof/native (1000000): Analyzing
+bench_proof/proof/native (1000000)
+                        time:   [9.9148 ms 10.291 ms 10.671 ms]
+                        thrpt:  [93.711 Melem/s 97.168 Melem/s 100.86 Melem/s]
+Benchmarking bench_proof/proof (capjs)/native (1000000)
+Benchmarking bench_proof/proof (capjs)/native (1000000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof (capjs)/native (1000000): Collecting 50 samples in estimated 32.468 s (350 iterations)
+Benchmarking bench_proof/proof (capjs)/native (1000000): Analyzing
+bench_proof/proof (capjs)/native (1000000)
+                        time:   [8.9259 ms 9.2590 ms 9.5865 ms]
+                        thrpt:  [104.31 Melem/s 108.00 Melem/s 112.03 Melem/s]
+Found 2 outliers among 50 measurements (4.00%)
+  2 (4.00%) low mild
+Benchmarking bench_proof/proof (double block)/native (1000000)
+Benchmarking bench_proof/proof (double block)/native (1000000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof (double block)/native (1000000): Collecting 50 samples in estimated 35.222 s (200 iterations)
+Benchmarking bench_proof/proof (double block)/native (1000000): Analyzing
+bench_proof/proof (double block)/native (1000000)
+                        time:   [16.826 ms 17.480 ms 18.164 ms]
+                        thrpt:  [55.054 Melem/s 57.209 Melem/s 59.433 Melem/s]
+Benchmarking bench_proof/proof (binary u32)/native (1000000)
+Benchmarking bench_proof/proof (binary u32)/native (1000000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof (binary u32)/native (1000000): Collecting 50 samples in estimated 31.187 s (300 iterations)
+Benchmarking bench_proof/proof (binary u32)/native (1000000): Analyzing
+bench_proof/proof (binary u32)/native (1000000)
+                        time:   [10.501 ms 10.893 ms 11.291 ms]
+                        thrpt:  [88.567 Melem/s 91.806 Melem/s 95.233 Melem/s]
+Benchmarking bench_proof/proof/safe (sha2) (1000000)
+Benchmarking bench_proof/proof/safe (sha2) (1000000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof/safe (sha2) (1000000): Collecting 50 samples in estimated 39.572 s (150 iterations)
+Benchmarking bench_proof/proof/safe (sha2) (1000000): Analyzing
+bench_proof/proof/safe (sha2) (1000000)
+                        time:   [28.109 ms 29.493 ms 30.926 ms]
+                        thrpt:  [32.335 Melem/s 33.907 Melem/s 35.576 Melem/s]
+Benchmarking bench_proof/proof/mCaptcha (1000000)
+Benchmarking bench_proof/proof/mCaptcha (1000000): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 30.0s. You may wish to increase target time to 30.7s, or reduce sample count to 40.
+Benchmarking bench_proof/proof/mCaptcha (1000000): Collecting 50 samples in estimated 30.676 s (50 iterations)
+Benchmarking bench_proof/proof/mCaptcha (1000000): Analyzing
+bench_proof/proof/mCaptcha (1000000)
+                        time:   [44.935 ms 49.178 ms 53.727 ms]
+                        thrpt:  [18.613 Melem/s 20.334 Melem/s 22.254 Melem/s]
+Found 2 outliers among 50 measurements (4.00%)
+  2 (4.00%) high mild
+Benchmarking bench_proof/proof (double block)/mCaptcha (1000000)
+Benchmarking bench_proof/proof (double block)/mCaptcha (1000000): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 30.0s. You may wish to increase target time to 40.8s, or reduce sample count to 30.
+Benchmarking bench_proof/proof (double block)/mCaptcha (1000000): Collecting 50 samples in estimated 40.780 s (50 iterations)
+Benchmarking bench_proof/proof (double block)/mCaptcha (1000000): Analyzing
+bench_proof/proof (double block)/mCaptcha (1000000)
+                        time:   [67.606 ms 74.579 ms 81.858 ms]
+                        thrpt:  [12.216 Melem/s 13.409 Melem/s 14.792 Melem/s]
+Found 1 outliers among 50 measurements (2.00%)
+  1 (2.00%) high mild
+Benchmarking bench_proof/proof/native (4000000)
+Benchmarking bench_proof/proof/native (4000000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof/native (4000000): Collecting 50 samples in estimated 39.764 s (100 iterations)
+Benchmarking bench_proof/proof/native (4000000): Analyzing
+bench_proof/proof/native (4000000)
+                        time:   [38.821 ms 41.632 ms 44.611 ms]
+                        thrpt:  [89.663 Melem/s 96.079 Melem/s 103.04 Melem/s]
+Found 1 outliers among 50 measurements (2.00%)
+  1 (2.00%) high mild
+Benchmarking bench_proof/proof (capjs)/native (4000000)
+Benchmarking bench_proof/proof (capjs)/native (4000000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof (capjs)/native (4000000): Collecting 50 samples in estimated 37.875 s (100 iterations)
+Benchmarking bench_proof/proof (capjs)/native (4000000): Analyzing
+bench_proof/proof (capjs)/native (4000000)
+                        time:   [36.127 ms 38.463 ms 40.856 ms]
+                        thrpt:  [97.905 Melem/s 104.00 Melem/s 110.72 Melem/s]
+Found 1 outliers among 50 measurements (2.00%)
+  1 (2.00%) high mild
+Benchmarking bench_proof/proof (double block)/native (4000000)
+Benchmarking bench_proof/proof (double block)/native (4000000): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 30.0s. You may wish to increase target time to 36.6s, or reduce sample count to 40.
+Benchmarking bench_proof/proof (double block)/native (4000000): Collecting 50 samples in estimated 36.571 s (50 iterations)
+Benchmarking bench_proof/proof (double block)/native (4000000): Analyzing
+bench_proof/proof (double block)/native (4000000)
+                        time:   [68.664 ms 75.270 ms 82.022 ms]
+                        thrpt:  [48.767 Melem/s 53.142 Melem/s 58.254 Melem/s]
+Benchmarking bench_proof/proof (binary u32)/native (4000000)
+Benchmarking bench_proof/proof (binary u32)/native (4000000): Warming up for 8.0000 s
+Benchmarking bench_proof/proof (binary u32)/native (4000000): Collecting 50 samples in estimated 42.711 s (100 iterations)
+Benchmarking bench_proof/proof (binary u32)/native (4000000): Analyzing
+bench_proof/proof (binary u32)/native (4000000)
+                        time:   [43.062 ms 45.494 ms 47.927 ms]
+                        thrpt:  [83.461 Melem/s 87.924 Melem/s 92.888 Melem/s]
+Benchmarking bench_proof/proof/safe (sha2) (4000000)
+Benchmarking bench_proof/proof/safe (sha2) (4000000): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 30.0s. You may wish to increase target time to 62.7s, or reduce sample count to 20.
+Benchmarking bench_proof/proof/safe (sha2) (4000000): Collecting 50 samples in estimated 62.726 s (50 iterations)
+Benchmarking bench_proof/proof/safe (sha2) (4000000): Analyzing
+bench_proof/proof/safe (sha2) (4000000)
+                        time:   [105.71 ms 116.98 ms 128.59 ms]
+                        thrpt:  [31.107 Melem/s 34.194 Melem/s 37.840 Melem/s]
+Benchmarking bench_proof/proof/mCaptcha (4000000)
+Benchmarking bench_proof/proof/mCaptcha (4000000): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 30.0s. You may wish to increase target time to 109.9s, or reduce sample count to 10.
+Benchmarking bench_proof/proof/mCaptcha (4000000): Collecting 50 samples in estimated 109.88 s (50 iterations)
+Benchmarking bench_proof/proof/mCaptcha (4000000): Analyzing
+bench_proof/proof/mCaptcha (4000000)
+                        time:   [189.53 ms 206.97 ms 225.52 ms]
+                        thrpt:  [17.737 Melem/s 19.326 Melem/s 21.105 Melem/s]
+Found 1 outliers among 50 measurements (2.00%)
+  1 (2.00%) high mild
+Benchmarking bench_proof/proof (double block)/mCaptcha (4000000)
+Benchmarking bench_proof/proof (double block)/mCaptcha (4000000): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 30.0s. You may wish to increase target time to 140.0s, or reduce sample count to 10.
+Benchmarking bench_proof/proof (double block)/mCaptcha (4000000): Collecting 50 samples in estimated 140.03 s (50 iterations)
+Benchmarking bench_proof/proof (double block)/mCaptcha (4000000): Analyzing
+bench_proof/proof (double block)/mCaptcha (4000000)
+                        time:   [272.82 ms 300.61 ms 329.46 ms]
+                        thrpt:  [12.141 Melem/s 13.306 Melem/s 14.662 Melem/s]
+Found 1 outliers among 50 measurements (2.00%)
+  1 (2.00%) high mild
+Benchmarking bench_proof/proof/native (10000000)
+Benchmarking bench_proof/proof/native (10000000): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 30.0s. You may wish to increase target time to 45.9s, or reduce sample count to 30.
+Benchmarking bench_proof/proof/native (10000000): Collecting 50 samples in estimated 45.920 s (50 iterations)
+Benchmarking bench_proof/proof/native (10000000): Analyzing
+bench_proof/proof/native (10000000)
+                        time:   [103.62 ms 113.00 ms 122.85 ms]
+                        thrpt:  [81.403 Melem/s 88.493 Melem/s 96.507 Melem/s]
+Benchmarking bench_proof/proof (capjs)/native (10000000)
+Benchmarking bench_proof/proof (capjs)/native (10000000): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 30.0s. You may wish to increase target time to 51.4s, or reduce sample count to 20.
+Benchmarking bench_proof/proof (capjs)/native (10000000): Collecting 50 samples in estimated 51.439 s (50 iterations)
+Benchmarking bench_proof/proof (capjs)/native (10000000): Analyzing
+bench_proof/proof (capjs)/native (10000000)
+                        time:   [87.604 ms 95.728 ms 103.98 ms]
+                        thrpt:  [96.170 Melem/s 104.46 Melem/s 114.15 Melem/s]
+Benchmarking bench_proof/proof (double block)/native (10000000)
+Benchmarking bench_proof/proof (double block)/native (10000000): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 30.0s. You may wish to increase target time to 105.6s, or reduce sample count to 10.
+Benchmarking bench_proof/proof (double block)/native (10000000): Collecting 50 samples in estimated 105.64 s (50 iterations)
+Benchmarking bench_proof/proof (double block)/native (10000000): Analyzing
+bench_proof/proof (double block)/native (10000000)
+                        time:   [191.50 ms 205.71 ms 219.99 ms]
+                        thrpt:  [45.457 Melem/s 48.611 Melem/s 52.218 Melem/s]
+Benchmarking bench_proof/proof (binary u32)/native (10000000)
+Benchmarking bench_proof/proof (binary u32)/native (10000000): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 30.0s. You may wish to increase target time to 61.6s, or reduce sample count to 20.
+Benchmarking bench_proof/proof (binary u32)/native (10000000): Collecting 50 samples in estimated 61.580 s (50 iterations)
+Benchmarking bench_proof/proof (binary u32)/native (10000000): Analyzing
+bench_proof/proof (binary u32)/native (10000000)
+                        time:   [103.99 ms 113.06 ms 122.46 ms]
+                        thrpt:  [81.657 Melem/s 88.446 Melem/s 96.163 Melem/s]
+Benchmarking bench_proof/proof/safe (sha2) (10000000)
+Benchmarking bench_proof/proof/safe (sha2) (10000000): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 30.0s. You may wish to increase target time to 130.0s, or reduce sample count to 10.
+Benchmarking bench_proof/proof/safe (sha2) (10000000): Collecting 50 samples in estimated 130.00 s (50 iterations)
+Benchmarking bench_proof/proof/safe (sha2) (10000000): Analyzing
+bench_proof/proof/safe (sha2) (10000000)
+                        time:   [278.15 ms 303.48 ms 331.27 ms]
+                        thrpt:  [30.186 Melem/s 32.951 Melem/s 35.952 Melem/s]
+Found 1 outliers among 50 measurements (2.00%)
+  1 (2.00%) high mild
+Benchmarking bench_proof/proof/mCaptcha (10000000)
+Benchmarking bench_proof/proof/mCaptcha (10000000): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 30.0s. You may wish to increase target time to 304.6s, or reduce sample count to 10.
+Benchmarking bench_proof/proof/mCaptcha (10000000): Collecting 50 samples in estimated 304.61 s (50 iterations)
+Benchmarking bench_proof/proof/mCaptcha (10000000): Analyzing
+bench_proof/proof/mCaptcha (10000000)
+                        time:   [441.30 ms 478.61 ms 517.84 ms]
+                        thrpt:  [19.311 Melem/s 20.894 Melem/s 22.660 Melem/s]
+Found 1 outliers among 50 measurements (2.00%)
+  1 (2.00%) high mild
+Benchmarking bench_proof/proof (double block)/mCaptcha (10000000)
+Benchmarking bench_proof/proof (double block)/mCaptcha (10000000): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 30.0s. You may wish to increase target time to 583.0s, or reduce sample count to 10.
+Benchmarking bench_proof/proof (double block)/mCaptcha (10000000): Collecting 50 samples in estimated 583.04 s (50 iterations)
+Benchmarking bench_proof/proof (double block)/mCaptcha (10000000): Analyzing
+bench_proof/proof (double block)/mCaptcha (10000000)
+                        time:   [686.50 ms 753.34 ms 822.59 ms]
+                        thrpt:  [12.157 Melem/s 13.274 Melem/s 14.567 Melem/s]
+
+Benchmarking bench_sha2_crate_single/sha2_crate_sequential
+Benchmarking bench_sha2_crate_single/sha2_crate_sequential: Warming up for 8.0000 s
+Benchmarking bench_sha2_crate_single/sha2_crate_sequential: Collecting 250 samples in estimated 15.001 s (521M iterations)
+Benchmarking bench_sha2_crate_single/sha2_crate_sequential: Analyzing
+bench_sha2_crate_single/sha2_crate_sequential
+                        time:   [28.599 ns 28.602 ns 28.606 ns]
+                        thrpt:  [2.0837 GiB/s 2.0839 GiB/s 2.0841 GiB/s]
+Found 48 outliers among 250 measurements (19.20%)
+  6 (2.40%) low mild
+  5 (2.00%) high mild
+  37 (14.80%) high severe
+Benchmarking bench_sha2_crate_single/sha2_crate_reset_after_each
+Benchmarking bench_sha2_crate_single/sha2_crate_reset_after_each: Warming up for 8.0000 s
+Benchmarking bench_sha2_crate_single/sha2_crate_reset_after_each: Collecting 250 samples in estimated 15.000 s (464M iterations)
+Benchmarking bench_sha2_crate_single/sha2_crate_reset_after_each: Analyzing
+bench_sha2_crate_single/sha2_crate_reset_after_each
+                        time:   [37.088 ns 37.155 ns 37.224 ns]
+                        thrpt:  [1.6012 GiB/s 1.6042 GiB/s 1.6071 GiB/s]
+Found 14 outliers among 250 measurements (5.60%)
+  10 (4.00%) high mild
+  4 (1.60%) high severe
+Benchmarking bench_sha2_crate_single/sha2_crate_reset_after_each_with_prefix
+Benchmarking bench_sha2_crate_single/sha2_crate_reset_after_each_with_prefix: Warming up for 8.0000 s
+Benchmarking bench_sha2_crate_single/sha2_crate_reset_after_each_with_prefix: Collecting 250 samples in estimated 15.000 s (455M iterations)
+Benchmarking bench_sha2_crate_single/sha2_crate_reset_after_each_with_prefix: Analyzing
+bench_sha2_crate_single/sha2_crate_reset_after_each_with_prefix
+                        time:   [33.312 ns 33.336 ns 33.364 ns]
+                        thrpt:  [1.7865 GiB/s 1.7880 GiB/s 1.7893 GiB/s]
+Found 42 outliers among 250 measurements (16.80%)
+  6 (2.40%) high mild
+  36 (14.40%) high severe
+Benchmarking bench_sha2_crate_single/sha2_crate_reset_after_each_with_prefix_manual
+Benchmarking bench_sha2_crate_single/sha2_crate_reset_after_each_with_prefix_manual: Warming up for 8.0000 s
+Benchmarking bench_sha2_crate_single/sha2_crate_reset_after_each_with_prefix_manual: Collecting 250 samples in estimated 15.001 s (442M iterations)
+Benchmarking bench_sha2_crate_single/sha2_crate_reset_after_each_with_prefix_manual: Analyzing
+bench_sha2_crate_single/sha2_crate_reset_after_each_with_prefix_manual
+                        time:   [32.416 ns 32.442 ns 32.473 ns]
+                        thrpt:  [1.8355 GiB/s 1.8372 GiB/s 1.8388 GiB/s]
+Found 6 outliers among 250 measurements (2.40%)
+  1 (0.40%) high mild
+  5 (2.00%) high severe
+
+Benchmarking bench_sha2_crate_bulk/sha2_crate_bulk_1MB
+Benchmarking bench_sha2_crate_bulk/sha2_crate_bulk_1MB: Warming up for 5.0000 s
+Benchmarking bench_sha2_crate_bulk/sha2_crate_bulk_1MB: Collecting 100 samples in estimated 11.611 s (30k iterations)
+Benchmarking bench_sha2_crate_bulk/sha2_crate_bulk_1MB: Analyzing
+bench_sha2_crate_bulk/sha2_crate_bulk_1MB
+                        time:   [382.73 µs 382.79 µs 382.87 µs]
+                        thrpt:  [2.5506 GiB/s 2.5512 GiB/s 2.5516 GiB/s]
+Found 19 outliers among 100 measurements (19.00%)
+  3 (3.00%) high mild
+  16 (16.00%) high severe
+
+Benchmarking bench_capjs_verbatim/capjs_verbatim
+Benchmarking bench_capjs_verbatim/capjs_verbatim: Warming up for 8.0000 s
+Benchmarking bench_capjs_verbatim/capjs_verbatim: Collecting 50 samples in estimated 15.882 s (300 iterations)
+Benchmarking bench_capjs_verbatim/capjs_verbatim: Analyzing
+bench_capjs_verbatim/capjs_verbatim
+                        time:   [45.986 ms 51.475 ms 57.257 ms]
+                        thrpt:  [18.314 Melem/s 20.371 Melem/s 22.802 Melem/s]
+Found 3 outliers among 50 measurements (6.00%)
+  3 (6.00%) high mild
+
+spawning 32 threads
+Benchmarking bench_multi_threaded_hashrate/proof_multi_threaded
+Benchmarking bench_multi_threaded_hashrate/proof_multi_threaded: Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 15.0s. You may wish to increase target time to 68.4s, or reduce sample count to 10.
+Benchmarking bench_multi_threaded_hashrate/proof_multi_threaded: Collecting 50 samples in estimated 68.351 s (50 iterations)
+Benchmarking bench_multi_threaded_hashrate/proof_multi_threaded: Analyzing
+bench_multi_threaded_hashrate/proof_multi_threaded
+                        time:   [1.3961 s 1.3976 s 1.3992 s]
+                        thrpt:  [1.4637 Gelem/s 1.4654 Gelem/s 1.4670 Gelem/s]
+Benchmarking bench_multi_threaded_hashrate/proof_multi_threaded (double block)
+Benchmarking bench_multi_threaded_hashrate/proof_multi_threaded (double block): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 15.0s. You may wish to increase target time to 115.7s, or reduce sample count to 10.
+Benchmarking bench_multi_threaded_hashrate/proof_multi_threaded (double block): Collecting 50 samples in estimated 115.65 s (50 iterations)
+Benchmarking bench_multi_threaded_hashrate/proof_multi_threaded (double block): Analyzing
+bench_multi_threaded_hashrate/proof_multi_threaded (double block)
+                        time:   [2.4044 s 2.4067 s 2.4089 s]
+                        thrpt:  [850.17 Melem/s 850.97 Melem/s 851.78 Melem/s]
+Benchmarking bench_multi_threaded_hashrate/proof_multi_threaded (go away)
+Benchmarking bench_multi_threaded_hashrate/proof_multi_threaded (go away): Warming up for 8.0000 s
+
+Warning: Unable to complete 50 samples in 15.0s. You may wish to increase target time to 64.7s, or reduce sample count to 10.
+Benchmarking bench_multi_threaded_hashrate/proof_multi_threaded (go away): Collecting 50 samples in estimated 64.727 s (50 iterations)
+Benchmarking bench_multi_threaded_hashrate/proof_multi_threaded (go away): Analyzing
+bench_multi_threaded_hashrate/proof_multi_threaded (go away)
+                        time:   [1.3081 s 1.3092 s 1.3104 s]
+                        thrpt:  [1.5628 Gelem/s 1.5643 Gelem/s 1.5656 Gelem/s]
+Found 1 outliers among 50 measurements (2.00%)
+  1 (2.00%) high mild
+

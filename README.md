@@ -344,11 +344,11 @@ The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and 
 
 The peak throughput on 7950X reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous.
 
-| Workload                         | AVX-512     | SHA-NI      | Vendor Official on Chromium [^4] |
+| Workload                         | AVX-512 [log](bench_sha2.log)     | SHA-NI      | Vendor Official on Chromium [^4] |
 | -------------------------------- | ----------- | ----------- | -----------                      |
-| SingleBlock/Anubis               | 1.485 GH/s  | 1.143 GH/s  | ~650kH/s                         |
-| DoubleBlock (mCaptcha edge case) | 850.75 MH/s | 827.74 MH/s | N/A                              |
-| go-away (32 bytes)               | 1.525 GH/s  | 1.291 GH/s  | N/A                              |
+| SingleBlock/Anubis               | 1.465 GH/s  | 1.143 GH/s  | ~650kH/s                         |
+| DoubleBlock (mCaptcha edge case) | 850.97 MH/s | 827.74 MH/s | N/A                              |
+| go-away (32 bytes)               | 1.564 GH/s  | 1.291 GH/s  | N/A                              |
 | Cerberus (BLAKE3)                | 3.361 GH/s  | N/A         | ~25MH/s                          |
 
 [^4]: Due to instablity of WASM optimization and runtime throttling behavior and lack of vendor provided benchmark harness, only approximate numbers can be provided.
