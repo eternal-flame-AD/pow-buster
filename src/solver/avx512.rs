@@ -165,22 +165,22 @@ impl SingleBlockSolver {
                     if MUTATION_TYPE & MUTATION_TYPE_OCTAL != 0 {
                         let lane_id_0_or_value = _mm512_sll_epi32(
                             load_lane_id_epi32(&LANE_ID_MSB_STR_0, prefix_set_index),
-                            _mm_set1_epi64x(((3 - lane_id_0_byte_idx) * 8) as _),
+                            _mm_cvtsi64x_si128(((3 - lane_id_0_byte_idx) * 8) as _),
                         );
                         let lane_id_1_or_value = _mm512_sll_epi32(
                             load_lane_id_epi32(&LANE_ID_LSB_STR_0, prefix_set_index),
-                            _mm_set1_epi64x(((3 - lane_id_1_byte_idx) * 8) as _),
+                            _mm_cvtsi64x_si128(((3 - lane_id_1_byte_idx) * 8) as _),
                         );
 
                         (lane_id_0_or_value, lane_id_1_or_value)
                     } else {
                         let lane_id_0_or_value = _mm512_sll_epi32(
                             load_lane_id_epi32(&LANE_ID_MSB_STR, prefix_set_index),
-                            _mm_set1_epi64x(((3 - lane_id_0_byte_idx) * 8) as _),
+                            _mm_cvtsi64x_si128(((3 - lane_id_0_byte_idx) * 8) as _),
                         );
                         let lane_id_1_or_value = _mm512_sll_epi32(
                             load_lane_id_epi32(&LANE_ID_LSB_STR, prefix_set_index),
-                            _mm_set1_epi64x(((3 - lane_id_1_byte_idx) * 8) as _),
+                            _mm_cvtsi64x_si128(((3 - lane_id_1_byte_idx) * 8) as _),
                         );
 
                         (lane_id_0_or_value, lane_id_1_or_value)

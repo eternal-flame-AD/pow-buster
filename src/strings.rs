@@ -484,23 +484,22 @@ pub fn to_octal_7<const REGISTER_BSWAP: bool, const PLACEHOLDER: u8, const ADDEN
     unsafe {
         let mut x = _mm256_set1_epi32(input as _);
         if REGISTER_BSWAP {
-            x = _mm256_srlv_epi32(x, _mm256_setr_epi32(9, 12, 15, 18, 0, 0, 3, 6));
+            x = _mm256_srlv_epi32(x, _mm256_setr_epi32(9, 12, 15, 18, 32, 0, 3, 6));
         } else {
-            x = _mm256_srlv_epi32(x, _mm256_setr_epi32(18, 15, 12, 9, 6, 3, 0, 0));
+            x = _mm256_srlv_epi32(x, _mm256_setr_epi32(18, 15, 12, 9, 6, 3, 0, 32));
         }
-        x = _mm256_and_si256(x, _mm256_set1_epi32(0b111));
-        if ADDEND != 0 {
-            x = _mm256_add_epi32(x, _mm256_set1_epi32((b'0' + ADDEND) as _));
-        } else {
-            x = _mm256_or_epi32(x, _mm256_set1_epi32(b'0' as _));
-        }
-        let mut d = _mm256_cvtepi32_epi8(x);
-        if REGISTER_BSWAP {
-            d = _mm_insert_epi8(d, PLACEHOLDER as _, 4);
-        } else {
-            d = _mm_insert_epi8(d, PLACEHOLDER as _, 7);
-        }
-        let val = _mm_cvtsi128_si64(d) as u64;
+        let d = _mm256_cvtepi32_epi8(x);
+        let mut val = _mm_cvtsi128_si64(d) as u64;
+        val &= u64::from_le_bytes([0b111; 8]);
+        val += const {
+            if REGISTER_BSWAP {
+                u64::from_le_bytes([0, 0, 0, 0, PLACEHOLDER - (b'0' + ADDEND), 0, 0, 0])
+                    + u64::from_le_bytes([b'0' + ADDEND; 8])
+            } else {
+                u64::from_le_bytes([0, 0, 0, 0, 0, 0, 0, PLACEHOLDER - (b'0' + ADDEND)])
+                    + u64::from_le_bytes([b'0' + ADDEND; 8])
+            }
+        };
         out.as_mut_ptr().cast::<u64>().write(val);
     }
 }
