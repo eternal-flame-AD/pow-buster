@@ -14,6 +14,8 @@ env:
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required for uploading release artifacts
     
     steps:
       - uses: actions/checkout@v4
