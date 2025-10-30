@@ -1,15 +1,14 @@
-(() => {
-    console.log("content script loaded");
-    if (anubisChallenge = document.querySelector("script#anubis_challenge")) {
-        const challengeJSON = JSON.parse(anubisChallenge.innerText);
 
-        if (!challengeJSON.rules) {
+(() => {
+    let myPort = browser.runtime.connect({ name: "port-from-cs" });
+
+    const handleAnubisChallenge = (anubisChallenge) => {
+        console.log("Anubis challenge found: ", anubisChallenge);
+        if (!anubisChallenge.rules) {
             return
         }
 
-        if (challengeJSON.rules.algorithm === "fast" || challengeJSON.rules.algorithm === "slow") {
-            let myPort = browser.runtime.connect({ name: "port-from-cs" });
-
+        if (anubisChallenge.rules.algorithm === "fast" || anubisChallenge.rules.algorithm === "slow") {
             const begin = performance.now();
             myPort.onMessage.addListener((result) => {
                 const end = performance.now();
@@ -19,8 +18,8 @@
                 if (result.type === "solution") {
                     const { response, nonce } = result.solution;
                     let finalUrl = "/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime=" + duration + "&response=" + response + "&nonce=" + nonce;
-                    if (challengeJSON.challenge && challengeJSON.challenge.id) {
-                        finalUrl += "&id=" + encodeURIComponent(challengeJSON.challenge.id)
+                    if (anubisChallenge.challenge && anubisChallenge.challenge.id) {
+                        finalUrl += "&id=" + encodeURIComponent(anubisChallenge.challenge.id)
                     }
                     finalUrl += "&redir=" + encodeURIComponent(window.location.href);
 
@@ -29,11 +28,28 @@
                     eval(result.script);
                 }
             });
-            myPort.postMessage({ challenge: anubisChallenge.innerText });
+            myPort.postMessage({ type: "challenge", challenge: JSON.stringify(anubisChallenge) });
         }
+    }
+
+    if (document.querySelector("script#anubis_challenge")) {
+        const anubisChallenge = JSON.parse(document.querySelector("script#anubis_challenge").innerText);
+        handleAnubisChallenge(anubisChallenge);
+    } else if (document.querySelector("script[src^='/.within.website/x/cmd/anubis/static/js/main.mjs']")) {
+        // lagacy challenge workflow
+        const listener = (result) => {
+            myPort.onMessage.removeListener(listener);
+            if (result.success) {
+                const anubisChallenge = JSON.parse(result.data);
+                handleAnubisChallenge(anubisChallenge);
+            } else {
+                throw new Error("Failed to fetch Anubis challenge: " + result.error);
+            }
+        };
+        myPort.onMessage.addListener(listener);
+        myPort.postMessage({ type: "fetch-challenge", subtype: "anubis", url: window.location.href });
     } else if (cerberusChallenge = document.querySelector("script#challenge-script[x-challenge]")) {
         const challengeJSONText = cerberusChallenge.getAttribute('x-challenge');
-        let myPort = browser.runtime.connect({ name: "port-from-cs" });
         myPort.onMessage.addListener((result) => {
             console.log("received message from background script: ", result);
             if (result.type === "solution") {
@@ -96,6 +112,9 @@
                 eval(result.script);
             }
         });
-        myPort.postMessage({ challenge: challengeJSONText, multithreaded: true });
+        myPort.postMessage({ type: "challenge", challenge: challengeJSONText, multithreaded: true });
+    } else {
+        console.log("No challenge found, cleaning up...");
+        myPort.disconnect();
     }
 })()

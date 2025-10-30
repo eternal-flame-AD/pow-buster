@@ -34,5 +34,18 @@
             "font",
             "other"
         ]
+    },
+    {
+        "id": 3,
+        "priority": 2,
+        "action": {
+            "type": "allow"
+        },
+        "condition": {
+            "urlFilter": "|*/.within.website/x/cmd/anubis/api/make-challenge"
+        },
+        "resourceTypes": [
+            "xmlhttprequest"
+        ]
     }
 ]

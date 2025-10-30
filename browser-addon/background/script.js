@@ -99,24 +99,48 @@ browser.runtime.onConnect.addListener(p => {
         terminateWorkers();
     });
     portFromCS.onMessage.addListener((m) => {
-        let solvedByOffload = false;
-        solveByOffload(m.challenge).then((script) => {
-            if (script) {
-                solvedByOffload = true;
-                portFromCS.postMessage({ type: "script", script });
-            }
-        }).finally(() => {
-            if (!solvedByOffload) {
-                if (m.multithreaded) {
-                    solveSet(m.challenge, (solution) => {
-                        portFromCS.postMessage({ type: "solution", solution });
-                    });
-                } else {
-                    solveOne(m.challenge, (solution) => {
-                        portFromCS.postMessage({ type: "solution", solution });
-                    });
+        switch (m.type) {
+            case "challenge":
+                let solvedByOffload = false;
+                solveByOffload(m.challenge).then((script) => {
+                    if (script) {
+                        solvedByOffload = true;
+                        portFromCS.postMessage({ type: "script", script });
+                    }
+                }).finally(() => {
+                    if (!solvedByOffload) {
+                        if (m.multithreaded) {
+                            solveSet(m.challenge, (solution) => {
+                                portFromCS.postMessage({ type: "solution", solution });
+                            });
+                        } else {
+                            solveOne(m.challenge, (solution) => {
+                                portFromCS.postMessage({ type: "solution", solution });
+                            });
+                        }
+                    }
+                });
+                break;
+            case "fetch-challenge":
+                if (m.subtype === "anubis") {
+                    const pageURL = new URL(m.url);
+                    if (pageURL.protocol === "http:" || pageURL.protocol === "https:") {
+                        const fetchChallengeURL = new URL("/.within.website/x/cmd/anubis/api/make-challenge", pageURL);
+                        fetch(fetchChallengeURL.toString(), { method: "POST" }).then(resp => {
+                            if (resp.ok) {
+                                return resp.json();
+                            }
+                        }).then(json => {
+                            portFromCS.postMessage({ success: true, data: JSON.stringify(json) });
+                        }).catch(err => {
+                            portFromCS.postMessage({ success: false, error: err.message });
+                        });
+                    }
                 }
-            }
-        });
+                break;
+            default:
+                console.error("unknown message type", m.type);
+                break;
+        }
     });
 });
