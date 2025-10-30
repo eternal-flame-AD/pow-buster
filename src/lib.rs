@@ -174,18 +174,6 @@ impl<T> core::ops::DerefMut for Align64<T> {
 #[cold]
 fn unlikely() {}
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
-/// Convert a prefix offset to a lane position
-pub fn prefix_offset_to_lane_position(offset: usize) -> usize {
-    PREFIX_OFFSET_TO_LANE_POSITION[offset % 64]
-}
-
-const PREFIX_OFFSET_TO_LANE_POSITION: [usize; 64] = [
-    2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7, 8, 8, 8, 8, 9, 9, 9, 9,
-    10, 10, 10, 10, 9, 9, 9, 9, 10, 10, 10, 10, 11, 11, 11, 13, 13, 13, 13, 13, 13, 0, 0, 0, 0, 0,
-    0, 0, 1, 1, 1, 1,
-];
-
 const SWAP_DWORD_BYTE_ORDER: [usize; 64] = {
     let mut data = [0; 64];
     let mut i = 0;
@@ -359,39 +347,6 @@ pub const fn extract128_be(inp: [u32; 8]) -> u128 {
 /// Extract top 64 bits from a 64-bit word array
 pub const fn extract64_be(inp: [u32; 8]) -> u64 {
     (inp[0] as u64) << 32 | (inp[1] as u64)
-}
-
-/// Check if a lane position is supported in the current build
-#[allow(clippy::match_like_matches_macro)]
-pub const fn is_supported_lane_position(lane_position: usize) -> bool {
-    match lane_position {
-        0 => cfg!(feature = "lane-position-0"),
-        1 => cfg!(feature = "lane-position-1"),
-        2 => cfg!(feature = "lane-position-2"),
-        3 => cfg!(feature = "lane-position-3"),
-        4 => cfg!(feature = "lane-position-4"),
-        5 => cfg!(feature = "lane-position-5"),
-        6 => cfg!(feature = "lane-position-6"),
-        7 => cfg!(feature = "lane-position-7"),
-        8 => cfg!(feature = "lane-position-8"),
-        9 => cfg!(feature = "lane-position-9"),
-        10 => cfg!(feature = "lane-position-10"),
-        11 => cfg!(feature = "lane-position-11"),
-        12 => cfg!(feature = "lane-position-12"),
-        13 => cfg!(feature = "lane-position-13"),
-        14 => cfg!(feature = "lane-position-14"),
-        15 => cfg!(feature = "lane-position-15"),
-        _ => false,
-    }
-}
-
-/// Check if a lane position is supported in the current build
-#[cfg_attr(
-    target_arch = "wasm32",
-    wasm_bindgen(js_name = "is_supported_lane_position")
-)]
-pub fn is_supported_lane_position_wasm(lane_position: usize) -> bool {
-    is_supported_lane_position(lane_position)
 }
 
 /// Encode a sha-256 hash into hex

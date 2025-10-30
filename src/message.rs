@@ -2,7 +2,7 @@
 #![allow(clippy::collapsible_if)]
 use core::num::NonZeroU8;
 
-use crate::{Align16, Align64, blake3, is_supported_lane_position, sha256};
+use crate::{Align16, Align64, blake3, sha256};
 
 /// Solves an mCaptcha/Anubis/Cap.js SHA256 PoW where the SHA-256 message is a single block (512 bytes minus padding).
 ///
@@ -194,10 +194,6 @@ impl SingleBlockMessage {
         message[ptr] = 0x80;
         message[(64 - 8)..]
             .copy_from_slice(&((complete_blocks_before * 64 + ptr) as u64 * 8).to_be_bytes());
-
-        if !is_supported_lane_position(digit_index / 4) {
-            return None;
-        }
 
         if working_set != 0 {
             return None;
@@ -416,10 +412,6 @@ impl SingleBlockMessage {
         message[(64 - 8)..]
             .copy_from_slice(&((complete_blocks_before * 64 + ptr) as u64 * 8).to_be_bytes());
 
-        if !is_supported_lane_position(digit_index / 4) {
-            return None;
-        }
-
         if working_set != 0 {
             return None;
         }
@@ -470,10 +462,6 @@ impl DoubleBlockMessage {
 
     /// creates a new double block message
     pub fn new(mut prefix: &[u8], mut working_set: u32) -> Option<Self> {
-        if !is_supported_lane_position(Self::DIGIT_IDX as usize / 4) {
-            return None;
-        }
-
         // construct the message buffer
         let mut prefix_state = crate::Align16(sha256::IV);
 
@@ -943,21 +931,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn test_prefix_position_to_lane_position() {
-        let mut mapping = [0; 64];
-        let x = [b'a'; 64];
-        for i in 0..64 {
-            let single_solver = SingleBlockMessage::new(&x[..i], 0);
-            if let Some(single_solver) = single_solver {
-                mapping[i] = single_solver.digit_index / 4;
-            } else {
-                mapping[i] = DoubleBlockMessage::DIGIT_IDX as usize / 4;
-            }
-        }
-        assert_eq!(mapping, crate::PREFIX_OFFSET_TO_LANE_POSITION);
     }
 
     #[test]
