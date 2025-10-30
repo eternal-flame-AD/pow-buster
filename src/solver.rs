@@ -156,6 +156,8 @@ pub(crate) mod tests {
 
     use sha2::Sha256;
 
+    mod pow_sha256;
+
     use crate::{
         compute_mask_cerberus, compute_target_anubis, compute_target_goaway,
         compute_target_mcaptcha, extract64_be, extract128_be, message::IEEE754LosslessFixupPrefix,
@@ -237,11 +239,7 @@ pub(crate) mod tests {
                         search_space
                     );
 
-                    let test_response = pow_sha256::PoWBuilder::default()
-                        .nonce(nonce)
-                        .result(result_u128.to_string())
-                        .build()
-                        .unwrap();
+                    let test_response = pow_sha256::PoW::new(nonce, result_u128.to_string());
                     assert_eq!(
                         config.calculate(&test_response, &phrase_str).unwrap(),
                         result_u128,

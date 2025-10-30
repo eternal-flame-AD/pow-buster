@@ -1,6 +1,6 @@
 [package]
 name = "pow-buster"
-description = "A fast, adversarially implemented mCaptcha/Anubis/go-away/Cap.js PoW solver."
+description = "A fast, data-parallel, adversarially implemented mCaptcha/Anubis/Cerberus/go-away/Cap.js PoW solver, targeting AVX-512/SHA-NI/simd128."
 license = "Apache-2.0"
 repository = "https://github.com/eternal-flame-AD/pow-buster"
 categories = ["cryptography"]
@@ -13,8 +13,9 @@ edition = "2024"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-sha2 = { version = "0.10", default-features = false, features = ["compress"] }
 cfg-if = "1.0"
+sha2 = { version = "0.10", default-features = false, features = ["compress"] }
+blake3 = { version = "1.8.2", default-features = false }
 
 clap = { version = "4", features = ["derive"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "http2", "rustls-tls", "gzip"], optional = true }
@@ -33,7 +34,6 @@ tracing = { version = "0.1.41", optional = true }
 axum-extra = { version = "0.10.1", features = ["typed-header"], optional = true }
 headers = { version = "0.4", optional = true }
 rust-embed = { version = "8.7", optional = true, features = ["mime-guess"] }
-blake3 = { version = "1.8.2", default-features = false }
 generic-array = { version = "=0.14.7" } # TODO: remove this pin once RustCrypt migrate off of it
 
 [profile.test]
@@ -55,7 +55,7 @@ wasm-opt = ["-O4", "--enable-bulk-memory", "--enable-simd"]
 
 [dev-dependencies]
 bincode = "1.3"
-pow_sha256 = { git = "https://github.com/mcaptcha/pow_sha256", tag = "0.3.1" }
+serde = { version = "1", features = ["derive"] }
 criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support", "plotters", "html_reports"]}   
 rand = { version = "0.9", default-features = false, features = ["small_rng"] }
 num_cpus = { version = "1.17" }
