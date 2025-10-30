@@ -344,8 +344,7 @@ pub async fn solve_anubis_ex(
             "Mozilla/5.0 (Android 15; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0",
         )
         .send()
-        .await?
-        .error_for_status()?;
+        .await?;
     let iotime = iotime.elapsed();
     *time_iowait += iotime.as_micros() as u32;
 
@@ -354,7 +353,7 @@ pub async fn solve_anubis_ex(
         .iter()
         .filter(|(k, _)| k.as_str().eq_ignore_ascii_case("set-cookie"))
         .filter_map(|(_, v)| v.to_str().unwrap().split(';').next())
-        .filter(|v| v.contains("-anubis-") && !v.ends_with("="))
+        .filter(|v| v.contains("-cookie-verification") && !v.ends_with("="))
         .next()
         .ok_or(SolveError::CookieNotFound)?
         .to_string();
@@ -387,8 +386,7 @@ pub async fn solve_anubis_ex(
 
     let (nonce, result) = result.ok_or(SolveError::SolverFailed)?;
 
-    // about 100kH/s
-    let plausible_time = attempted_nonces / 1024;
+    let plausible_time = crate::compute_plausible_time_sha256(attempted_nonces) + 10;
 
     let mut response_hex = [0u8; 64];
     crate::encode_hex(&mut response_hex, result);
@@ -448,12 +446,16 @@ pub async fn solve_anubis_ex(
         let body = golden_response.text().await?;
         return Err(SolveError::UnexpectedStatusRequest(status, body));
     }
+
     let auth_cookie = golden_response
         .headers()
         .iter()
         .filter(|(k, _)| k.as_str().eq_ignore_ascii_case("set-cookie"))
         .filter_map(|(_, v)| v.to_str().unwrap().split(';').next())
-        .filter(|v| v.contains("-anubis-auth") && !v.ends_with('='))
+        // some adopters like to pick a fight with user-centric "bypass add-ons" for some reason
+        // ref: https://git.gay/49016/NoPoW/issues/5
+        // ey is base64 '{"'
+        .filter(|v| v.contains("-auth=ey"))
         .next()
         .ok_or(SolveError::GoldenTicketNotFound)?
         .to_string();
@@ -645,7 +647,7 @@ pub async fn solve_goaway_js_pow_sha256(
             .ok_or(SolveError::SolverFailed)
     })?;
 
-    let plausible_time = estimated_workload / 1024;
+    let plausible_time = crate::compute_plausible_time_sha256(estimated_workload) + 10;
 
     let mut goaway_token = Align16([b'0'; 64 + 8 * 2]);
     goaway_token[..64].copy_from_slice(config.challenge().as_bytes());
@@ -666,7 +668,7 @@ pub async fn solve_goaway_js_pow_sha256(
     }
 
     let mut goaway_id = Align16([0; 32]);
-    // this doesn't do anything, just make something up for the id
+    // this doesn't do anything, just make something up for the request ID
     for i in 0..4 {
         let result_bytes: [u8; 4] = result[i].to_ne_bytes();
         for j in 0..4 {

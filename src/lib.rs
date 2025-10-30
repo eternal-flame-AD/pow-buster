@@ -319,7 +319,7 @@ pub(crate) const fn decompose_blocks_mut(inp: &mut [u32; 16]) -> &mut [u8; 64] {
 /// # Returns
 ///
 /// The plausible time in milliseconds
-#[cfg_attr(not(feature = "server"), expect(unused))]
+#[cfg_attr(not(any(feature = "server", feature = "client")), expect(unused))]
 pub(crate) fn compute_plausible_time_sha256(hashes: u64) -> u64 {
     hashes / 512
 }
