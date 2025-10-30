@@ -26,7 +26,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-wasip1
+          targets: wasm32-wasip1, x86_64-unknown-linux-musl
 
       # Install wasm-pack
       - name: Install wasm-pack
@@ -63,24 +63,28 @@ jobs:
           # Build avx512vbmi variant
           RUSTFLAGS="-Ctarget-cpu=x86-64-v4 -Ctarget-feature=+avx512vbmi" \
           cargo build -j1 --bin pow-buster --profile release-unwinding \
+          --target x86_64-unknown-linux-musl \
           --features cli,client,server,server-wasm \
           --target-dir target/avx512vbmi-build &
 
           # Build avx512f variant
-          RUSTFLAGS="-Ctarget-feature=+avx512f" \
+          RUSTFLAGS="-Ctarget-cpu=x86-64-v3 -Ctarget-feature=+avx512f" \
           cargo build -j1 --bin pow-buster --profile release-unwinding \
+          --target x86_64-unknown-linux-musl \
           --features cli,client,server,server-wasm \
           --target-dir target/avx512f-build &
 
           # Build avx2+sha variant
           RUSTFLAGS="-Ctarget-feature=+sha,+avx2" \
           cargo build -j1 --bin pow-buster --profile release-unwinding \
+          --target x86_64-unknown-linux-musl \
           --features cli,client,server,server-wasm \
           --target-dir target/avx2sha-build &
 
           # Build scalar variant
           RUSTFLAGS="-Ctarget-cpu=x86-64" \
           cargo build -j1 --bin pow-buster --profile release-unwinding \
+          --target x86_64-unknown-linux-musl \
           --features cli,client,server,server-wasm \
           --target-dir target/scalar-build &
 
