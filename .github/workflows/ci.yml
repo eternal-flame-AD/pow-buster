@@ -106,7 +106,7 @@ jobs:
           cp target/avx512f-build/x86_64-unknown-linux-musl/release-unwinding/pow-buster artifacts/pow-buster-avx512f
           cp target/avx2sha-build/x86_64-unknown-linux-musl/release-unwinding/pow-buster artifacts/pow-buster-avx2sha
           cp target/scalar-build/x86_64-unknown-linux-musl/release-unwinding/pow-buster artifacts/pow-buster-scalar
-          cp browser-addon/web-ext-artifacts/pow-buster-*.zip artifacts/pow-buster-browser-extension.xpi
+          cp browser-addon/web-ext-artifacts/pow_buster-*.zip artifacts/pow-buster-browser-extension.xpi
 
       # Upload artifacts for tagged builds
       - if: startsWith(github.ref, 'refs/tags/v')
