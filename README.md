@@ -80,12 +80,12 @@ MSRV: Rust 1.89+.
 
 Requires AVX-512 (cpuid: `avx512f`) or SHA-NI+SSE4.1 (cpuid: `sha`, `sse4_1`) CPU or SIMD128 on WASM. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard). There is a pure Rust scalar fallback that should make the code compile and work regardless.
 
-Recommended CPU feature flags in order of preference:
+Recommended CPU feature flags in order of preference (Tagged releases will have Linux musl builds):
 
 - `-Ctarget-cpu=native`
-- `-Ctarget-feature=+avx512vbmi`
-- `-Ctarget-feature=+avx512f`
-- `-Ctarget-feature=+sha,+avx2`
+- `-Ctarget-feature=+avx512vbmi` (Artifacts released on top of x86-64-v4)
+- `-Ctarget-feature=+avx512f` (Artifacts released on top of x86-64-v3)
+- `-Ctarget-feature=+sha,+avx2` (Artifacts released on top of x86-64-v2)
 - `-Ctarget-feature=+avx2` (only BLAKE3 will be accelerated!)
 - `-Ctarget-feature=+sha,+sse4_1` (only SHA-2 will be accelerated!)
 
@@ -131,7 +131,12 @@ The browser extension bundles a SIMD128 WASM solver for Anubis and Cerberus that
 > cd browser-addon && web-ext build
 ```
 
-I do not plan on distributing signed builds, so you will need to install the extension manually. Also, I highly recommend trying out the [NoPoW](https://git.gay/49016/NoPoW) extension (which is signed by Mozilla) which simply exploits over-fit heuristics in the vendor code and would suffice for most websites except the most paranoid ones that indiscriminately PoW every visitor.
+Browser addons will be released _unsigned_. To install it you have to: 
+
+- get it signed under your developer account, or
+- On any Firefox browser that is not the release flavor (e.g. Nightly, LibreWolf, etc.), manually flip `xpinstall.signatures.required` to `false` in `about:config` to install them.
+
+For easier to use (but less reliable) alternatives, I highly recommend trying out the [NoPoW](https://git.gay/49016/NoPoW) extension (which is signed by Mozilla because it is just a UA changer) which simply exploits over-fit heuristics in the vendor code and would suffice for most websites except the most paranoid ones that indiscriminately PoW every visitor.
 
 ## Limitations
 

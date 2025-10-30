@@ -25,8 +25,11 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install MUSL toolchain
-        run: sudo apt-get install musl-dev musl-tools
+      - name: Install system dependencies
+        run: sudo apt-get install musl-dev musl-tools nodejs npm
+
+      - name: Install Node.js dependencies
+        run: npm install -g web-ext
 
       # Install Rust toolchain
       - name: Install Rust stable
@@ -57,11 +60,12 @@ jobs:
           RUSTFLAGS="-Ctarget-feature=+simd128" \
           cargo test --target wasm32-wasip1 --verbose
 
-      # Checkpoint: ensure tests pass before continuing with builds
       - name: Build WASM backend
         run: ./build_wasm.sh
 
-      # Build 4 variants in parallel
+      - name: Build browser extension
+        run: cd browser-addon && web-ext build -o -v
+
       - name: Build release variants
         run: |
           mkdir -p artifacts
@@ -102,6 +106,7 @@ jobs:
           cp target/avx512f-build/x86_64-unknown-linux-musl/release-unwinding/pow-buster artifacts/pow-buster-avx512f
           cp target/avx2sha-build/x86_64-unknown-linux-musl/release-unwinding/pow-buster artifacts/pow-buster-avx2sha
           cp target/scalar-build/x86_64-unknown-linux-musl/release-unwinding/pow-buster artifacts/pow-buster-scalar
+          cp browser-addon/web-ext-artifacts/pow-buster-*.zip artifacts/pow-buster-browser-extension.xpi
 
       # Upload artifacts for tagged builds
       - if: startsWith(github.ref, 'refs/tags/v')
