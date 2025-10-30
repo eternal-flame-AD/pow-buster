@@ -2,11 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
     tags:
-      - 'v*'
+      - "v*"
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,8 +15,8 @@ jobs:
   test-and-build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Required for uploading release artifacts
-    
+      contents: write # Required for uploading release artifacts
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -27,12 +27,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip1
-      
+
       # Install wasm-pack
       - name: Install wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
         with:
-          version: 'latest'
+          version: "latest"
 
       # Install wasmtime
       - name: Install wasmtime
@@ -47,7 +47,7 @@ jobs:
       # Run tests with wasmtime and SIMD128
       - name: Run tests with wasmtime and SIMD128
         run: |
-          CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime run --wasm-features=simd --" \
+          CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime" \
           RUSTFLAGS="-Ctarget-feature=+simd128" \
           cargo test --target wasm32-wasip1 --verbose
 
@@ -59,34 +59,34 @@ jobs:
       - name: Build release variants
         run: |
           mkdir -p artifacts
-          
+
           # Build avx512vbmi variant
           RUSTFLAGS="-Ctarget-cpu=x86-64-v4 -Ctarget-feature=+avx512vbmi" \
           cargo build -j1 --bin pow-buster --profile release-unwinding \
           --features cli,client,server,server-wasm \
           --target-dir target/avx512vbmi-build &
-          
+
           # Build avx512f variant
-          RUSTFLAGS="-Ctarget-cpu=x86-64-v4 -Ctarget-feature=+avx512f" \
+          RUSTFLAGS="-Ctarget-feature=+avx512f" \
           cargo build -j1 --bin pow-buster --profile release-unwinding \
           --features cli,client,server,server-wasm \
           --target-dir target/avx512f-build &
-          
+
           # Build avx2+sha variant
-          RUSTFLAGS="-Ctarget-cpu=x86-64-v3 -Ctarget-feature=+sha,+avx2" \
+          RUSTFLAGS="-Ctarget-feature=+sha,+avx2" \
           cargo build -j1 --bin pow-buster --profile release-unwinding \
           --features cli,client,server,server-wasm \
           --target-dir target/avx2sha-build &
-          
+
           # Build scalar variant
           RUSTFLAGS="-Ctarget-cpu=x86-64" \
           cargo build -j1 --bin pow-buster --profile release-unwinding \
           --features cli,client,server,server-wasm \
           --target-dir target/scalar-build &
-          
+
           # Wait for all builds to complete
           wait
-          
+
           # Copy artifacts with descriptive names
           cp target/avx512vbmi-build/release-unwinding/pow-buster artifacts/pow-buster-avx512vbmi
           cp target/avx512f-build/release-unwinding/pow-buster artifacts/pow-buster-avx512f
