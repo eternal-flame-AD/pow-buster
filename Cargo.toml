@@ -36,6 +36,9 @@ rust-embed = { version = "8.7", optional = true, features = ["mime-guess"] }
 blake3 = { version = "1.8.2", default-features = false }
 generic-array = { version = "=0.14.7" } # TODO: remove this pin once RustCrypt migrate off of it
 
+[profile.test]
+opt-level = 3
+
 [profile.release]
 opt-level = 3
 panic = "abort"
