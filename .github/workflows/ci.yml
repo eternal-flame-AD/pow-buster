@@ -22,6 +22,9 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Install MUSL toolchain
+        run: sudo apt-get install musl-dev musl-tools
+
       # Install Rust toolchain
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -75,7 +78,7 @@ jobs:
           --target-dir target/avx512f-build &
 
           # Build avx2+sha variant
-          RUSTFLAGS="-Ctarget-feature=+sha,+avx2" \
+          RUSTFLAGS="-Ctarget-cpu=x86-64-v2 -Ctarget-feature=+sha,+avx2" \
           cargo build -j1 --bin pow-buster --profile release-unwinding \
           --target x86_64-unknown-linux-musl \
           --features cli,client,server,server-wasm \
