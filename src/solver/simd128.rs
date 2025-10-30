@@ -1,8 +1,7 @@
 use core::arch::wasm32::*;
 
 use crate::{
-    Align16, PREFIX_OFFSET_TO_LANE_POSITION, SWAP_DWORD_BYTE_ORDER, decompose_blocks_mut,
-    is_supported_lane_position,
+    Align16, SWAP_DWORD_BYTE_ORDER, decompose_blocks_mut,
     message::{
         CerberusMessage, DecimalMessage, DoubleBlockMessage, GoAwayMessage, SingleBlockMessage,
     },
@@ -93,9 +92,7 @@ impl SingleBlockSolver {
         mask: u64,
     ) -> Option<(u64, [u32; 8])> {
         let lane_id_0_word_idx = self.message.digit_index / 4;
-        if !is_supported_lane_position(lane_id_0_word_idx) {
-            return None;
-        }
+
         let lane_id_1_word_idx = (self.message.digit_index + 1) / 4;
         let target = target & mask;
 
@@ -338,9 +335,6 @@ impl DoubleBlockSolver {
 
 impl crate::solver::Solver for DoubleBlockSolver {
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
-        if !is_supported_lane_position(DoubleBlockMessage::DIGIT_IDX as usize / 4) {
-            return None;
-        }
         let target = target & mask;
 
         let target = (target >> 32) as u32;
@@ -584,10 +578,6 @@ impl crate::solver::Solver for GoAwaySolver {
         let mask = (mask >> 32) as u32;
 
         unsafe {
-            if !is_supported_lane_position(PREFIX_OFFSET_TO_LANE_POSITION[0]) {
-                return None;
-            }
-
             let lane_id_v = u32x4(0, 1, 2, 3);
 
             let mut prefix_state = crate::sha256::IV;

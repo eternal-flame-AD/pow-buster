@@ -74,7 +74,7 @@ harness = false
 required-features = ["internals"]
 
 [features]
-default = ["std", "all-lane-positions"]
+default = ["std"]
 alloc = []
 std = ["alloc"]
 compare-64bit = []
@@ -87,40 +87,6 @@ rayon = ["std", "dep:rayon"]
 server = ["adapter", "tokio", "tracing", "dep:rayon", "dep:thiserror", "dep:url", "dep:axum", "dep:tower-http", "dep:tracing-subscriber", "dep:axum-extra", "dep:headers"]
 tracing = ["dep:tracing"]
 internals = []
-all-lane-positions = [
-    "lane-position-0",
-    "lane-position-1",
-    "lane-position-2",
-    "lane-position-3",
-    "lane-position-4",
-    "lane-position-5",
-    "lane-position-6",
-    "lane-position-7",
-    "lane-position-8",
-    "lane-position-9",
-    "lane-position-10",
-    "lane-position-11",
-    "lane-position-12",
-    "lane-position-13",
-    "lane-position-14",
-    "lane-position-15"
-]
-lane-position-0 = []
-lane-position-1 = []
-lane-position-2 = []
-lane-position-3 = []
-lane-position-4 = []
-lane-position-5 = []
-lane-position-6 = []
-lane-position-7 = []
-lane-position-8 = []
-lane-position-9 = []
-lane-position-10 = []
-lane-position-11 = []
-lane-position-12 = []
-lane-position-13 = []
-lane-position-14 = []
-lane-position-15 = []
 server-wasm = ["server", "dep:rust-embed"]
 ignore-target-feature-checks = []
 

@@ -1,8 +1,7 @@
 use sha2::digest::generic_array::GenericArray;
 
 use crate::{
-    Align16, Align64, PREFIX_OFFSET_TO_LANE_POSITION, SWAP_DWORD_BYTE_ORDER, decompose_blocks_mut,
-    is_supported_lane_position,
+    Align16, Align64, SWAP_DWORD_BYTE_ORDER, decompose_blocks_mut,
     message::{
         BinaryMessage, CerberusMessage, DecimalMessage, DoubleBlockMessage, GoAwayMessage,
         SingleBlockMessage,
@@ -447,9 +446,6 @@ impl crate::solver::Solver for SingleBlockSolver {
 
         // pre-compute an OR to apply to the message to add the lane ID
         let lane_id_0_word_idx = self.message.digit_index / 4;
-        if !is_supported_lane_position(lane_id_0_word_idx) {
-            return None;
-        }
         let lane_id_1_word_idx = (self.message.digit_index + 1) / 4;
 
         macro_rules! dispatch {
@@ -563,9 +559,6 @@ impl DoubleBlockSolver {
 
 impl crate::solver::Solver for DoubleBlockSolver {
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
-        if !is_supported_lane_position(DoubleBlockMessage::DIGIT_IDX as usize / 4) {
-            return None;
-        }
         let target = target & mask;
 
         if self.attempted_nonces >= self.limit {
@@ -1089,11 +1082,7 @@ impl crate::solver::Solver for BinarySolver {
         macro_rules! dispatch {
             ($skipped_rounds:expr) => {
                 // bail out for unsupported lane positions
-                if !is_supported_lane_position($skipped_rounds) {
-                    crate::unlikely();
-                    let mut solver = crate::solver::safe::BinarySolver::from(self.message.clone());
-                    return solver.solve::<TYPE>(target, mask);
-                } else if cur_block == 1 {
+                if cur_block == 1 {
                     if let Some(nonce) = self.solve_impl::<TYPE, { $skipped_rounds }, true>(
                         *self.message.prefix_state,
                         &block_template_be,
@@ -1215,10 +1204,6 @@ impl crate::solver::Solver for GoAwaySolver {
     fn solve_nonce_only<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<u64> {
         unsafe {
             let lane_id_v = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-
-            if !is_supported_lane_position(PREFIX_OFFSET_TO_LANE_POSITION[0]) {
-                return None;
-            }
 
             let target = target & mask;
 
