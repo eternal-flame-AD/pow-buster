@@ -5,10 +5,9 @@
 - [PoW Buster](#pow-buster)
   - [Table of Contents](#table-of-contents)
   - [Motivation / Why?](#motivation--why)
-  - [Upstream Response](#upstream-response)
   - [Features](#features)
   - [Building](#building)
-    - [Building the browser extension (experimental)](#building-the-browser-extension-experimental)
+    - [Building the browser extension](#building-the-browser-extension)
   - [Limitations](#limitations)
   - [Ethical Disclaimer (i.e. the "How Dare you Publish this?" question)](#ethical-disclaimer-ie-the-how-dare-you-publish-this-question)
   - [Benchmark](#benchmark)
@@ -19,7 +18,7 @@
     - [Throughput Sanity Check](#throughput-sanity-check)
       - [Single Threaded](#single-threaded)
       - [Multi Threaded](#multi-threaded)
-  - [Security Implications](#security-implications)
+  - [Security Implications and Responsible Reporting](#security-implications-and-responsible-reporting)
   - [Future Work (i.e. Okay, so what would be a good PoW then?)](#future-work-ie-okay-so-what-would-be-a-good-pow-then)
   - [Conflict of Interest Disclosure](#conflict-of-interest-disclosure)
   - [Contributing / Wishlist](#contributing--wishlist)
@@ -40,27 +39,6 @@ See [MOTIVATION.md](MOTIVATION.md) for more details.
 
 
 [A longer blabbing post regarding this](https://mi.yumechi.jp/notes/aa223tk8c5ao02v9)
-
-## Upstream Response 
-
-We had opened some issues to upstream when there are clear performance regressions (i.e. not just optimization by a factor but non-linear server-side performance degradation). Here are the current statuses:
-
-
-| Project    | Issue / PR                                                                 | Reported Issue                                                       | Upstream response                             |
-| ---------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------- |
-| mCaptcha   | [#186](https://github.com/mCaptcha/mCaptcha/issues/186)                    | Difficulty inversion; Spin loop, stalls at ~200 rps                  | **Pending Since 06/05/2025**                  |
-| Anubis     | [#1103](https://github.com/TecharoHQ/anubis/issues/1103)                   | Lock-convoy on certain backend caps at 5-6 k rps                     | **Fixed** (pending algo tweak)                |
-| go-away    | –                                                                          | not evaluated                                                        | –                                             |
-| Cap.js     | [#97](https://github.com/tiagozip/cap/issues/97)                           | Difficulty inversion; Event-loop starvation, drops from 400 → 50 rps | **Declined** ("out-of-scope"/suggested IP RL) |
-| GoToSocial | [PR 4433](https://codeberg.org/superseriousbusiness/gotosocial/pulls/4433) | Structural bias                                                      | **Feature removed**                           |
-
-All load tests were performed using the `live` command with the following methodology:
-
-- For projects with multiple difficulty presets, the highest difficulty preset was used
-- All requests are strictly proof of work round-trips and contain valid proof of work. No backend service were hooked up.
-- Supplementary features that are irrelevant to this study such as traditional IP rate-limiting were disabled.
-- These tests were performed on a 32-core AMD Ryzen 9 7950X, actual ratio/capacity may vary depending on server capacity and topology.
-- "difficulty inversion" was defined as a the server not being able to fully load all 32-cores at at least 1:1 latency (as reported by `http_wait` metric at cutoff 50%) or 1:1 CPU usage to `pow-buster`'s throughput.
 
 ## Features
 
@@ -122,7 +100,7 @@ Executed in  491.36 millis    fish           external
 window.location.replace("/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime=2476&response=000000434df465134b51abbde017562b007c8239764d9fdce61817b4c306d304&nonce=11111111140158495&redir=" + encodeURIComponent(window.location.href));
 ```
 
-### Building the browser extension (experimental)
+### Building the browser extension
 
 The browser extension bundles a SIMD128 WASM solver for Anubis and Cerberus that is much more performant and energy-efficient than vendor-provided solvers and optionally can be configured to fetch solutions from a remote `pow-buster` server.
 
@@ -133,10 +111,16 @@ The browser extension bundles a SIMD128 WASM solver for Anubis and Cerberus that
 
 Browser addons will be released _unsigned_. To install it you have to: 
 
-- get it signed under your developer account, or
+- Get it signed under your developer account, or
 - On any Firefox browser that is not the release flavor (e.g. Nightly, LibreWolf, etc.), manually flip `xpinstall.signatures.required` to `false` in `about:config` to install them.
 
-For easier to use (but less reliable) alternatives, I highly recommend trying out the [NoPoW](https://git.gay/49016/NoPoW) extension (which is signed by Mozilla because it is just a UA changer) which simply exploits over-fit heuristics in the vendor code and would suffice for most websites except the most paranoid ones that indiscriminately PoW every visitor.
+For easier to use (but less reliable) alternatives, I highly recommend trying out the [NoPoW](https://git.gay/49016/NoPoW) extension (which is signed by Mozilla because it is just a UA changer), main differences:
+
+- ✅ Works on non-default or challenge-all config. 
+- ✅ Resistant to adopters who like to block specific request signatures because there is no request signature - vanilla vendor submission code is used.
+- ✅ Does not try to circumvent any administrative rules, code is law.
+- ❌ Will still "waste" CPU cycles, just (much) more efficiently.
+- ❌ The extension may violate Firefox Submission Guideline of being "self contained". Although it can (and by default does) work without any server-side components, you have the option to use the preferences page to have it connect to a native `pow-buster` server and execute solution scripts generated by the server. This is to simplify my workflow of just having one server-side integration and increase agility of getting native acceleration from manual devTools based workflows to fully automated ones.
 
 ## Limitations
 
@@ -367,13 +351,32 @@ On EPYC 9634 with better thermals, OpenSSL has 598.28 MH/s (38.29 GB/s) single b
 | go-away (32 bytes)               | 3.826 GH/s | 3.15 GH/s |
 | Cerberus (BLAKE3)                | 8.874 GH/s | N/A       |
 
-## Security Implications
+## Security Implications and Responsible Reporting
 
 The performance gap between optimized native code and browser JavaScript (>100x) makes it impractical to set difficulty levels that are both:
    - High enough to prevent automated solving on native hardware
    - Low enough to be solvable in browsers within reasonable timeouts
 
 These findings suggest that both designing and adopting a PoW-based CAPTCHA systems may need additional verification mechanisms beyond empirical testing.
+
+Additionally, we had opened some issues to upstream when there are clear performance regressions (i.e. not just optimization by a factor but non-linear server-side performance degradation). Here are the current statuses:
+
+
+| Project    | Issue / PR                                                                 | Reported Issue                                                       | Upstream response                             |
+| ---------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------- |
+| mCaptcha   | [#186](https://github.com/mCaptcha/mCaptcha/issues/186)                    | Difficulty inversion; Spin loop, stalls at ~200 rps                  | **Pending Since 06/05/2025**                  |
+| Anubis     | [#1103](https://github.com/TecharoHQ/anubis/issues/1103)                   | Lock-convoy on certain backend caps at 5-6 k rps                     | **Fixed** (pending algo tweak)                |
+| go-away    | –                                                                          | not evaluated                                                        | –                                             |
+| Cap.js     | [#97](https://github.com/tiagozip/cap/issues/97)                           | Difficulty inversion; Event-loop starvation, drops from 400 → 50 rps | **Declined** ("out-of-scope"/suggested IP RL) |
+| GoToSocial | [PR 4433](https://codeberg.org/superseriousbusiness/gotosocial/pulls/4433) | Structural bias                                                      | **Feature removed**                           |
+
+All load tests were performed using the `live` command with the following methodology:
+
+- For projects with multiple difficulty presets, the highest difficulty preset was used
+- All requests are strictly proof of work round-trips and contain valid proof of work. No backend service were hooked up.
+- Supplementary features that are irrelevant to this study such as traditional IP rate-limiting were disabled.
+- These tests were performed on a 32-core AMD Ryzen 9 7950X, actual ratio/capacity may vary depending on server capacity and topology.
+- "difficulty inversion" was defined as a the server not being able to fully load all 32-cores at at least 1:1 latency (as reported by `http_wait` metric at cutoff 50%) or 1:1 CPU usage to `pow-buster`'s throughput.
 
 ## Future Work (i.e. Okay, so what would be a good PoW then?)
 
