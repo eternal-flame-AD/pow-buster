@@ -6,8 +6,6 @@ use sha2::digest::{
     consts::{B1, U0, U16, U64},
     typenum::{IsGreater, PowerOfTwo, Unsigned},
 };
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
 
 use core::num::NonZeroU8;
 
