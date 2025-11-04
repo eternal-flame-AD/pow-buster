@@ -24,6 +24,16 @@ ISO/IEC 29147:2018: “Coordinated vulnerability disclosure does not apply when 
  
 Any statistical and "cryptanalytic" techniques used are also well-known miner tricks publicly documented, and not a "vulnerability" simply because the vendor did not take actions to identify and mitigate them.
 
+## "Build not break" (Anubis specific)
+
+If the project lead is dead serious about what they perceive as a threat to the small web as a whole, then fine, it is debatable whether I am being "fair" for demanding perfect security from an open-source peer, and whether it is for the public good to write a scalable bypass and post it on GitHub. It is a valid albeit not exclusively valid way to look at it (i.e. "red teaming is bad"), but only if you predicate the judgement based on the defense being actually provided as an altruistic gift to the "small web" and the defense is being steered like a real security solution.
+
+However, the reality is Anubis does not satisfy such a standard:
+
+- It is no longer "free", it has a brand, and code is provided with conditions (do not remove the mascot without paying, etc), and Xe is not being shy of the commercialization and [monetization](https://github.com/TecharoHQ/anubis/issues/1177#issuecomment-3381177330) of the project. I am not obliged to contribute a niche skill to a project built for the founder's profit free of charge.
+- This isn't a serious defense nor is being developed as one. It is a social media protestware, my action is just a high effort way of participating in a social flame war at its worst at my expense. Xe and Techaro is welcome to debate on this, but they did ignore a good effort outreach from me asking for their security model and requesting comments on similar concerns of lacking efficacy/transparency dated 9/19/2025, so this stands as my reading.
+
+
 # What should be done?
 
 I have a very simple and low bar for the vendor: be honest and be epistemic. Know what you don't know, if you don't have RUM then don't claim user-centric benefits. If you can't have RUM because of "privacy", I don't care. Innovations are hard because you have to satisfy compounding constraints, not because you get to ignore constaints and claim benefits pre-emptively. If privacy is your goal, that is your design constraint that you should figure out before speculating benefits out of N/A values, or at least disclose you do not have evidence before shipping the solution to public with no cryptography or performance backgrounds and making self-serving logicals leaps based on speculating benefits of accessibility, latency or abuse deterrence based on what is arguably not supported from missing data. 

@@ -1,0 +1,70 @@
+Message-ID: <75b28588-a02a-4512-86ab-38f5eb35f3f4@yumechi.jp>
+Date: Fri, 19 Sep 2025 19:12:34 -0500
+MIME-Version: 1.0
+User-Agent: Mozilla Thunderbird
+Content-Language: en-US
+To: me@xeiaso.net
+From: Yumechi <yume@yumechi.jp>
+Subject: Inquiry on Anubis GitHub Issue #1021
+Content-Type: text/plain; charset=UTF-8; format=flowed
+Content-Transfer-Encoding: 8bit
+
+Hi Xe,
+
+
+I was reading the issue board and I am concerned with your response to 
+issue #1021.
+
+
+The original requester asked the same question I always wanted to ask, 
+but I wish to maintain professional courtesy and not publicly endorse 
+any issues carrying clear subjective attitude. While I can understand 
+where you are coming from in terms of designing the project (not 
+everyone has time/expertise to handle abuse and not everyone wants to 
+use SaaS solutions), I can also understand why some critics or 
+suggestions for improvement, substantiated by data (which I believe this 
+issue and all my prior engagements with you are) or not, may question 
+how the project is currently managed in terms of technical 
+implementation and selective engagement.
+
+The original question clearly is focused on questioning whether the 
+ability of a native program to solve the challenge in "a short order". 
+Your response to that question was it has been "upgraded" on kernel.org 
+and "this no longer applies". Could you clarify what "this" refers to, 
+and what "upgrade" has been performed? It seems like a minor problem 
+(solution reuse) pointed out in that article was indeed 
+fixedÂ GHSA-428r-47m3-x9hx, however it does not seem like the concern by 
+the requester is addressed.
+
+What I am asking from you is, can you clarify whether this is an 
+acceptable risk by anyone using this defense? If you say yes then that 
+is pragmatic and, again as I reiterated multiple times on public 
+discussion, does not mean the defense is useless it just means guidance 
+should be documented (such as supplementary measures should still be 
+taken) and given to adopters or we have to improve. However I cannot 
+endorse intentional or unintentional actions of engaging in a biased and 
+selective interpretation of criticism.
+
+As of today, the challenge on kernel.org is still standard and from my 
+residential IP of view of difficulty 4, and mined in <1ms on 
+run-off-the-mill $4/month/core cloud instances. I have posted the link 
+to my methodology on #1116 which you might have already seen.
+
+As with some of my public engagements with you on future project 
+directions, I am open to success of your project but it comes with an 
+honest disclosure of limitations and a clear technical direction 
+(perfect security, computational efficiency, lowest friction, 
+friendliness to polite scripted use or something else)? Otherwise as in 
+#1116 (and a prior issue #94 discussion changing algorithms), it can 
+lead to different stakeholders cross-talking over each other over their 
+(including mine) perceived priority.
+
+
+I will keep this email on the record.
+
+
+Best,
+
+
+Yumechi
+

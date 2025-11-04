@@ -359,6 +359,8 @@ The performance gap between optimized native code and browser JavaScript (>100x)
 
 These findings suggest that both designing and adopting a PoW-based CAPTCHA systems may need additional verification mechanisms beyond empirical testing.
 
+A good effort outreach was made to Anubis for comments on similar concerns of lacking efficacy/transparency dated 9/19/2025, but no reply was received as of 11/04/2025. [email](emails/xeiaso.091925.eml)
+
 Additionally, we had opened some issues to upstream when there are clear performance regressions (i.e. not just optimization by a factor but non-linear server-side performance degradation). Here are the current statuses:
 
 
