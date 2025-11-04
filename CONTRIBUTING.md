@@ -18,7 +18,7 @@ pow-buster is a consumer advocacy and research project pushing hardware limits o
 
 ## Expectations
 
-- Custom cryptographic cores are time-consuming and high-latency. There is no concrete timeline for supporting new algorithms. All requests for new cores will only be pursued if it has non-trivial adoption.
+- Custom cryptographic cores are time-consuming and high-latency. There is no concrete timeline for supporting new algorithms. All requests for new cores will only be pursued if it has non-trivial adoption. Generally I will prioritize blocking pre-visit gates only due to extreme user friction and workflow disruption.
 - Protocols should be explained using canonical names and in site-agnotistic and generic terms, with data types and acceptance limits annotated:
   - A good example: ACMEProtect has a new challenge: Salt concatenated with an ASCII decimal nonce. Salt is typically 32 bytes but user-configurable. Decimal nonce are limited to zero to u32::MAX. Test the first word of the hash for less than or equal to difficulty.
   - A bad example: See my `poc.py` for how to solve it. I triede it on example.com and it works.
