@@ -305,24 +305,12 @@ mod tests {
 
     use super::*;
 
-    // The mixing function, G, which mixes either a column or a diagonal.
-    fn gref(state: &mut [u32; 16], a: usize, b: usize, c: usize, d: usize, mx: u32, my: u32) {
-        state[a] = state[a].wrapping_add(state[b]).wrapping_add(mx);
-        state[d] = (state[d] ^ state[a]).rotate_right(16);
-        state[c] = state[c].wrapping_add(state[d]);
-        state[b] = (state[b] ^ state[c]).rotate_right(12);
-        state[a] = state[a].wrapping_add(state[b]).wrapping_add(my);
-        state[d] = (state[d] ^ state[a]).rotate_right(8);
-        state[c] = state[c].wrapping_add(state[d]);
-        state[b] = (state[b] ^ state[c]).rotate_right(7);
-    }
-
     #[test]
     fn test_g_function() {
         let mut state = core::array::from_fn(|i| crate::sha256::IV[i % 8].wrapping_add(i as u32));
         let mut state_v: [_; 16] =
             core::array::from_fn(|i| unsafe { _mm256_set1_epi32(state[i] as _) });
-        gref(
+        g(
             &mut state,
             0,
             4,
