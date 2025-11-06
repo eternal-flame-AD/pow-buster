@@ -14,6 +14,14 @@ use crate::{
     solver::{SOLVE_TYPE_GT, SOLVE_TYPE_LT, Solver},
 };
 
+static SELECTOR_META_REFRESH: LazyLock<scraper::Selector> =
+    LazyLock::new(|| scraper::Selector::parse("meta[http-equiv='refresh' i]").unwrap());
+
+// Anubis (and derivatives) by default only challenges UAs that look like browsers
+// so we kind of have to fake it for out of the box testing without extensive reconfiguration
+const ANUBIS_USER_AGENT: &str =
+    "Mozilla/5.0 (Android 15; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0";
+
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
 /// mCaptcha PoW configuration
 pub struct PoWConfig {
@@ -59,6 +67,9 @@ pub enum SolveError {
     #[error("solver failed")]
     /// solver failed
     SolverFailed,
+    #[error("cross origin redirect")]
+    /// cross origin redirect
+    CrossOriginRedirect,
     #[error("scrape element not found: {0}")]
     /// scrape element not found
     ScrapeElementNotFound(&'static str),
@@ -332,6 +343,12 @@ pub async fn solve_anubis_ex(
     base_url: &str,
     time_iowait: &mut u32,
 ) -> Result<String, SolveError> {
+    static ELEMENT_ANUBIS_CHALLENGE: LazyLock<scraper::Selector> = LazyLock::new(|| {
+        scraper::Selector::parse("script#anubis_challenge")
+            .map_err(|_| SolveError::ScrapeElementNotFound("anubis_challenge"))
+            .unwrap()
+    });
+
     let url_parsed = url::Url::parse(base_url)?;
 
     let iotime = std::time::Instant::now();
@@ -339,10 +356,7 @@ pub async fn solve_anubis_ex(
         .get(base_url)
         .header("Accept", "text/html")
         .header("Sec-Gpc", "1")
-        .header(
-            "User-Agent",
-            "Mozilla/5.0 (Android 15; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0",
-        )
+        .header("User-Agent", ANUBIS_USER_AGENT)
         .send()
         .await?;
     let iotime = iotime.elapsed();
@@ -358,84 +372,111 @@ pub async fn solve_anubis_ex(
         .ok_or(SolveError::CookieNotFound)?
         .to_string();
 
-    fn extract_challenge(body: &str) -> Result<AnubisChallengeDescriptor, SolveError> {
-        static ELEMENT_ANUBIS_CHALLENGE: LazyLock<scraper::Selector> = LazyLock::new(|| {
-            scraper::Selector::parse("script#anubis_challenge")
-                .map_err(|_| SolveError::ScrapeElementNotFound("anubis_challenge"))
-                .unwrap()
-        });
-        let document = scraper::Html::parse_document(&body);
-        let element = document
-            .select(&ELEMENT_ANUBIS_CHALLENGE)
-            .next()
-            .ok_or(SolveError::ScrapeElementNotFound("anubis_challenge"))?;
-        let json_text = element.text().collect::<String>();
-        let challenge: AnubisChallengeDescriptor = serde_json::from_str(&json_text)?;
+    let refresh_header = response
+        .headers()
+        .get("refresh")
+        .and_then(|refresh| refresh.to_str().ok())
+        .map(|s| s.to_string());
 
-        Ok(challenge)
+    let (final_url, delay) = {
+        let document = scraper::Html::parse_document(&response.text().await?);
+        if let Some(meta_refresh) = refresh_header.as_deref().or_else(|| {
+            document
+                .select(&SELECTOR_META_REFRESH)
+                .next()
+                .and_then(|meta| meta.attr("content"))
+        }) {
+            let (dur, mut url) = meta_refresh
+                .split_once(|c| c == ';' || c == ',')
+                .unwrap_or((meta_refresh, ""));
+
+            // MDN: fraction part is ignored
+            let (dur_int, _rest) = dur.split_once('.').unwrap_or((dur, ""));
+
+            let dur_int = dur_int
+                .parse::<u32>()
+                .map_err(|_| SolveError::UnexpectedChallengeFormat)?
+                .saturating_sub(1);
+
+            url = url.trim();
+
+            if url.len() > 4 && url[..4].eq_ignore_ascii_case("url=") {
+                url = url[4..].trim();
+            }
+
+            (url_parsed.join(url)?, dur_int as u64 * 900)
+        } else {
+            let element = document
+                .select(&ELEMENT_ANUBIS_CHALLENGE)
+                .next()
+                .ok_or(SolveError::ScrapeElementNotFound("anubis_challenge"))?;
+            let json_text = element.text().collect::<String>();
+            let challenge: AnubisChallengeDescriptor = serde_json::from_str(&json_text)?;
+
+            if !challenge.supported() {
+                return Err(SolveError::UnknownAlgorithm(
+                    challenge.rules().algorithm().to_string(),
+                ));
+            }
+            let (result, attempted_nonces) = tokio::task::block_in_place(|| challenge.solve());
+
+            let (nonce, result) = result.ok_or(SolveError::SolverFailed)?;
+
+            let plausible_time = crate::compute_plausible_time_sha256(attempted_nonces) + 10;
+
+            let mut response_hex = [0u8; 64];
+            crate::encode_hex(&mut response_hex, result);
+
+            let mut final_url = format!(
+                "{}://{}",
+                url_parsed.scheme(),
+                url_parsed.host_str().unwrap(),
+            );
+            if let Some(port) = url_parsed.port() {
+                write!(final_url, ":{}", port).unwrap();
+            }
+            write!(
+                final_url,
+                "/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime={}&{}=",
+                plausible_time,
+                challenge.hash_result_key()
+            )
+            .unwrap();
+
+            final_url
+                .write_str(&unsafe { std::str::from_utf8_unchecked(&response_hex) })
+                .unwrap();
+
+            if let Some(id) = challenge.challenge().id() {
+                write!(final_url, "&id={}", id).unwrap();
+            }
+            write!(final_url, "&nonce={}&redir=", nonce).unwrap();
+            let redir_encoder = url::form_urlencoded::byte_serialize(base_url.as_bytes());
+            redir_encoder.for_each(|b| {
+                final_url.push_str(b);
+            });
+
+            (url::Url::parse(&final_url)?, challenge.delay())
+        }
+    };
+
+    if url_parsed.origin() != final_url.origin() {
+        return Err(SolveError::CrossOriginRedirect);
     }
 
-    let challenge = extract_challenge(&response.text().await?)?;
-    if !["fast", "slow", "preact"].contains(&challenge.rules().algorithm()) {
-        return Err(SolveError::UnknownAlgorithm(
-            challenge.rules().algorithm().to_string(),
-        ));
-    }
-    // AFAIK as of now there is no way to configure Anubis to require the double solver
-    let (result, attempted_nonces) = tokio::task::block_in_place(|| challenge.solve());
-
-    let (nonce, result) = result.ok_or(SolveError::SolverFailed)?;
-
-    let plausible_time = crate::compute_plausible_time_sha256(attempted_nonces) + 10;
-
-    let mut response_hex = [0u8; 64];
-    crate::encode_hex(&mut response_hex, result);
-
-    let mut final_url = format!(
-        "{}://{}",
-        url_parsed.scheme(),
-        url_parsed.host_str().unwrap(),
-    );
-    if let Some(port) = url_parsed.port() {
-        write!(final_url, ":{}", port).unwrap();
-    }
-    write!(
-        final_url,
-        "/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime={}&{}=",
-        plausible_time,
-        challenge.hash_result_key()
-    )
-    .unwrap();
-
-    final_url
-        .write_str(&unsafe { std::str::from_utf8_unchecked(&response_hex) })
-        .unwrap();
-
-    if let Some(id) = challenge.challenge().id() {
-        write!(final_url, "&id={}", id).unwrap();
-    }
-    write!(final_url, "&nonce={}&redir=", nonce).unwrap();
-    let redir_encoder = url::form_urlencoded::byte_serialize(base_url.as_bytes());
-    redir_encoder.for_each(|b| {
-        final_url.push_str(b);
-    });
-
-    let iotime = std::time::Instant::now();
-    let delay = challenge.delay();
+    // on non PoW protected challenges, Anubis enforces a delay, wait for it
     if delay > 0 {
         tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
     }
 
+    let iotime = std::time::Instant::now();
     let golden_response = client
         .get(final_url)
         .header("Accept", "text/html")
         .header("Cookie", return_cookie.clone())
         .header("Referer", base_url)
         .header("Sec-Gpc", "1")
-        .header(
-            "User-Agent",
-            "Mozilla/5.0 (Android 15; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0",
-        )
+        .header("User-Agent", ANUBIS_USER_AGENT)
         .send()
         .await?;
     let iotime = iotime.elapsed();
@@ -476,17 +517,14 @@ pub async fn solve_cerberus_ex(
     base_url: &str,
     time_iowait: &mut u32,
 ) -> Result<String, SolveError> {
-    let mut url_parsed = url::Url::parse(base_url)?;
+    let url_parsed = url::Url::parse(base_url)?;
 
     let iotime = std::time::Instant::now();
     let response = client
         .get(base_url)
         .header("Accept", "text/html")
         .header("Sec-Gpc", "1")
-        .header(
-            "User-Agent",
-            "Mozilla/5.0 (Android 15; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0",
-        )
+        .header("User-Agent", ANUBIS_USER_AGENT)
         .send()
         .await?
         .error_for_status()?;
@@ -548,7 +586,11 @@ pub async fn solve_cerberus_ex(
     let mut response_hex = [0u8; 64];
     crate::encode_hex_le(&mut response_hex, result);
 
-    url_parsed = url_parsed.join(&answer_url)?;
+    let final_url = url_parsed.join(&answer_url)?;
+
+    if url_parsed.origin() != final_url.origin() {
+        return Err(SolveError::CrossOriginRedirect);
+    }
 
     let body = form_urlencoded::Serializer::new(String::with_capacity(256))
         .append_pair("response", &unsafe {
@@ -563,16 +605,13 @@ pub async fn solve_cerberus_ex(
 
     let iotime = std::time::Instant::now();
     let golden_response = client
-        .post(url_parsed)
+        .post(final_url)
         .body(body)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .header("Accept", "text/html")
         .header("Referer", base_url)
         .header("Sec-Gpc", "1")
-        .header(
-            "User-Agent",
-            "Mozilla/5.0 (Android 15; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0",
-        )
+        .header("User-Agent", ANUBIS_USER_AGENT)
         .send()
         .await?;
     let iotime = iotime.elapsed();
