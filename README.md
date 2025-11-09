@@ -37,7 +37,6 @@ The benchmarks demonstrate a significant performance gap between browser-based J
 
 See [MOTIVATION.md](MOTIVATION.md) for more details.
 
-
 [A longer blabbing post regarding this](https://mi.yumechi.jp/notes/aa223tk8c5ao02v9)
 
 ## Features
@@ -109,14 +108,14 @@ The browser extension bundles a SIMD128 WASM solver for Anubis and Cerberus that
 > cd browser-addon && web-ext build
 ```
 
-Browser addons will be released _unsigned_. To install it you have to: 
+Browser addons will be released _unsigned_. To install it you have to:
 
 - Get it signed under your developer account, or
 - On any Firefox browser that is not the release flavor (e.g. Nightly, LibreWolf, etc.), manually flip `xpinstall.signatures.required` to `false` in `about:config` to install them.
 
 For easier to use (but less reliable) alternatives, I highly recommend trying out the [NoPoW](https://git.gay/49016/NoPoW) extension (which is signed by Mozilla because it is just a UA changer), main differences:
 
-- ✅ Works on non-default or challenge-all config. 
+- ✅ Works on non-default or challenge-all config.
 - ✅ Resistant to adopters who like to block specific request signatures because there is no request signature - vanilla vendor submission code is used.
 - ✅ Does not try to circumvent any administrative rules, code is law.
 - ❌ Will still "waste" CPU cycles, just (much) more efficiently.
@@ -137,8 +136,8 @@ We assume you have a relatively modern and powerful platform, specifically:
 This isn't a vulnerability nor anything previously unknown, it's a structural weakness that needs to be assessed. I didn't "skip" or somehow "simplify" any number of SHA-2 rounds, it is a materialized analysis of performance characteristics of the system.
 
 This is a structural limitation, PoW is supposed for global consensus, not maintaining a meaningful peer-to-peer "fair" hash rate margin, especially not when compared to commodity hardware. Every academic paper will tell you that PoW system loses protection margin using hardware or software optimizations. I implemented it, that's it.
- 
-Website operators deploying a PoW system bear the responsibility to understand the performance characteristics and security implications of their chosen PoW parameters, and whether that protects against their identified threat. __The purpose of this research is to provide the statistical analysis and empirical validation data necessary for informed deployment decisions, including optimized CPU only solutions.__ 
+
+Website operators deploying a PoW system bear the responsibility to understand the performance characteristics and security implications of their chosen PoW parameters, and whether that protects against their identified threat. **The purpose of this research is to provide the statistical analysis and empirical validation data necessary for informed deployment decisions, including optimized CPU only solutions.**
 
 ## Benchmark
 
@@ -169,13 +168,13 @@ Results on AMD Ryzen 9 7950X, 32 hyperthreads, when supported, single-hash numbe
 
 ### End to End Benchmark
 
-A default official docker-compose instance is used for the benchmark target  (the default 33-byte salt was unchanged).
+A default official docker-compose instance is used for the benchmark target (the default 33-byte salt was unchanged).
 
 #### CPU only
 
 The following were configured for difficulty 5_000_000 (default max tier).
 
-10 consecutive solutions using the official Captcha widget:  [0.105s, 1.69s, 1.06s, 1.89s, 1.91s, 1.09s, 1.80s, 0.97s, 0.71s, 1.15s, 3.59s, 1.09s, 0.14s, 3.98s, 1.26s, 1.05s, 1.26s]
+10 consecutive solutions using the official Captcha widget: [0.105s, 1.69s, 1.06s, 1.89s, 1.91s, 1.09s, 1.80s, 0.97s, 0.71s, 1.15s, 3.59s, 1.09s, 0.14s, 3.98s, 1.26s, 1.05s, 1.26s]
 
 ```sh
 > RUSTFLAGS="-Ctarget-cpu=native" \
@@ -251,6 +250,7 @@ All 32 hyperthreads of a AMD Ryzen 9 7950X are used for the end-to-end benchmark
 ### Cap.js Browser Comparison
 
 Cap.js is a good end-to-end comparison target since it:
+
 - Uses multiple sub-goals instead of one big goal, results in a normal instead of geometric distribution of solution times
 - Has an official browser benchmark performed by BrowserStack
 - Has a WASM solver written in Rust
@@ -325,7 +325,7 @@ On a mobile CPU (i7-11370H), similar performance can be achieved on AVX-512 (at 
 | SingleBlock/Anubis               | 72.30 MH/s  | 21.87 MH/s |
 | DoubleBlock (mCaptcha edge case) | 44.84 MH/s  | 14.46 MH/s |
 | go-away (32 bytes)               | 80.53 MH/s  | 20.42 MH/s |
-| Cerberus (BLAKE3)                | 179.07 MH/s | N/A       |
+| Cerberus (BLAKE3)                | 179.07 MH/s | N/A        |
 
 The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and about 20% of that on Firefox, this is corroborated by Anubis's own accounts in their code comments using 7950X3D empirical testing. Empirical throughput of WASM-based mCaptcha is unreliable due to lack of official benchmark tools, but should be around 2-4 MH/s, corroborated with the author's CACM paper.
 
@@ -333,12 +333,12 @@ The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and 
 
 The peak throughput on 7950X reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous.
 
-| Workload                         | AVX-512 [log](bench_sha2.log)     | SHA-NI      | Vendor Official on Chromium [^4] |
-| -------------------------------- | ----------- | ----------- | -----------                      |
-| SingleBlock/Anubis               | 1.465 GH/s  | 1.143 GH/s  | ~650kH/s                         |
-| DoubleBlock (mCaptcha edge case) | 850.97 MH/s | 827.74 MH/s | N/A                              |
-| go-away (32 bytes)               | 1.564 GH/s  | 1.291 GH/s  | N/A                              |
-| Cerberus (BLAKE3)                | 3.361 GH/s  | N/A         | ~25MH/s                          |
+| Workload                         | AVX-512 [log](bench_sha2.log) | SHA-NI      | Vendor Official on Chromium [^4] |
+| -------------------------------- | ----------------------------- | ----------- | -------------------------------- |
+| SingleBlock/Anubis               | 1.465 GH/s                    | 1.143 GH/s  | ~650kH/s                         |
+| DoubleBlock (mCaptcha edge case) | 850.97 MH/s                   | 827.74 MH/s | N/A                              |
+| go-away (32 bytes)               | 1.564 GH/s                    | 1.291 GH/s  | N/A                              |
+| Cerberus (BLAKE3)                | 3.361 GH/s                    | N/A         | ~25MH/s                          |
 
 [^4]: Due to instablity of WASM optimization and runtime throttling behavior and lack of vendor provided benchmark harness, only approximate numbers can be provided.
 
@@ -354,8 +354,9 @@ On EPYC 9634 with better thermals, OpenSSL has 598.28 MH/s (38.29 GB/s) single b
 ## Security Implications and Responsible Reporting
 
 The performance gap between optimized native code and browser JavaScript (>100x) makes it impractical to set difficulty levels that are both:
-   - High enough to prevent automated solving on native hardware
-   - Low enough to be solvable in browsers within reasonable timeouts
+
+- High enough to prevent automated solving on native hardware
+- Low enough to be solvable in browsers within reasonable timeouts
 
 These findings suggest that both designing and adopting a PoW-based CAPTCHA systems may need additional verification mechanisms beyond empirical testing.
 
@@ -363,14 +364,13 @@ A good effort outreach was made to Anubis for comments on similar concerns of la
 
 Additionally, we had opened some issues to upstream when there are clear performance regressions (i.e. not just optimization by a factor but non-linear server-side performance degradation). Here are the current statuses:
 
-
-| Project    | Issue / PR                                                                 | Reported Issue                                                       | Upstream response                             |
-| ---------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------- | --------------------------------------------- |
-| mCaptcha   | [#186](https://github.com/mCaptcha/mCaptcha/issues/186)                    | Difficulty inversion; Spin loop, stalls at ~200 rps                  | **Pending Since 06/05/2025**                  |
-| Anubis     | [#1103](https://github.com/TecharoHQ/anubis/issues/1103)                   | Lock-convoy on certain backend caps at 5-6 k rps                     | **Fixed only for in-memory DB** (pending algo tweak)                |
-| go-away    | –                                                                          | not evaluated                                                        | –                                             |
-| Cap.js     | [#97](https://github.com/tiagozip/cap/issues/97)                           | Difficulty inversion; Event-loop starvation, drops from 400 → 50 rps | **Declined** ("out-of-scope"/suggested IP RL) |
-| GoToSocial | [PR 4433](https://codeberg.org/superseriousbusiness/gotosocial/pulls/4433) | Structural bias                                                      | **Feature removed**                           |
+| Project    | Issue / PR                                                                 | Reported Issue                                                       | Upstream response                                    |
+| ---------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------- |
+| mCaptcha   | [#186](https://github.com/mCaptcha/mCaptcha/issues/186)                    | Difficulty inversion; Spin loop, stalls at ~200 rps                  | **Pending Since 06/05/2025**                         |
+| Anubis     | [#1103](https://github.com/TecharoHQ/anubis/issues/1103)                   | Lock-convoy on certain backend caps at 5-6 k rps                     | **Fixed only for in-memory DB** (pending algo tweak) |
+| go-away    | –                                                                          | not evaluated                                                        | –                                                    |
+| Cap.js     | [#97](https://github.com/tiagozip/cap/issues/97)                           | Difficulty inversion; Event-loop starvation, drops from 400 → 50 rps | **Declined** ("out-of-scope"/suggested IP RL)        |
+| GoToSocial | [PR 4433](https://codeberg.org/superseriousbusiness/gotosocial/pulls/4433) | Structural bias                                                      | **Feature removed**                                  |
 
 All load tests were performed using the `live` command with the following methodology:
 
@@ -408,6 +408,7 @@ Contributions are welcome, roughly in priority order we want:
 This project is licensed under the Apache License 2.0. See the [LICENSE](/LICENSE) file for details.
 
 This project contains some copy pasted or minimally modified/transpiled code from:
+
 - the [sha2](https://crates.io/crates/sha2) crate, in the core SHA-2 routine in [sha256.rs](src/sha256.rs).
 - milakov's [int_fastdiv](https://github.com/milakov/int_fastdiv), in [strings.rs](src/strings.rs).
 
@@ -422,4 +423,3 @@ YES, this crate includes AI generated code, does it matter?
   Little challenge to "human touch"/"tool usage" enjoyers: ssshhhhh... actually the AES key of my password manager is the SHA-256 of all the bytes in the source code that is typed by my keyboard concatenated together (sort files in alphabetical order), give it a crack! $1M reward!
 
 That is why I argue gatekeeping or who is "good at programming" based on "AI usage" is a bad idea.
-
