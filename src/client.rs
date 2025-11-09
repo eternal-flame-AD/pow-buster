@@ -49,6 +49,12 @@ pub struct Work<'a> {
 #[derive(Debug, thiserror::Error)]
 /// mCaptcha PoW solve error
 pub enum SolveError {
+    #[error("challenge not present")]
+    /// challenge not present
+    ChallengeNotPresent,
+    #[error("broken redirect")]
+    /// broken redirect
+    BrokenRedirect,
     #[error("unknown algorithm: {0}")]
     /// unknown algorithm
     UnknownAlgorithm(String),
@@ -343,22 +349,58 @@ pub async fn solve_anubis_ex(
     base_url: &str,
     time_iowait: &mut u32,
 ) -> Result<String, SolveError> {
-    static ELEMENT_ANUBIS_CHALLENGE: LazyLock<scraper::Selector> = LazyLock::new(|| {
-        scraper::Selector::parse("script#anubis_challenge")
+    struct Selectors {
+        anubis_challenge: scraper::Selector,
+        challenge_script: scraper::Selector,
+    }
+    static SELECTORS: LazyLock<Selectors> = LazyLock::new(|| Selectors {
+        anubis_challenge: scraper::Selector::parse("script#anubis_challenge")
             .map_err(|_| SolveError::ScrapeElementNotFound("anubis_challenge"))
-            .unwrap()
+            .unwrap(),
+        challenge_script: scraper::Selector::parse(
+            "script[src^='/.within.website/x/cmd/anubis/static/js/main.mjs']",
+        )
+        .map_err(|_| {
+            SolveError::ScrapeElementNotFound(
+                "script[src^='/.within.website/x/cmd/anubis/static/js/main.mjs']",
+            )
+        })
+        .unwrap(),
     });
+    struct DocumentPresentation {
+        meta_refresh: Option<String>,
+        anubis_challenge: Option<String>,
+    }
 
     let url_parsed = url::Url::parse(base_url)?;
 
     let iotime = std::time::Instant::now();
-    let response: reqwest::Response = client
+    let mut response: reqwest::Response = client
         .get(base_url)
         .header("Accept", "text/html")
         .header("Sec-Gpc", "1")
         .header("User-Agent", ANUBIS_USER_AGENT)
         .send()
         .await?;
+    let mut redirects = 5u32;
+    while response.status().is_redirection() && redirects > 0 {
+        redirects -= 1;
+        let location = response
+            .headers()
+            .get("Location")
+            .and_then(|location| location.to_str().ok())
+            .ok_or(SolveError::BrokenRedirect)?;
+        response = client
+            .get(location)
+            .header("Accept", "text/html")
+            .header("Sec-Gpc", "1")
+            .header("User-Agent", ANUBIS_USER_AGENT)
+            .send()
+            .await?;
+    }
+    if response.status().is_redirection() {
+        return Err(SolveError::BrokenRedirect);
+    }
     let iotime = iotime.elapsed();
     *time_iowait += iotime.as_micros() as u32;
 
@@ -367,25 +409,55 @@ pub async fn solve_anubis_ex(
         .iter()
         .filter(|(k, _)| k.as_str().eq_ignore_ascii_case("set-cookie"))
         .filter_map(|(_, v)| v.to_str().unwrap().split(';').next())
-        .filter(|v| v.contains("-cookie-verification") && !v.ends_with("="))
+        .filter(|v| {
+            (v.contains("-cookie-verification") || v.contains("if-you-block-this"))
+                && !v.ends_with("=")
+        })
         .next()
-        .ok_or(SolveError::CookieNotFound)?
-        .to_string();
+        .map(|s| s.to_string());
 
-    let refresh_header = response
+    let document_presentation = if let Some(refresh_header) = response
         .headers()
         .get("refresh")
         .and_then(|refresh| refresh.to_str().ok())
-        .map(|s| s.to_string());
-
-    let (final_url, delay) = {
-        let document = scraper::Html::parse_document(&response.text().await?);
-        if let Some(meta_refresh) = refresh_header.as_deref().or_else(|| {
-            document
-                .select(&SELECTOR_META_REFRESH)
+    {
+        DocumentPresentation {
+            meta_refresh: Some(refresh_header.to_string()),
+            anubis_challenge: None,
+        }
+    } else {
+        let text = response.text().await?;
+        let document = scraper::Html::parse_document(&text);
+        let meta_refresh = document
+            .select(&SELECTOR_META_REFRESH)
+            .next()
+            .and_then(|meta| meta.attr("content"))
+            .map(|s| s.to_string());
+        let anubis_challenge = document
+            .select(&SELECTORS.anubis_challenge)
+            .next()
+            .map(|element| element.text().collect::<String>());
+        if meta_refresh.is_none()
+            && anubis_challenge.is_none()
+            && document
+                .select(&SELECTORS.challenge_script)
                 .next()
-                .and_then(|meta| meta.attr("content"))
-        }) {
+                .is_none()
+        {
+            return Err(SolveError::ChallengeNotPresent);
+        }
+
+        DocumentPresentation {
+            meta_refresh,
+            anubis_challenge,
+        }
+    };
+
+    let (final_url, delay) = match document_presentation {
+        DocumentPresentation {
+            meta_refresh: Some(ref meta_refresh),
+            ..
+        } => {
             let (dur, mut url) = meta_refresh
                 .split_once(|c| c == ';' || c == ',')
                 .unwrap_or((meta_refresh, ""));
@@ -405,12 +477,26 @@ pub async fn solve_anubis_ex(
             }
 
             (url_parsed.join(url)?, dur_int as u64 * 900)
-        } else {
-            let element = document
-                .select(&ELEMENT_ANUBIS_CHALLENGE)
-                .next()
-                .ok_or(SolveError::ScrapeElementNotFound("anubis_challenge"))?;
-            let json_text = element.text().collect::<String>();
+        }
+        DocumentPresentation {
+            anubis_challenge: json_text,
+            meta_refresh: None,
+        } => {
+            let json_text = match json_text {
+                Some(json_text) => json_text,
+                None => {
+                    let make_challenge_url =
+                        url_parsed.join("/.within.website/x/cmd/anubis/api/make-challenge")?;
+                    let response: reqwest::Response = client
+                        .post(make_challenge_url)
+                        .header("Accept", "application/json")
+                        .header("Sec-Gpc", "1")
+                        .header("User-Agent", ANUBIS_USER_AGENT)
+                        .send()
+                        .await?;
+                    response.text().await?
+                }
+            };
             let challenge: AnubisChallengeDescriptor = serde_json::from_str(&json_text)?;
 
             if !challenge.supported() {
@@ -470,10 +556,12 @@ pub async fn solve_anubis_ex(
     }
 
     let iotime = std::time::Instant::now();
-    let golden_response = client
-        .get(final_url)
+    let mut golden_request = client.get(final_url);
+    if let Some(cookie) = return_cookie.clone() {
+        golden_request = golden_request.header("Cookie", cookie);
+    }
+    let golden_response = golden_request
         .header("Accept", "text/html")
-        .header("Cookie", return_cookie.clone())
         .header("Referer", base_url)
         .header("Sec-Gpc", "1")
         .header("User-Agent", ANUBIS_USER_AGENT)
@@ -495,8 +583,8 @@ pub async fn solve_anubis_ex(
         .filter_map(|(_, v)| v.to_str().unwrap().split(';').next())
         // some adopters like to pick a fight with user-centric "bypass add-ons" for some reason
         // ref: https://git.gay/49016/NoPoW/issues/5
-        // ey is base64 '{"'
-        .filter(|v| v.contains("-auth=ey"))
+        // eyJhbGci is base64 '{"alg"'
+        .filter(|v| v.contains("=eyJhbGci"))
         .next()
         .ok_or(SolveError::GoldenTicketNotFound)?
         .to_string();
@@ -520,7 +608,7 @@ pub async fn solve_cerberus_ex(
     let url_parsed = url::Url::parse(base_url)?;
 
     let iotime = std::time::Instant::now();
-    let response = client
+    let mut response = client
         .get(base_url)
         .header("Accept", "text/html")
         .header("Sec-Gpc", "1")
@@ -528,6 +616,25 @@ pub async fn solve_cerberus_ex(
         .send()
         .await?
         .error_for_status()?;
+    let mut redirects = 5u32;
+    while response.status().is_redirection() && redirects > 0 {
+        redirects -= 1;
+        let location = response
+            .headers()
+            .get("Location")
+            .and_then(|location| location.to_str().ok())
+            .ok_or(SolveError::BrokenRedirect)?;
+        response = client
+            .get(location)
+            .header("Accept", "text/html")
+            .header("Sec-Gpc", "1")
+            .header("User-Agent", ANUBIS_USER_AGENT)
+            .send()
+            .await?;
+    }
+    if response.status().is_redirection() {
+        return Err(SolveError::BrokenRedirect);
+    }
     let iotime = iotime.elapsed();
     *time_iowait += iotime.as_micros() as u32;
 
