@@ -1,5 +1,5 @@
 //! Cerberus specific protocol structures.
-use crate::{compute_mask_cerberus, message::CerberusMessage};
+use crate::{compute_mask_cerberus, message::CerberusMessage, solver::Solver};
 
 #[derive(serde::Deserialize, Debug)]
 /// A Cerberus PoW challenge descriptor.
@@ -45,5 +45,34 @@ impl ChallengeDescriptor {
     /// Get the signature of a Cerberus PoW.
     pub fn signature(&self) -> &str {
         &self.signature
+    }
+
+    /// Solve a Cerberus PoW.
+    pub fn solve(&self) -> (Option<(u64, [u32; 8])>, u64) {
+        self.solve_with_limit(u64::MAX)
+    }
+
+    /// Solve a Cerberus PoW with a limit.
+    pub fn solve_with_limit(&self, limit: u64) -> (Option<(u64, [u32; 8])>, u64) {
+        let mask = compute_mask_cerberus(self.difficulty);
+
+        let mut result = None;
+        let mut attempted_nonces = 0;
+        let mut remaining_limit = limit;
+        for search_bank in 0.. {
+            let Some(message) = self.build_msg(search_bank) else {
+                break;
+            };
+            let mut solver = crate::CerberusSolver::from(message);
+            solver.set_limit(remaining_limit);
+            result = solver.solve::<{ crate::solver::SOLVE_TYPE_MASK }>(0, mask);
+            attempted_nonces += solver.get_attempted_nonces();
+            remaining_limit = remaining_limit.saturating_sub(solver.get_attempted_nonces());
+            if result.is_some() || remaining_limit == 0 {
+                break;
+            }
+        }
+
+        (result, attempted_nonces)
     }
 }

@@ -1,13 +1,14 @@
 [package]
 name = "pow-buster"
-description = "A fast, data-parallel, adversarially implemented mCaptcha/Anubis/Cerberus/go-away/Cap.js PoW solver, targeting AVX-512/SHA-NI/simd128."
+description = "SIMD accelerated solver for mCaptcha/Anubis/Cerberus/go-away/Cap.js PoW challenges, features comprehensive coverage for Anubis challenge workflow."
 license = "Apache-2.0"
 repository = "https://github.com/eternal-flame-AD/pow-buster"
 categories = ["cryptography"]
 keywords = ["sha-2", "captcha", "proof-of-work", "mining"]
 authors = ["Yumechi <yume@yumechi.jp>"]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
+exclude = ["/browser-addon", "/logs", "/emails", "/.vscode"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -15,7 +16,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 cfg-if = "1.0"
 sha2 = { version = "0.10", default-features = false, features = ["compress"] }
-blake3 = { version = "1.8.2", default-features = false }
+blake3 = { version = "1.8", default-features = false }
 
 clap = { version = "4", features = ["derive"], optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "http2", "rustls-tls", "gzip"], optional = true }

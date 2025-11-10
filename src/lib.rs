@@ -46,7 +46,7 @@ pub mod message;
 pub mod solver;
 
 #[cfg(feature = "adapter")]
-/// Adapters for end-to-end PoW solving
+/// Data structures and adapters for end-to-end PoW solving without IO dependencies.
 pub mod adapter;
 
 /// A trait for a trivial aligner that has no function except setting the alignment and transparently holding a value of type `T`.
@@ -314,11 +314,6 @@ pub const fn compute_mask_cerberus(difficulty_factor: NonZeroU8) -> u64 {
 /// Extract top 128 bits from a 64-bit word array
 pub const fn extract128_be(inp: [u32; 8]) -> u128 {
     (inp[0] as u128) << 96 | (inp[1] as u128) << 64 | (inp[2] as u128) << 32 | (inp[3] as u128)
-}
-
-/// Extract top 64 bits from a 64-bit word array
-pub const fn extract64_be(inp: [u32; 8]) -> u64 {
-    (inp[0] as u64) << 32 | (inp[1] as u64)
 }
 
 /// Encode a sha-256 hash into hex

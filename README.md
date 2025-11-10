@@ -26,7 +26,6 @@
   - [Conflict of Interest Disclosure](#conflict-of-interest-disclosure)
   - [Contributing / Wishlist](#contributing--wishlist)
   - [License and Acknowledgments](#license-and-acknowledgments)
-  - [AI Disclaimer](#ai-disclaimer)
 
 A fast, data-parallel, adversarially [^3] implemented mCaptcha/Anubis/Cerberus/go-away/Cap.js PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features, without wasting energy in the browser.
 
@@ -327,12 +326,12 @@ The single-threaded throughput for OpenSSL with SHA-NI support is about 12.94 MH
 
 For us we have single thread:
 
-| Workload                         | AVX-512 [log](time.txt) | SHA-NI [log](time_sha-ni.txt) | Chromium SIMD128 [log](time_simd128.txt) |
-| -------------------------------- | ----------------------- | ----------------------------- | ---------------------------------------- |
-| SingleBlock/Anubis               | 89.16 MH/s              | 62.19 MH/s                    | 14.74 MH/s                               |
-| DoubleBlock (mCaptcha edge case) | 53.28 MH/s              | 42.55 MH/s                    | Not Tested                               |
-| go-away (32 bytes)               | 98.42 MH/s              | 78.10 MH/s                    | Not Tested                               |
-| Cerberus (BLAKE3)                | 205.98 MH/s             | N/A                           | 49.86 MH/s                               |
+| Workload                         | AVX-512 [log](logs/time.txt) | SHA-NI [log](logs/time_sha-ni.txt) | Chromium SIMD128 [log](logs/time_simd128.txt) |
+| -------------------------------- | ---------------------------- | ---------------------------------- | --------------------------------------------- |
+| SingleBlock/Anubis               | 89.16 MH/s                   | 62.19 MH/s                         | 14.74 MH/s                                    |
+| DoubleBlock (mCaptcha edge case) | 53.28 MH/s                   | 42.55 MH/s                         | Not Tested                                    |
+| go-away (32 bytes)               | 98.42 MH/s                   | 78.10 MH/s                         | Not Tested                                    |
+| Cerberus (BLAKE3)                | 205.98 MH/s                  | N/A                                | 49.86 MH/s                                    |
 
 On a mobile CPU (i7-11370H), similar performance can be achieved on AVX-512 (at a higher IPC due to Intel having faster register rotations):
 
@@ -349,12 +348,12 @@ The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and 
 
 The peak throughput on 7950X reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous.
 
-| Workload                         | AVX-512 [log](bench_sha2.log) | SHA-NI      | Vendor Official on Chromium [^4] |
-| -------------------------------- | ----------------------------- | ----------- | -------------------------------- |
-| SingleBlock/Anubis               | 1.465 GH/s                    | 1.143 GH/s  | ~650kH/s                         |
-| DoubleBlock (mCaptcha edge case) | 850.97 MH/s                   | 827.74 MH/s | N/A                              |
-| go-away (32 bytes)               | 1.564 GH/s                    | 1.291 GH/s  | N/A                              |
-| Cerberus (BLAKE3)                | 3.361 GH/s                    | N/A         | ~25MH/s                          |
+| Workload                         | AVX-512 [log](logs/bench_sha2.log) | SHA-NI      | Vendor Official on Chromium [^4] |
+| -------------------------------- | ---------------------------------- | ----------- | -------------------------------- |
+| SingleBlock/Anubis               | 1.465 GH/s                         | 1.143 GH/s  | ~650kH/s                         |
+| DoubleBlock (mCaptcha edge case) | 850.97 MH/s                        | 827.74 MH/s | N/A                              |
+| go-away (32 bytes)               | 1.564 GH/s                         | 1.291 GH/s  | N/A                              |
+| Cerberus (BLAKE3)                | 3.361 GH/s                         | N/A         | ~25MH/s                          |
 
 [^4]: Due to instablity of WASM optimization and runtime throttling behavior and lack of vendor provided benchmark harness, only approximate numbers can be provided.
 
@@ -427,15 +426,3 @@ This project contains some copy pasted or minimally modified/transpiled code fro
 
 - the [sha2](https://crates.io/crates/sha2) crate, in the core SHA-2 routine in [sha256.rs](src/sha256.rs).
 - milakov's [int_fastdiv](https://github.com/milakov/int_fastdiv), in [strings.rs](src/strings.rs).
-
-## AI Disclaimer
-
-YES, this crate includes AI generated code, does it matter?
-
-- Can _anyone_ use AI to write this particular solution? Absolutely not, you have to give it enough context or direction, which requires human intelligence.
-- Is the core logic generated or conceived by an AI? Absolutely not, it can't.
-- Did AI "plagiarize" this solution? Absolutely, it plagiarized the FIPS 180-4 SHA-2 IV, round constants, and test vector, and "subtly" embedded it into my code, go figure if it is important to you.
-
-  Little challenge to "human touch"/"tool usage" enjoyers: ssshhhhh... actually the AES key of my password manager is the SHA-256 of all the bytes in the source code that is typed by my keyboard concatenated together (sort files in alphabetical order), give it a crack! $1M reward!
-
-That is why I argue gatekeeping or who is "good at programming" based on "AI usage" is a bad idea.

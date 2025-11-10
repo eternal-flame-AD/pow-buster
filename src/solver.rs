@@ -1,6 +1,3 @@
-use alloc::string::ToString;
-use sha2::Digest;
-
 /// AVX-512 solver
 #[cfg(all(target_arch = "x86_64", any(doc, target_feature = "avx512f")))]
 pub mod avx512;
@@ -87,84 +84,26 @@ impl<S: Solver> SolverDyn for S {
     }
 }
 
-/// A validator trait
-pub trait Validator {
-    /// validates a nonce and its corresponding hash value
-    fn validate(&self, nonce: u64, result: Option<&[u32; 8]>) -> bool;
-}
-
-/// A validator for Hashcash-style proofs
-pub struct HashcashValidator<'a> {
-    prefix: &'a [u8],
-    target: u64,
-    decimal: bool,
-}
-
-impl<'a> HashcashValidator<'a> {
-    /// creates a new decimal validator
-    pub fn new_decimal(prefix: &'a [u8], target: u64) -> Self {
-        Self {
-            prefix,
-            target,
-            decimal: true,
-        }
-    }
-
-    /// creates a new binary validator
-    pub fn new_bin(prefix: &'a [u8], target: u64) -> Self {
-        Self {
-            prefix,
-            target,
-            decimal: false,
-        }
-    }
-}
-
-impl<'a> Validator for HashcashValidator<'a> {
-    /// validates a nonce and its corresponding hash value
-    fn validate(&self, nonce: u64, result: Option<&[u32; 8]>) -> bool {
-        let mut hasher = sha2::Sha256::default();
-        hasher.update(self.prefix);
-        if self.decimal {
-            let nonce_str = nonce.to_string();
-            hasher.update(nonce_str.as_bytes());
-        } else {
-            hasher.update(nonce.to_be_bytes());
-        }
-        let hash = hasher.finalize();
-        let hash_u64 = u64::from_be_bytes(hash.as_slice()[..8].try_into().unwrap());
-        if let Some(result) = result {
-            let actual_output = core::array::from_fn(|i| {
-                u32::from_be_bytes([
-                    hash[i * 4],
-                    hash[i * 4 + 1],
-                    hash[i * 4 + 2],
-                    hash[i * 4 + 3],
-                ])
-            });
-            if actual_output != *result {
-                return false;
-            }
-        }
-        hash_u64 < self.target
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use core::num::NonZeroU8;
     use std::io::Write;
 
-    use sha2::Sha256;
+    use sha2::{Digest, Sha256};
 
     mod pow_sha256;
 
     use crate::{
         compute_mask_anubis, compute_mask_cerberus, compute_mask_goaway, compute_target_mcaptcha,
-        extract64_be, extract128_be, message::IEEE754LosslessFixupPrefix,
+        extract128_be, message::IEEE754LosslessFixupPrefix,
     };
 
     use super::*;
+
+    /// Extract top 64 bits from a 64-bit word array
+    const fn extract64_be(inp: [u32; 8]) -> u64 {
+        (inp[0] as u64) << 32 | (inp[1] as u64)
+    }
 
     pub(crate) fn test_decimal_validator<
         S: Solver,

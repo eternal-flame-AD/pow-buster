@@ -798,7 +798,6 @@ fn main() {
                                     &client,
                                     &host_clone,
                                     &site_key_clone,
-                                    true,
                                     &mut iotime,
                                 )
                                 .await

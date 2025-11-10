@@ -77,32 +77,8 @@ pub fn build_client() -> reqwest::ClientBuilder {
         .gzip(true)
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
-/// mCaptcha PoW configuration
-pub struct PoWConfig {
-    /// the string to hash  
-    pub string: String,
-    /// the difficulty factor
-    pub difficulty_factor: u32,
-    /// the salt
-    pub salt: String,
-}
-
-#[derive(Clone, serde::Serialize, Debug)]
-/// mCaptcha PoW work unit definition
-pub struct Work<'a> {
-    /// the string to hash
-    pub string: String,
-    /// the result
-    pub result: String,
-    /// the nonce
-    pub nonce: u64,
-    /// the key
-    pub key: &'a str,
-}
-
 #[derive(Debug, thiserror::Error)]
-/// mCaptcha PoW solve error
+/// PoW Client Error
 pub enum SolveError {
     #[error("broken redirect")]
     /// broken redirect
@@ -148,24 +124,17 @@ pub enum SolveError {
     UnexpectedStatusSend(reqwest::StatusCode, String),
 }
 
-/// Solve a mcaptcha live.
-///
-/// If `really_solve` is false, the solver will not be used and a dummy nonce and result will be returned.
-/// This is useful for testing and benchmarking.
+/// Solve a mCaptcha PoW.
 pub async fn solve_mcaptcha(
     pool: &rayon::ThreadPool,
     client: &Client,
     base_url: &str,
     site_key: &str,
-    really_solve: bool,
 ) -> Result<String, SolveError> {
-    solve_mcaptcha_ex(pool, client, base_url, site_key, really_solve, &mut 0).await
+    solve_mcaptcha_ex(pool, client, base_url, site_key, &mut 0).await
 }
 
 /// Solve a Cap.js PoW.
-///
-/// If `really_solve` is false, the solver will not be used and a dummy nonce and result will be returned.
-/// This is useful for testing and benchmarking.
 pub async fn solve_capjs(
     pool: &rayon::ThreadPool,
     client: &Client,
@@ -319,7 +288,6 @@ pub async fn solve_mcaptcha_ex(
     client: &Client,
     base_url: &str,
     site_key: &str,
-    really_solve: bool,
     time_iowait: &mut u32,
 ) -> Result<String, SolveError> {
     let url_get_work = format!("{}/api/v1/pow/config", base_url);
@@ -339,13 +307,13 @@ pub async fn solve_mcaptcha_ex(
         let body = res.text().await?;
         return Err(SolveError::UnexpectedStatusRequest(status, body));
     }
-    let config: PoWConfig = res.json().await?;
+    let config: adapter::mcaptcha::PoWConfig = res.json().await?;
 
     let mut prefix = Vec::new();
     crate::build_mcaptcha_prefix(&mut prefix, &config.string, &config.salt);
     let target = compute_target_mcaptcha(config.difficulty_factor as u64);
 
-    let (nonce, result) = if really_solve {
+    let (nonce, result) = {
         let (tx, rx) = tokio::sync::oneshot::channel();
 
         pool.spawn(move || {
@@ -364,11 +332,9 @@ pub async fn solve_mcaptcha_ex(
         });
 
         rx.await.unwrap().ok_or(SolveError::SolverFailed)?
-    } else {
-        Default::default()
     };
 
-    let work = Work {
+    let work = adapter::mcaptcha::Work {
         string: config.string,
         result: crate::extract128_be(result).to_string(),
         nonce,
