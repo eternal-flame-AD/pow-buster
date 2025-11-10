@@ -308,7 +308,7 @@ fn main() {
             let pool = Arc::new(pool);
 
             runtime.block_on(async move {
-                use pow_buster::adapter::{CapJsResponse, SolveCapJsResponseMeta};
+                use pow_buster::adapter::capjs::{CapJsResponse, SolveCapJsResponseMeta};
 
                 let client = pow_buster::client::build_client().build().unwrap();
                 let (response, meta) =

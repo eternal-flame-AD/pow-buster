@@ -4,12 +4,7 @@ use reqwest::Client;
 use url::form_urlencoded;
 
 use crate::{
-    Align16,
-    adapter::{
-        AnubisChallengeDescriptor, CapJsChallengeDescriptor, CapJsResponse,
-        CerberusChallengeDescriptor, GoAwayConfig, SolveCapJsResponseMeta,
-    },
-    compute_mask_goaway, compute_target_mcaptcha,
+    Align16, adapter, compute_mask_goaway, compute_target_mcaptcha,
     message::{DecimalMessage, GoAwayMessage},
     solver::{SOLVE_TYPE_GT, SOLVE_TYPE_MASK, Solver},
 };
@@ -176,9 +171,15 @@ pub async fn solve_capjs(
     client: &Client,
     base_url: &str,
     site_key: &str,
-) -> Result<(CapJsResponse, SolveCapJsResponseMeta), SolveError> {
+) -> Result<
+    (
+        adapter::capjs::CapJsResponse,
+        adapter::capjs::SolveCapJsResponseMeta,
+    ),
+    SolveError,
+> {
     let mut url_buf = format!("{}/{}/challenge", base_url.trim_end_matches('/'), site_key);
-    let challenge: CapJsChallengeDescriptor = client
+    let challenge: adapter::capjs::ChallengeDescriptor = client
         .post(&url_buf)
         .header("Content-Type", "application/json")
         .body("{}")
@@ -219,7 +220,13 @@ pub async fn solve_capjs_worker(
     site_key: &str,
     time_iowait: &mut u32,
     semaphore: &tokio::sync::Semaphore,
-) -> Result<(CapJsResponse, SolveCapJsResponseMeta), SolveError> {
+) -> Result<
+    (
+        adapter::capjs::CapJsResponse,
+        adapter::capjs::SolveCapJsResponseMeta,
+    ),
+    SolveError,
+> {
     static COUNTER: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
     let mut forwarded_for = *b"fe00:0000:0000::";
@@ -256,7 +263,7 @@ pub async fn solve_capjs_worker(
 
     let mut url_buf = format!("{}/{}/challenge", base_url.trim_end_matches('/'), site_key);
     let iotime = std::time::Instant::now();
-    let challenge: CapJsChallengeDescriptor = client
+    let challenge: adapter::capjs::ChallengeDescriptor = client
         .post(&url_buf)
         .header("Content-Type", "application/json")
         .header("X-Forwarded-For", unsafe {
@@ -566,7 +573,7 @@ pub async fn solve_anubis_ex(
                     response.text().await?
                 }
             };
-            let challenge: AnubisChallengeDescriptor = serde_json::from_str(&json_text)?;
+            let challenge: adapter::anubis::ChallengeDescriptor = serde_json::from_str(&json_text)?;
 
             #[cfg(feature = "tracing")]
             {
@@ -726,7 +733,9 @@ pub async fn solve_cerberus_ex(
     let iotime = iotime.elapsed();
     *time_iowait += iotime.as_micros() as u32;
 
-    fn extract_challenge(body: &str) -> Result<(String, CerberusChallengeDescriptor), SolveError> {
+    fn extract_challenge(
+        body: &str,
+    ) -> Result<(String, adapter::cerberus::ChallengeDescriptor), SolveError> {
         static ELEMENT_CHALLENGE_SCRIPT: LazyLock<scraper::Selector> = LazyLock::new(|| {
             scraper::Selector::parse("script#challenge-script[x-challenge]")
                 .map_err(|_| {
@@ -851,7 +860,7 @@ pub async fn solve_goaway_js_pow_sha256(
         let body = res.text().await?;
         return Err(SolveError::UnexpectedStatusRequest(status, body));
     }
-    let config: GoAwayConfig = res.json().await?;
+    let config: adapter::goaway::GoAwayConfig = res.json().await?;
 
     let mask = compute_mask_goaway(config.difficulty());
 

@@ -15,12 +15,8 @@ use headers::Header;
 use tokio::sync::Semaphore;
 
 use crate::{
-    Align16, CerberusSolver, DecimalSolver,
-    adapter::{
-        AnubisChallengeDescriptor, CapJsChallengeDescriptor, CerberusChallengeDescriptor,
-        GoAwayConfig, SolveCapJsResponse,
-    },
-    compute_mask_anubis, compute_plausible_time_sha256,
+    Align16, CerberusSolver, DecimalSolver, adapter, compute_mask_anubis,
+    compute_plausible_time_sha256,
     message::DecimalMessage,
     solver::{SOLVE_TYPE_MASK, Solver},
 };
@@ -361,7 +357,7 @@ async fn solve_cerberus(
     remote_addr: axum::extract::ConnectInfo<std::net::SocketAddr>,
     x_forwarded_for: axum_extra::TypedHeader<XForwardedFor>,
     State(state): State<AppState>,
-    config: CerberusChallengeDescriptor,
+    config: adapter::cerberus::ChallengeDescriptor,
 ) -> Result<String, SolveError> {
     tracing::info!("solving cerberus challenge {:?}", config);
 
@@ -501,8 +497,8 @@ async fn solve_capjs(
     remote_addr: axum::extract::ConnectInfo<std::net::SocketAddr>,
     x_forwarded_for: axum_extra::TypedHeader<XForwardedFor>,
     State(state): State<AppState>,
-    config: CapJsChallengeDescriptor,
-) -> Result<Json<SolveCapJsResponse>, SolveError> {
+    config: adapter::capjs::ChallengeDescriptor,
+) -> Result<Json<adapter::capjs::SolveCapJsResponse>, SolveError> {
     tracing::info!("solving capjs challenge {:?}", config);
 
     let estimated_workload = config.estimated_workload();
@@ -539,7 +535,7 @@ async fn solve_goaway(
     remote_addr: axum::extract::ConnectInfo<std::net::SocketAddr>,
     x_forwarded_for: axum_extra::TypedHeader<XForwardedFor>,
     State(state): State<AppState>,
-    config: GoAwayConfig,
+    config: adapter::goaway::GoAwayConfig,
 ) -> Result<String, SolveError> {
     tracing::info!("solving goaway challenge {:?}", config);
 
@@ -792,7 +788,7 @@ async fn solve_anubis(
     remote_addr: axum::extract::ConnectInfo<std::net::SocketAddr>,
     x_forwarded_for: axum_extra::TypedHeader<XForwardedFor>,
     State(state): State<AppState>,
-    descriptor: AnubisChallengeDescriptor,
+    descriptor: adapter::anubis::ChallengeDescriptor,
 ) -> Result<String, SolveError> {
     let rules = descriptor.rules();
     tracing::info!("solving anubis challenge {:?}", rules);
