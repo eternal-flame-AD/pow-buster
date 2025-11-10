@@ -193,7 +193,11 @@ fn main() {
         use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
         tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().pretty())
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(std::io::stderr)
+                    .pretty(),
+            )
             .with(
                 tracing_subscriber::EnvFilter::builder()
                     .with_default_directive(LevelFilter::INFO.into())

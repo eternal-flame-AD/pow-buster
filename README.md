@@ -7,9 +7,10 @@
   - [Motivation / Why?](#motivation--why)
   - [Features](#features)
   - [Building](#building)
-    - [Building the browser extension](#building-the-browser-extension)
   - [Usage](#usage)
-    - [Custom User Agent](#custom-user-agent)
+    - [Using the CLI Solver](#using-the-cli-solver)
+      - [Custom User Agent](#custom-user-agent)
+    - [Using the browser extension](#using-the-browser-extension)
   - [Limitations](#limitations)
   - [Ethical Disclaimer (i.e. the "How Dare you Publish this?" question)](#ethical-disclaimer-ie-the-how-dare-you-publish-this-question)
   - [Benchmark](#benchmark)
@@ -80,19 +81,23 @@ Optional Features:
 - `live-throughput-test`: End-to-end multi-worker throughput benchmark.
 - `server`: Solver-as-a-Service API. It is recommended to also use `--profile release-unwinding` instead of `--release` to prevent unexpected panics from aborting the server.
 - `server-wasm`: Solver-as-a-Service API (with WASM simd128 solver, build first with `./build_wasm.sh`).
+- `tracing`: Write tracing for debugging.
+- `tracing-subscriber`: For binary releases only, writes tracing logs to console.
 
 ## Usage
+
+### Using the CLI Solver
 
 The most common use case is you have a non browser client (for example a CLI downloader, feed checker or other automation tool) and you want a valid token. `pow-buster` features comprehensive coverage for Anubis challenge workflow and basic coverage for Cerberus and go-away for your edge case non-JavaScript use cases.
 
 ```sh
-> target/release/pow-buster anubis --url https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/diff/
+> target/release/pow-buster anubis --url https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/diff/ 2>/dev/null
 
 cookie: techaro.lol-anubis-auth=eyJeyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.ey<...>
 
 ```
 
-### Custom User Agent
+#### Custom User Agent
 
 The default user agent is "pow-buster/x.x.x (NotAMozilla)". Some adopters may hard block the default user agent or reject any non browser-like UAs, but regardless it is good etiquette to identify yourself using your actual bot name not just "pow-buster". I personally think it is okay to "impersonate" a browser if the overblocking ruleset make it impossible to be "honest", but you are responsible for your own actions.
 
@@ -113,16 +118,9 @@ For example TLNET blocks all UAs that do not start with "Mozilla", we can make a
 cookie: techaro.lol-anubis-auth=eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.ey<...>
 ```
 
-### Building the browser extension
+### Using the browser extension
 
-The browser extension bundles a SIMD128 WASM solver for Anubis and Cerberus that is much more performant and energy-efficient than vendor-provided solvers and optionally can be configured to fetch solutions from a remote `pow-buster` server.
-
-```sh
-> ./build_wasm.sh
-> cd browser-addon && web-ext build
-```
-
-Browser addons will be released _unsigned_. To install it you have to:
+Browser addons will be released _unsigned_ for reasons below. To install it you have to:
 
 - Get it signed under your developer account, or
 - On any Firefox browser that is not the release flavor (e.g. Nightly, LibreWolf, etc.), manually flip `xpinstall.signatures.required` to `false` in `about:config` to install them.
