@@ -74,6 +74,7 @@ impl SingleBlockSolver {
 
                 let mut state = self.message.prefix_state;
                 sha2::compress256(&mut state, core::array::from_ref(&*message_be));
+                self.attempted_nonces += 1;
 
                 let pass = if TYPE == crate::solver::SOLVE_TYPE_GT {
                     (state[0] as u64) << 32 | (state[1] as u64) > target
@@ -192,6 +193,8 @@ impl crate::solver::Solver for DoubleBlockSolver {
             state[1] = state[1].wrapping_add(save_b);
 
             let ab = (state[0] as u64) << 32 | (state[1] as u64);
+
+            self.attempted_nonces += 1;
 
             let cmp_fn = |x: &u64, y: &u64| {
                 if TYPE == crate::solver::SOLVE_TYPE_GT {
