@@ -108,17 +108,16 @@ impl CerberusSolver {
                     core::array::from_fn(|i| _mm256_set1_epi32(prepared_state[i] as _));
                 let patch =
                     _mm256_or_epi32(_mm256_set1_epi32(msg[LANE_ID_WORD_IDX] as _), lane_id_value);
-                let maskv = _mm256_set1_epi32(mask as _);
+                let maskv = _mm256_set1_epi32((mask >> 32) as _);
 
                 for (i, word) in crate::strings::DIGIT_LUT_10000_LE_EVEN.iter().enumerate() {
                     msg[CENTER_WORD_IDX] = *word;
 
                     let mut state = state_base;
 
-                    crate::blake3::avx2::compress_mb16_reduced::<
-                        CONSTANT_WORD_COUNT,
-                        LANE_ID_WORD_IDX,
-                    >(&mut state, &msg, patch);
+                    crate::blake3::avx2::compress_mb8::<CONSTANT_WORD_COUNT, LANE_ID_WORD_IDX>(
+                        &mut state, &msg, patch,
+                    );
 
                     let s0 = state[0];
                     let sm0 = _mm256_and_si256(s0, maskv);
@@ -141,10 +140,9 @@ impl CerberusSolver {
                     msg[CENTER_WORD_IDX] |= u32::from_be_bytes([1, 0, 0, 0]);
 
                     state = state_base;
-                    crate::blake3::avx2::compress_mb16_reduced::<
-                        CONSTANT_WORD_COUNT,
-                        LANE_ID_WORD_IDX,
-                    >(&mut state, &msg, patch);
+                    crate::blake3::avx2::compress_mb8::<CONSTANT_WORD_COUNT, LANE_ID_WORD_IDX>(
+                        &mut state, &msg, patch,
+                    );
 
                     let s1 = state[0];
                     let sm1 = _mm256_and_si256(s1, maskv);

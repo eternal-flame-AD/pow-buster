@@ -1081,7 +1081,6 @@ impl crate::solver::Solver for BinarySolver {
 
         macro_rules! dispatch {
             ($skipped_rounds:expr) => {
-                // bail out for unsupported lane positions
                 if cur_block == 1 {
                     if let Some(nonce) = self.solve_impl::<TYPE, { $skipped_rounds }, true>(
                         *self.message.prefix_state,
@@ -1428,27 +1427,25 @@ impl CerberusSolver {
                     core::array::from_fn(|i| _mm512_set1_epi32(prepared_state[i] as _));
                 let patch =
                     _mm512_or_epi32(_mm512_set1_epi32(msg[LANE_ID_WORD_IDX] as _), lane_id_value);
-                let maskv = _mm512_set1_epi32(mask as _);
+                let maskv = _mm512_set1_epi32((mask >> 32) as _);
 
                 for (i, word) in crate::strings::DIGIT_LUT_10000_LE_EVEN.iter().enumerate() {
                     msg[CENTER_WORD_IDX] = *word;
 
                     let mut state = state_base;
 
-                    crate::blake3::avx512::compress_mb16_reduced::<
-                        CONSTANT_WORD_COUNT,
-                        LANE_ID_WORD_IDX,
-                    >(&mut state, &msg, patch);
+                    crate::blake3::avx512::compress_mb16::<CONSTANT_WORD_COUNT, LANE_ID_WORD_IDX>(
+                        &mut state, &msg, patch,
+                    );
 
                     let s0 = state[0];
 
                     msg[CENTER_WORD_IDX] |= u32::from_be_bytes([1, 0, 0, 0]);
 
                     state = state_base;
-                    crate::blake3::avx512::compress_mb16_reduced::<
-                        CONSTANT_WORD_COUNT,
-                        LANE_ID_WORD_IDX,
-                    >(&mut state, &msg, patch);
+                    crate::blake3::avx512::compress_mb16::<CONSTANT_WORD_COUNT, LANE_ID_WORD_IDX>(
+                        &mut state, &msg, patch,
+                    );
                     let s1 = state[0];
 
                     let hit0 = _mm512_testn_epi32_mask(s0, maskv);

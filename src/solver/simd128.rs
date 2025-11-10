@@ -718,6 +718,7 @@ impl CerberusSolver {
         mask: u64,
     ) -> Option<(u64, u64)> {
         debug_assert_eq!(target, 0);
+        let mask = (mask >> 32) as u32;
 
         let prepared_state = crate::blake3::ingest_message_prefix(
             *self.message.prefix_state,
@@ -748,18 +749,14 @@ impl CerberusSolver {
                     if CENTER_WORD_IDX < LANE_ID_WORD_IDX {
                         lane_id_value = u32x4_shr(lane_id_value, 8);
                     }
-                    if self.attempted_nonces >= self.limit {
-                        return None;
-                    }
 
                     let mut state = core::array::from_fn(|i| u32x4_splat(prepared_state[i]));
                     let patch = v128_or(u32x4_splat(msg[LANE_ID_WORD_IDX]), lane_id_value);
-                    crate::blake3::simd128::compress_mb4_reduced::<
-                        CONSTANT_WORD_COUNT,
-                        LANE_ID_WORD_IDX,
-                    >(&mut state, &msg, patch);
+                    crate::blake3::simd128::compress_mb4::<CONSTANT_WORD_COUNT, LANE_ID_WORD_IDX>(
+                        &mut state, &msg, patch,
+                    );
 
-                    let masked = v128_and(state[0], u32x4_splat(mask as _));
+                    let masked = v128_and(state[0], u32x4_splat(mask));
 
                     self.attempted_nonces += 4;
 
@@ -769,7 +766,7 @@ impl CerberusSolver {
                         let mut extract = [0u32; 4];
                         v128_store(extract.as_mut_ptr().cast(), masked);
                         let success_lane_idx =
-                            extract.iter().position(|x| *x & mask as u32 == 0).unwrap() as u64;
+                            extract.iter().position(|x| *x & mask == 0).unwrap() as u64;
 
                         return Some((word as u64, lane_id_idx as u64 * 4 + success_lane_idx));
                     }

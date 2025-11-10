@@ -20,7 +20,7 @@ pub mod client;
 /// Server for end-to-end PoW solving
 pub mod server;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "adapter"))]
 mod wasm_ffi;
 
 #[cfg(any(target_feature = "avx512f", target_feature = "avx2"))]
@@ -48,16 +48,6 @@ pub mod solver;
 #[cfg(feature = "adapter")]
 /// Adapters for end-to-end PoW solving
 pub mod adapter;
-
-#[cfg(all(
-    not(doc),
-    not(any(target_arch = "x86_64", target_arch = "x86")),
-    not(target_arch = "wasm32")
-))]
-compile_error!("Only x86_64 and wasm32 are supported");
-
-#[cfg(all(not(doc), target_arch = "wasm32", feature = "compare-64bit"))]
-compile_error!("compare-64bit is only supported on x86_64 architectures");
 
 /// A trait for a trivial aligner that has no function except setting the alignment and transparently holding a value of type `T`.
 ///
@@ -304,26 +294,21 @@ pub const fn compute_target_mcaptcha(difficulty_factor: u64) -> u64 {
     u64::MAX - u64::MAX / difficulty_factor
 }
 
-/// Compute the target for an Anubis PoW
-pub const fn compute_target_anubis(difficulty_factor: NonZeroU8) -> u64 {
-    // some people misconfigure with difficulty 0
-    if difficulty_factor.get() == 0 {
-        return u64::MAX;
-    }
-    1u64 << (64 - difficulty_factor.get() * 4)
+/// Compute the mask for an Anubis PoW (mask & (V\[0] << 32 | V\[1]) == 0)
+pub const fn compute_mask_anubis(difficulty_factor: NonZeroU8) -> u64 {
+    !(!0u64 >> (difficulty_factor.get() * 4))
 }
 
-/// Compute the target for a GoAway PoW
-pub const fn compute_target_goaway(difficulty_factor: NonZeroU8) -> u64 {
-    1u64 << (64 - difficulty_factor.get())
+/// Compute the mask for a GoAway PoW (mask & (V\[0] << 32) == 0)
+pub const fn compute_mask_goaway(difficulty_factor: NonZeroU8) -> u64 {
+    !(!0u64 >> (difficulty_factor.get()))
 }
 
-/// Compute a mask for a Cerberus PoW (mask & V[0] == 0)
-pub const fn compute_mask_cerberus(difficulty_factor: NonZeroU8) -> u32 {
-    if difficulty_factor.get() == 16 {
-        return !0;
-    }
-    !(!0u32 >> (difficulty_factor.get() * 2)).swap_bytes()
+/// Compute a mask for a Cerberus PoW (mask & (V\[0] << 32) == 0)
+pub const fn compute_mask_cerberus(difficulty_factor: NonZeroU8) -> u64 {
+    let tmp = !(!0u64 >> (difficulty_factor.get() * 2));
+    let (tmp_hi, tmp_lo) = ((tmp >> 32) as u32, tmp as u32);
+    (tmp_hi.swap_bytes() as u64) << 32 | (tmp_lo.swap_bytes() as u64)
 }
 
 /// Extract top 128 bits from a 64-bit word array
@@ -416,18 +401,18 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_target_anubis() {
+    fn test_compute_mask_anubis() {
         assert_eq!(
-            compute_target_anubis(NonZeroU8::new(1).unwrap()),
-            0x1000000000000000,
+            compute_mask_anubis(NonZeroU8::new(1).unwrap()),
+            0xfu64.reverse_bits(),
         );
         assert_eq!(
-            compute_target_anubis(NonZeroU8::new(2).unwrap()),
-            0x0100000000000000,
+            compute_mask_anubis(NonZeroU8::new(2).unwrap()),
+            0xffu64.reverse_bits(),
         );
         assert_eq!(
-            compute_target_anubis(NonZeroU8::new(3).unwrap()),
-            0x0010000000000000,
+            compute_mask_anubis(NonZeroU8::new(3).unwrap()),
+            0xfffu64.reverse_bits(),
         );
     }
 
@@ -454,13 +439,15 @@ mod tests {
 
         for i in 1..8 {
             let mask = compute_mask_cerberus(NonZeroU8::new(i).unwrap());
-            eprintln!("mask: {:08x}", mask);
+            eprintln!("mask: {:016x}", mask);
         }
 
         // hash[0] is the LSB of the H0 register
 
         let mask = compute_mask_cerberus(NonZeroU8::new(7).unwrap());
-        let hash_partial = (!mask).to_le_bytes();
+        let (mask_hi, mask_lo) = ((mask >> 32) as u32, mask as u32);
+        assert_eq!(mask_lo, 0);
+        let hash_partial = (!mask_hi).to_le_bytes();
         eprintln!("hash_partial: {:02x?}", hash_partial);
         let mut test = [0; 32];
         test[..4].copy_from_slice(&hash_partial);

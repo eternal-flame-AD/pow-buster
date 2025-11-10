@@ -58,7 +58,6 @@ impl CerberusWorkerResponse {
 }
 
 #[wasm_bindgen]
-#[cfg(feature = "adapter")]
 pub fn solve_json(input: &str) -> Result<AnubisResponse, JsError> {
     if let Ok(descriptor) =
         serde_json::from_str::<crate::adapter::CerberusChallengeDescriptor>(input)
@@ -74,7 +73,6 @@ pub fn solve_json(input: &str) -> Result<AnubisResponse, JsError> {
 }
 
 #[wasm_bindgen]
-#[cfg(feature = "adapter")]
 pub fn solve_json_set(input: &str, set: u32, iterand: u32) -> Result<AnubisResponse, JsError> {
     if let Ok(descriptor) =
         serde_json::from_str::<crate::adapter::CerberusChallengeDescriptor>(input)
@@ -85,7 +83,6 @@ pub fn solve_json_set(input: &str, set: u32, iterand: u32) -> Result<AnubisRespo
     };
 }
 
-#[cfg(feature = "adapter")]
 fn solve_anubis_json(
     descriptor: &crate::adapter::AnubisChallengeDescriptor,
 ) -> Result<AnubisResponse, JsError> {
@@ -112,7 +109,6 @@ fn solve_anubis_json(
     })
 }
 
-#[cfg(feature = "adapter")]
 fn solve_cerberus_json(
     descriptor: &crate::adapter::CerberusChallengeDescriptor,
     fixed_set: Option<(u32, u32)>,

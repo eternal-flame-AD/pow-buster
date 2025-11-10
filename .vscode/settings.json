@@ -13,7 +13,7 @@
         "debug_assertions",
         "miri"
     ],
-    //"rust-analyzer.cargo.target": "wasm32-unknown-unknown",
+    //"rust-analyzer.cargo.target": "wasm32-wasip1",
     "rust-analyzer.cargo.extraEnv": {
         //"RUSTFLAGS": "-C target-feature=+simd128",
         //"RUSTFLAGS": "-C target-feature=+sha,+sse4_1"

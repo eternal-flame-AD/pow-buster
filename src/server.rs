@@ -20,9 +20,9 @@ use crate::{
         AnubisChallengeDescriptor, CapJsChallengeDescriptor, CerberusChallengeDescriptor,
         GoAwayConfig, SolveCapJsResponse,
     },
-    compute_plausible_time_sha256, compute_target_anubis,
+    compute_mask_anubis, compute_plausible_time_sha256,
     message::DecimalMessage,
-    solver::{SOLVE_TYPE_LT, SOLVE_TYPE_MASK, Solver},
+    solver::{SOLVE_TYPE_MASK, Solver},
 };
 
 #[cfg(feature = "server-wasm")]
@@ -690,9 +690,7 @@ async fn anubis_offload_api(
         });
     }
 
-    let target = compute_target_anubis(form.difficulty.try_into().unwrap());
-    let target_bytes = target.to_be_bytes();
-    let target_u64 = u64::from_be_bytes(target_bytes[..8].try_into().unwrap());
+    let mask = compute_mask_anubis(form.difficulty.try_into().unwrap());
 
     let ((result, attempted_nonces), elapsed) = if form.difficulty <= 4
     /* 65536, takes more cycles to acquire the semaphore than just get the result */
@@ -702,7 +700,7 @@ async fn anubis_offload_api(
             DecimalMessage::new(form.data.as_bytes(), 0).ok_or(SolveError::InvalidChallenge)?,
         );
         solver.set_limit(state.limit);
-        let result = solver.solve::<{ SOLVE_TYPE_LT }>(target_u64, !0);
+        let result = solver.solve::<{ SOLVE_TYPE_MASK }>(0, mask);
         let elapsed = start.elapsed();
         ((result, solver.get_attempted_nonces()), elapsed)
     } else {
@@ -725,7 +723,7 @@ async fn anubis_offload_api(
 
                 let mut solver = DecimalSolver::from(message);
                 solver.set_limit(state.limit);
-                let result = solver.solve::<{ SOLVE_TYPE_LT }>(target_u64, !0);
+                let result = solver.solve::<{ SOLVE_TYPE_MASK }>(0, mask);
                 total_attempted_nonces += solver.get_attempted_nonces();
                 if let Some((result, hash)) = result {
                     tx.send((

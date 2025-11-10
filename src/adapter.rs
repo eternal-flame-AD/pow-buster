@@ -1,9 +1,9 @@
 use core::num::NonZeroU8;
 
 use crate::{
-    DecimalSolver, compute_mask_cerberus, compute_target_anubis, compute_target_goaway,
+    DecimalSolver, compute_mask_anubis, compute_mask_cerberus, compute_mask_goaway,
     message::{CapJSEmitter, CerberusMessage, DecimalMessage, GoAwayMessage},
-    solver::{SOLVE_TYPE_LT, Solver},
+    solver::{SOLVE_TYPE_MASK, Solver},
 };
 use alloc::{format, string::String, vec::Vec};
 use sha2::Digest;
@@ -35,7 +35,7 @@ impl CerberusChallengeDescriptor {
     }
 
     /// Return the mask.
-    pub fn mask(&self) -> u32 {
+    pub fn mask(&self) -> u64 {
         compute_mask_cerberus(self.difficulty)
     }
 
@@ -157,7 +157,7 @@ impl AnubisChallengeDescriptor {
             }
             return (Some((0, hash_arr)), 0);
         }
-        let target = compute_target_anubis(self.rules.difficulty.try_into().unwrap());
+        let mask = compute_mask_anubis(self.rules.difficulty.try_into().unwrap());
 
         let mut result = None;
         let mut attempted_nonces = 0;
@@ -170,7 +170,7 @@ impl AnubisChallengeDescriptor {
             };
             let mut solver = crate::DecimalSolver::from(message);
             solver.set_limit(remaining_limit);
-            result = solver.solve::<{ SOLVE_TYPE_LT }>(target, !0);
+            result = solver.solve::<{ SOLVE_TYPE_MASK }>(0, mask);
             attempted_nonces += solver.get_attempted_nonces();
             remaining_limit = remaining_limit.saturating_sub(solver.get_attempted_nonces());
             if result.is_some() || remaining_limit == 0 {
@@ -235,7 +235,7 @@ impl GoAwayConfig {
 
     /// Solve a GoAway "js-pow-sha256" PoW with a limit.
     pub fn solve_with_limit(&self, limit: u64) -> (Option<(u64, [u32; 8])>, u64) {
-        let target = compute_target_goaway(self.difficulty);
+        let mask = compute_mask_goaway(self.difficulty);
 
         let Some(message) = self
             .challenge
@@ -250,7 +250,7 @@ impl GoAwayConfig {
         solver.set_limit(limit);
 
         (
-            solver.solve::<{ SOLVE_TYPE_LT }>(target, !0),
+            solver.solve::<{ SOLVE_TYPE_MASK }>(0, mask),
             solver.get_attempted_nonces(),
         )
     }

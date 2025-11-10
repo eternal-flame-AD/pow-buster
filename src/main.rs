@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 
 use pow_buster::{
     Align16, BinarySolver, CerberusSolver, DecimalSolver, DoubleBlockSolver, GoAwaySolver,
-    SingleBlockSolver, compute_mask_cerberus, compute_target_anubis, compute_target_goaway,
+    SingleBlockSolver, compute_mask_anubis, compute_mask_cerberus, compute_mask_goaway,
     compute_target_mcaptcha,
     message::{BinaryMessage, CerberusMessage, DecimalMessage, GoAwayMessage},
     solver::Solver,
@@ -244,14 +244,7 @@ fn main() {
             );
             let counter = Arc::new(AtomicU64::new(0));
 
-            let (target, expected_iters) = if difficulty > 32 {
-                (compute_target_mcaptcha(difficulty), difficulty)
-            } else {
-                (
-                    compute_target_anubis(core::num::NonZeroU8::new(difficulty as u8).unwrap()),
-                    1 << (4 * (difficulty as u8)),
-                )
-            };
+            let (target, expected_iters) = (compute_target_mcaptcha(difficulty), difficulty);
 
             for _ in 0..n_threads {
                 let counter = counter.clone();
@@ -494,22 +487,27 @@ fn main() {
             let scheme = scheme
                 .parse()
                 .expect("invalid scheme, must be one of anubis, mcaptcha, goaway, cerberus");
-            let target = match scheme {
-                Scheme::Anubis => {
-                    compute_target_anubis(difficulty.try_into().expect("difficulty out of range"))
-                }
-                Scheme::Mcaptcha => compute_target_mcaptcha(difficulty.get()),
-                Scheme::Cerberus => compute_mask_cerberus(
-                    u8::try_from(difficulty.get())
-                        .expect("difficulty out of range")
-                        .try_into()
-                        .expect("difficulty cannot be zero"),
-                ) as u64,
-                Scheme::GoAway => {
-                    compute_target_goaway(difficulty.try_into().expect("difficulty out of range"))
-                }
+            let (target, mask) = match scheme {
+                Scheme::Anubis => (
+                    0,
+                    compute_mask_anubis(difficulty.try_into().expect("difficulty out of range")),
+                ),
+                Scheme::Mcaptcha => (compute_target_mcaptcha(difficulty.get()), !0),
+                Scheme::Cerberus => (
+                    0,
+                    compute_mask_cerberus(
+                        u8::try_from(difficulty.get())
+                            .expect("difficulty out of range")
+                            .try_into()
+                            .expect("difficulty cannot be zero"),
+                    ) as u64,
+                ),
+                Scheme::GoAway => (
+                    0,
+                    compute_mask_goaway(difficulty.try_into().expect("difficulty out of range")),
+                ),
             };
-            let estimated_work = u64::MAX / target;
+            let estimated_work = u64::MAX / mask;
 
             let (tx, rx) = std::sync::mpsc::channel();
             let salt_bytes = salt.as_bytes();
@@ -521,8 +519,8 @@ fn main() {
                 let ws_churn = &ws_churn;
                 (0..num_threads.get()).for_each(|ix| {
                     let tx = tx.clone();
-                    s.spawn(move || {
-                        if let Scheme::GoAway = scheme {
+                    s.spawn(move || match scheme {
+                        Scheme::GoAway => {
                             #[cfg(not(feature = "compare-64bit"))]
                             {
                                 assert_ne!(target >> 32, 0, "64-bit comparison is required for this difficulty, rebuild with `compare-64bit` feature");
@@ -535,7 +533,7 @@ fn main() {
                             for high_word in (ix..).step_by(num_threads.get() as usize) {
                                 solver.set_fixed_high_word(high_word);
                                 let result = solver
-                                    .solve::<{ pow_buster::solver::SOLVE_TYPE_LT }>(target, !0);
+                                    .solve::<{ pow_buster::solver::SOLVE_TYPE_MASK }>(target, mask);
                                 nonce_attempted
                                     .fetch_add(solver.get_attempted_nonces(), Ordering::Relaxed);
                                 ws_churn.fetch_add(1, Ordering::Relaxed);
@@ -544,7 +542,8 @@ fn main() {
                                 };
                                 tx.send(result).unwrap();
                             }
-                        } else if let Scheme::Cerberus = scheme {
+                        }
+                        Scheme::Cerberus => {
                             for working_set in (ix..).step_by(num_threads.get() as usize) {
                                 let Some(message) = CerberusMessage::new(salt_bytes, working_set) else {
                                     return;
@@ -558,7 +557,8 @@ fn main() {
                                 };
                                 tx.send(result).unwrap();
                             }
-                        } else if let Scheme::Mcaptcha = scheme {
+                        }
+                        Scheme::Mcaptcha => {
                             #[cfg(not(feature = "compare-64bit"))]
                             {
                                 assert_ne!(target >> 32, u32::MAX as u64, "64-bit comparison is required for this difficulty, rebuild with `compare-64bit` feature");
@@ -570,7 +570,7 @@ fn main() {
                                 };
                                 let mut solver = DecimalSolver::from(message);
                                 let result = solver
-                                    .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0);
+                                    .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, mask);
                                 nonce_attempted
                                     .fetch_add(solver.get_attempted_nonces(), Ordering::Relaxed);
                                 ws_churn.fetch_add(1, Ordering::Relaxed);
@@ -579,7 +579,8 @@ fn main() {
                                 };
                                 tx.send(result).unwrap();
                             }
-                        } else {
+                        }
+                        Scheme::Anubis => {
                             #[cfg(not(feature = "compare-64bit"))]
                             {
                                 assert_ne!(target >> 32, 0, "64-bit comparison is required for this difficulty, rebuild with `compare-64bit` feature");
@@ -591,7 +592,7 @@ fn main() {
                                 };
                                 let mut solver = DecimalSolver::from(message);
                                 let result = solver
-                                    .solve::<{ pow_buster::solver::SOLVE_TYPE_LT }>(target, !0);
+                                    .solve::<{ pow_buster::solver::SOLVE_TYPE_MASK }>(0, mask);
                                 nonce_attempted
                                     .fetch_add(solver.get_attempted_nonces(), Ordering::Relaxed);
                                 ws_churn.fetch_add(1, Ordering::Relaxed);

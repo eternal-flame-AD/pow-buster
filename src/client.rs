@@ -9,9 +9,9 @@ use crate::{
         AnubisChallengeDescriptor, CapJsChallengeDescriptor, CapJsResponse,
         CerberusChallengeDescriptor, GoAwayConfig, SolveCapJsResponseMeta,
     },
-    compute_target_goaway, compute_target_mcaptcha,
+    compute_mask_goaway, compute_target_mcaptcha,
     message::{DecimalMessage, GoAwayMessage},
-    solver::{SOLVE_TYPE_GT, SOLVE_TYPE_LT, Solver},
+    solver::{SOLVE_TYPE_GT, SOLVE_TYPE_MASK, Solver},
 };
 
 static SELECTOR_META_REFRESH: LazyLock<scraper::Selector> =
@@ -853,7 +853,7 @@ pub async fn solve_goaway_js_pow_sha256(
     }
     let config: GoAwayConfig = res.json().await?;
 
-    let target = compute_target_goaway(config.difficulty());
+    let mask = compute_mask_goaway(config.difficulty());
 
     let estimated_workload = 1u64 << config.difficulty().get();
 
@@ -876,7 +876,7 @@ pub async fn solve_goaway_js_pow_sha256(
                 .ok_or(SolveError::UnexpectedChallengeFormat)?,
         );
         solver
-            .solve::<{ SOLVE_TYPE_LT }>(target, !0)
+            .solve::<{ SOLVE_TYPE_MASK }>(0, mask)
             .ok_or(SolveError::SolverFailed)
     })?;
 

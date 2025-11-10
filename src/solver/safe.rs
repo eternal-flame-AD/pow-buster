@@ -511,7 +511,7 @@ impl crate::solver::Solver for CerberusSolver {
                 self.message.flags,
             );
             self.attempted_nonces += 1;
-            if hash[0] & mask as u32 == 0 {
+            if ((hash[0] as u64) << 32 | (hash[1] as u64)) & mask == 0 {
                 crate::unlikely();
 
                 return Some(((nonce + self.message.nonce_addend) as u64, hash));

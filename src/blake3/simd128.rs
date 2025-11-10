@@ -27,23 +27,54 @@ fn g4(va: &mut v128, vb: &mut v128, vc: &mut v128, vd: &mut v128, x: v128, y: v1
 }
 
 #[inline(always)]
-fn g4_a_only(va: &mut v128, vb: &mut v128, vc: &mut v128, vd: &mut v128, x: v128, y: v128) {
-    *va = u32x4_add(*va, u32x4_add(*vb, x));
-    *vd = v128_xor(*vd, *va);
-    *vd = u32x4_ror(*vd, 16);
-    *vc = u32x4_add(*vc, *vd);
-    *vb = v128_xor(*vb, *vc);
-    *vb = u32x4_ror(*vb, 12);
-    *va = u32x4_add(*va, u32x4_add(*vb, y));
-}
-
-#[inline(always)]
-/// Reduced strength BLAKE3 that only gives the first word of the hash.
-pub(crate) fn compress_mb4_reduced<const CONSTANT_WORD_COUNT: usize, const PATCH_1: usize>(
+pub(crate) fn compress_mb4<const CONSTANT_WORD_COUNT: usize, const PATCH_1: usize>(
     v: &mut [v128; 16],
     block_template: &[u32; 16],
     patch_1: v128,
 ) {
+    /*
+
+    FUNCTION BLAKE3_COMPRESS( h[0..7], m[0..15], t, len, flags )
+           FUNCTION BLAKE3_COMPRESS( h[0..7], m[0..15], t, len, flags )
+       |
+       |   // Initialize local 16-word array v[0..15]
+       |   v[0..7] := h[0..7]              // 8 words from the state.
+       |   v[8..11] := IV[0..3]            // 4 words from the IV.
+       |
+       |   v[12] :=  t[0]                  // Low word of the counter.
+       |   v[13] :=  t[1]                  // High word of the counter.
+       |   v[14] :=  len                   // Application data length.
+       |   v[15] :=  flags                 // Flags.
+       |
+       |   // Cryptographic mixing
+       |   FOR i = 0 TO 6 DO               // 7 rounds.
+       |   |
+       |   |   v := G( v, 0, 4,  8, 12, m[ 0], m[ 1] )
+       |   |   v := G( v, 1, 5,  9, 13, m[ 2], m[ 3] )
+       |   |   v := G( v, 2, 6, 10, 14, m[ 4], m[ 5] )
+       |   |   v := G( v, 3, 7, 11, 15, m[ 6], m[ 7] )
+       |   |
+       |   |   v := G( v, 0, 5, 10, 15, m[ 8], m[ 9] )
+       |   |   v := G( v, 1, 6, 11, 12, m[10], m[11] )
+       |   |   v := G( v, 2, 7,  8, 13, m[12], m[13] )
+       |   |   v := G( v, 3, 4,  9, 14, m[14], m[15] )
+       |   |
+       |   |   PERMUTE(m)                  // Apply the permutation.
+       |   |
+       |   END FOR
+       |
+       |   // Compute the output state (untruncated)
+       |   FOR i = 0 TO 7 DO
+       |   |   v[i] := v[i] ^ v[i + 8]
+       |   |   v[i + 8] := v[i + 8] ^ h[i]
+       |   END FOR.
+       |
+       |   RETURN v
+       |
+       END FUNCTION.
+
+    |
+    END FUNCTION. */
     unsafe {
         repeat7!(i, {
             macro_rules! g4 {
@@ -59,12 +90,12 @@ pub(crate) fn compress_mb4_reduced<const CONSTANT_WORD_COUNT: usize, const PATCH
                         if ix == PATCH_1 {
                             patch_1
                         } else {
-                            u32x4_splat(block_template[ix] as _)
+                            u32x4_splat(block_template[ix])
                         },
                         if iy == PATCH_1 {
                             patch_1
                         } else {
-                            u32x4_splat(block_template[iy] as _)
+                            u32x4_splat(block_template[iy])
                         },
                     );
                 }};
@@ -85,24 +116,22 @@ pub(crate) fn compress_mb4_reduced<const CONSTANT_WORD_COUNT: usize, const PATCH
                 g4!(3, 7, 11, 15, 6, 7);
             }
             if i > 0 || CONSTANT_WORD_COUNT < 10 {
-                if i < 6 {
-                    g4!(0, 5, 10, 15, 8, 9);
-                } else {
-                    g4!(g4_a_only; 0, 5, 10, 15, 8, 9);
-                }
+                g4!(0, 5, 10, 15, 8, 9);
             }
-            if i < 6 && (i > 0 || CONSTANT_WORD_COUNT < 12) {
+            if i > 0 || CONSTANT_WORD_COUNT < 12 {
                 g4!(1, 6, 11, 12, 10, 11);
             }
             if i > 0 || CONSTANT_WORD_COUNT < 14 {
                 g4!(2, 7, 8, 13, 12, 13);
             }
-            if i < 6 && (i > 0 || CONSTANT_WORD_COUNT < 16) {
+            if i > 0 || CONSTANT_WORD_COUNT < 16 {
                 g4!(3, 4, 9, 14, 14, 15);
             }
         });
 
-        v[0] = v128_xor(v[0], v[8]);
+        repeat8!(i, {
+            v[i] = v128_xor(v[i], v[i + 8]);
+        });
     }
 }
 
@@ -148,35 +177,39 @@ mod tests {
     }
 
     #[test]
-    fn test_compress_mb16_reduced() {
-        let block_template = core::array::from_fn(|i| i as u32);
-        let prepared_state = ingest_message_prefix(
-            crate::blake3::IV,
-            &block_template[..4],
-            0,
-            64,
-            FLAG_CHUNK_START | FLAG_CHUNK_END | FLAG_ROOT,
-        );
-
-        unsafe {
-            let mut v = core::array::from_fn(|i| u32x4_splat(prepared_state[i] as _));
-            let patch = u32x4(1, 2, 3, 4);
-            compress_mb4_reduced::<4, 15>(&mut v, &block_template, patch);
-
-            let mut extract_h0 = [0u32; 16];
-            v128_store(extract_h0.as_mut_ptr().cast(), v[0]);
-            for validate_val in 0..4 {
-                let mut equiv_msg = block_template.clone();
-                equiv_msg[15] = validate_val + 1;
-                let mut ref_hasher = Hasher::new();
-                for j in 0..16 {
-                    ref_hasher.update(&equiv_msg[j].to_le_bytes());
-                }
-                let ref_hash = ref_hasher.finalize();
-                let ref_hash = ref_hash.as_bytes();
-                let ref_hash_h0 = u32::from_le_bytes(ref_hash[..4].try_into().unwrap());
-                assert_eq!(extract_h0[validate_val as usize], ref_hash_h0);
-            }
+    fn test_compress_mb4() {
+        let mut v = [0u32; 16];
+        v[..8].copy_from_slice(&crate::blake3::IV);
+        v[8..12].copy_from_slice(&crate::blake3::IV[..4]);
+        v[12] = 0;
+        v[13] = 0;
+        v[14] = 4;
+        v[15] = 0x0b;
+        let mut v = core::array::from_fn(|i| u32x4_splat(v[i] as _));
+        let mut block = [0u32; 16];
+        block[0] = u32::from_le_bytes(*b"IETF");
+        compress_mb4::<0, 4>(&mut v, &block, u32x4_splat(0));
+        let expected = [
+            0x1edea283, 0xabe6f4e6, 0x24896868, 0xcfc04e8f, 0x9470c54c, 0xff82a646, 0xd6b4cbd1,
+            0xe2815116,
+        ];
+        let mut results = [0u32; 8];
+        for i in 0..8 {
+            results[i] = u32x4_extract_lane::<0>(v[i]) as u32;
         }
+        assert_eq!(
+            results, expected,
+            "expected: {:08x?}, results: {:08x?}",
+            expected, results
+        );
+        let mut hasher = Hasher::new();
+        hasher.update(b"IETF");
+        let hash = hasher.finalize();
+        let hash = hash.as_bytes();
+        let mut expected = [0u32; 8];
+        for i in 0..8 {
+            expected[i] = u32::from_le_bytes(hash[i * 4..i * 4 + 4].try_into().unwrap());
+        }
+        assert_eq!(results, expected);
     }
 }
