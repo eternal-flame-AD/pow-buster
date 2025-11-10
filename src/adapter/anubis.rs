@@ -6,6 +6,7 @@ use crate::{
     message::DecimalMessage,
     solver::{SOLVE_TYPE_MASK, Solver},
 };
+use alloc::string::String;
 
 #[derive(serde::Deserialize, Debug)]
 /// Anubis PoW challenge descriptor.

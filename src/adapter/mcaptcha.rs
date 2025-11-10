@@ -1,4 +1,7 @@
 //! mCaptcha specific protocol structures.
+
+use alloc::string::String;
+
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
 /// mCaptcha PoW configuration
 pub struct PoWConfig {

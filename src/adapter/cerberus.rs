@@ -1,6 +1,8 @@
 //! Cerberus specific protocol structures.
 use crate::{compute_mask_cerberus, message::CerberusMessage, solver::Solver};
 
+use alloc::{format, string::String};
+
 #[derive(serde::Deserialize, Debug)]
 /// A Cerberus PoW challenge descriptor.
 pub struct ChallengeDescriptor {

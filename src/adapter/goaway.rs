@@ -1,4 +1,7 @@
 //! GoAway specific protocol structures.
+
+use alloc::string::String;
+
 use crate::{
     compute_mask_goaway,
     message::GoAwayMessage,

@@ -4,6 +4,8 @@ use crate::{
     solver::Solver,
 };
 
+use alloc::{string::String, vec::Vec};
+
 #[derive(serde::Deserialize, Debug, Clone, Copy)]
 /// Cap.js PoW challenge rules.
 pub struct ChallengeRules {

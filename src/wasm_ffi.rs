@@ -60,11 +60,11 @@ impl CerberusWorkerResponse {
 #[wasm_bindgen]
 pub fn solve_json(input: &str) -> Result<AnubisResponse, JsError> {
     if let Ok(descriptor) =
-        serde_json::from_str::<crate::adapter::CerberusChallengeDescriptor>(input)
+        serde_json::from_str::<crate::adapter::cerberus::ChallengeDescriptor>(input)
     {
         return solve_cerberus_json(&descriptor, None);
     } else if let Ok(descriptor) =
-        serde_json::from_str::<crate::adapter::AnubisChallengeDescriptor>(input)
+        serde_json::from_str::<crate::adapter::anubis::ChallengeDescriptor>(input)
     {
         return solve_anubis_json(&descriptor);
     } else {
@@ -75,7 +75,7 @@ pub fn solve_json(input: &str) -> Result<AnubisResponse, JsError> {
 #[wasm_bindgen]
 pub fn solve_json_set(input: &str, set: u32, iterand: u32) -> Result<AnubisResponse, JsError> {
     if let Ok(descriptor) =
-        serde_json::from_str::<crate::adapter::CerberusChallengeDescriptor>(input)
+        serde_json::from_str::<crate::adapter::cerberus::ChallengeDescriptor>(input)
     {
         return solve_cerberus_json(&descriptor, Some((set, iterand)));
     } else {
@@ -84,7 +84,7 @@ pub fn solve_json_set(input: &str, set: u32, iterand: u32) -> Result<AnubisRespo
 }
 
 fn solve_anubis_json(
-    descriptor: &crate::adapter::AnubisChallengeDescriptor,
+    descriptor: &crate::adapter::anubis::ChallengeDescriptor,
 ) -> Result<AnubisResponse, JsError> {
     if !descriptor.supported() {
         return Err(JsError::new(
@@ -110,7 +110,7 @@ fn solve_anubis_json(
 }
 
 fn solve_cerberus_json(
-    descriptor: &crate::adapter::CerberusChallengeDescriptor,
+    descriptor: &crate::adapter::cerberus::ChallengeDescriptor,
     fixed_set: Option<(u32, u32)>,
 ) -> Result<AnubisResponse, JsError> {
     let mut starting_set = 0;
