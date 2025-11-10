@@ -187,6 +187,20 @@ enum SubCommand {
 }
 
 fn main() {
+    #[cfg(feature = "tracing-subscriber")]
+    {
+        use tracing::level_filters::LevelFilter;
+        use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().pretty())
+            .with(
+                tracing_subscriber::EnvFilter::builder()
+                    .with_default_directive(LevelFilter::INFO.into())
+                    .from_env_lossy(),
+            )
+            .init();
+    }
     let cli = Cli::parse();
     match cli.subcommand {
         SubCommand::Profile {
@@ -299,10 +313,7 @@ fn main() {
             runtime.block_on(async move {
                 use pow_buster::adapter::{CapJsResponse, SolveCapJsResponseMeta};
 
-                let client = reqwest::ClientBuilder::new()
-                    .redirect(reqwest::redirect::Policy::none())
-                    .build()
-                    .unwrap();
+                let client = pow_buster::client::build_client().build().unwrap();
                 let (response, meta) =
                     pow_buster::client::solve_capjs(&pool, &client, &url, &site_key)
                         .await
@@ -688,15 +699,11 @@ fn main() {
                 .unwrap();
 
             runtime.block_on(async move {
-                let client = reqwest::ClientBuilder::new()
-                    .gzip(true)
-                    .redirect(reqwest::redirect::Policy::none())
-                    .build()
-                    .unwrap();
+                let client = pow_buster::client::build_client().build().unwrap();
                 let response = pow_buster::client::solve_anubis(&client, &url)
                     .await
                     .unwrap();
-                println!("set-cookie: {}", response);
+                println!("cookie: {}", response);
             });
         }
         #[cfg(feature = "client")]
@@ -706,14 +713,11 @@ fn main() {
                 .build()
                 .unwrap();
             runtime.block_on(async move {
-                let client = reqwest::ClientBuilder::new()
-                    .redirect(reqwest::redirect::Policy::none())
-                    .build()
-                    .unwrap();
+                let client = pow_buster::client::build_client().build().unwrap();
                 let response = pow_buster::client::solve_cerberus(&client, &url)
                     .await
                     .unwrap();
-                println!("set-cookie: {}", response);
+                println!("cookie: {}", response);
             });
         }
         #[cfg(feature = "client")]
@@ -724,14 +728,11 @@ fn main() {
                 .unwrap();
 
             runtime.block_on(async move {
-                let client = reqwest::ClientBuilder::new()
-                    .redirect(reqwest::redirect::Policy::none())
-                    .build()
-                    .unwrap();
+                let client = pow_buster::client::build_client().build().unwrap();
                 let response = pow_buster::client::solve_goaway_js_pow_sha256(&client, &url)
                     .await
                     .unwrap();
-                println!("set-cookie: {}", response);
+                println!("cookie: {}", response);
             });
         }
         #[cfg(feature = "live-throughput-test")]
@@ -779,9 +780,7 @@ fn main() {
                     let api_type = api_type.clone();
                     let semaphore = semaphore.clone();
                     tokio::spawn(async move {
-                        let client = reqwest::ClientBuilder::new()
-                            .gzip(api_type == ApiType::Anubis) // for some reason anubis requires gzip
-                            .redirect(reqwest::redirect::Policy::none())
+                        let client = pow_buster::client::build_client()
                             .build()
                             .unwrap();
 
@@ -910,18 +909,6 @@ fn main() {
             check_origin,
             timeout,
         } => {
-            use tracing::level_filters::LevelFilter;
-            use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-            tracing_subscriber::registry()
-                .with(tracing_subscriber::fmt::layer().pretty())
-                .with(
-                    tracing_subscriber::EnvFilter::builder()
-                        .with_default_directive(LevelFilter::INFO.into())
-                        .from_env_lossy(),
-                )
-                .init();
-
             if limit == 0 {
                 limit = u64::MAX;
             }

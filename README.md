@@ -8,6 +8,8 @@
   - [Features](#features)
   - [Building](#building)
     - [Building the browser extension](#building-the-browser-extension)
+  - [Usage](#usage)
+    - [Custom User Agent](#custom-user-agent)
   - [Limitations](#limitations)
   - [Ethical Disclaimer (i.e. the "How Dare you Publish this?" question)](#ethical-disclaimer-ie-the-how-dare-you-publish-this-question)
   - [Benchmark](#benchmark)
@@ -79,25 +81,36 @@ Optional Features:
 - `server`: Solver-as-a-Service API. It is recommended to also use `--profile release-unwinding` instead of `--release` to prevent unexpected panics from aborting the server.
 - `server-wasm`: Solver-as-a-Service API (with WASM simd128 solver, build first with `./build_wasm.sh`).
 
-Demo:
+## Usage
+
+The most common use case is you have a non browser client (for example a CLI downloader, feed checker or other automation tool) and you want a valid token. `pow-buster` features comprehensive coverage for Anubis challenge workflow and basic coverage for Cerberus and go-away for your edge case non-JavaScript use cases.
 
 ```sh
-> time target/release/pow-buster anubis --url https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/diff/
+> target/release/pow-buster anubis --url https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/diff/
 
-set-cookie: techaro.lol-anubis-auth=eyJeyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.ey<...>
+cookie: techaro.lol-anubis-auth=eyJeyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.ey<...>
 
-________________________________________________________
-Executed in  491.36 millis    fish           external
-   usr time    7.08 millis  390.00 micros    6.69 millis
-   sys time    8.95 millis  114.00 micros    8.83 millis
 ```
 
-```sh
-> target/release/pow-buster server & # require `server` feature
-> curl --data-urlencode challenge='{"rules":{"algorithm":"fast","difficulty":6,"report_as":6},"challenge":"xxxxxx"}' localhost:8080/solve
+### Custom User Agent
 
-// elapsed time: 29ms; attempted nonces: 2535920; 81.04 MH/s; 1.27% limit used
-window.location.replace("/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime=2476&response=000000434df465134b51abbde017562b007c8239764d9fdce61817b4c306d304&nonce=11111111140158495&redir=" + encodeURIComponent(window.location.href));
+The default user agent is "pow-buster/x.x.x (NotAMozilla)". Some adopters may hard block the default user agent or reject any non browser-like UAs, but regardless it is good etiquette to identify yourself using your actual bot name not just "pow-buster". I personally think it is okay to "impersonate" a browser if the overblocking ruleset make it impossible to be "honest", but you are responsible for your own actions.
+
+For example TLNET blocks all UAs that do not start with "Mozilla", we can make a compromise and put the magic word in the front and then disclose our actual UA responsibly as a workaround:
+
+```sh
+> target/release/pow-buster anubis --url https://texlive.info/tlnet-archive/
+  2025-11-10T08:03:13.766683Z  WARN pow_buster::client: no challenge found
+    at src/client.rs:509
+
+> USER_AGENT="Mozilla/5.0 MyDocumentationBot/0.1.0" target/release/pow-buster anubis --url https://texlive.info/tlnet-archive/
+  2025-11-10T08:09:40.523166Z  INFO pow_buster::client: Anubis cryptographic challenge, algorithm: "fast", estimated_workload: 1048576
+    at src/client.rs:572
+
+  2025-11-10T08:09:40.527119Z  INFO pow_buster::client: solver finished, nonce: 1000000000051158442, attempted_nonces: 322960
+    at src/client.rs:590
+
+cookie: techaro.lol-anubis-auth=eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.ey<...>
 ```
 
 ### Building the browser extension

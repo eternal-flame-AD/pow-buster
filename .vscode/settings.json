@@ -7,7 +7,6 @@
         "live-throughput-test",
         "cli",
         "rayon",
-        "ignore-target-feature-checks",
         "compare-64bit"
     ],
     "rust-analyzer.cargo.cfgs": [

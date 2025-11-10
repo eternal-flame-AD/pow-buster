@@ -6,7 +6,7 @@ repository = "https://github.com/eternal-flame-AD/pow-buster"
 categories = ["cryptography"]
 keywords = ["sha-2", "captcha", "proof-of-work", "mining"]
 authors = ["Yumechi <yume@yumechi.jp>"]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [lib]
@@ -84,11 +84,11 @@ live-throughput-test = ["client"]
 cli = ["std", "dep:clap", "rayon", "dep:num_cpus"]
 tokio = ["std", "dep:tokio"]
 rayon = ["std", "dep:rayon"]
-server = ["adapter", "tokio", "tracing", "dep:rayon", "dep:thiserror", "dep:url", "dep:axum", "dep:tower-http", "dep:tracing-subscriber", "dep:axum-extra", "dep:headers"]
+server = ["adapter", "tokio", "dep:rayon", "dep:thiserror", "dep:url", "dep:axum", "dep:tower-http", "tracing-subscriber", "dep:axum-extra", "dep:headers"]
 tracing = ["dep:tracing"]
+tracing-subscriber = ["dep:tracing-subscriber", "tracing"]
 internals = []
 server-wasm = ["server", "dep:rust-embed"]
-ignore-target-feature-checks = []
 
 [[bin]]
 name = "pow-buster"

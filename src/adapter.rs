@@ -101,6 +101,9 @@ impl AsRef<str> for ChallengeForm {
 impl AnubisChallengeDescriptor {
     /// Estimate the workload of an Anubis PoW.
     pub fn estimated_workload(&self) -> u64 {
+        if self.rules.algorithm == "preact" {
+            return 1u64;
+        }
         16u64.saturating_pow(self.rules.difficulty.try_into().unwrap())
     }
 

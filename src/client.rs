@@ -17,10 +17,70 @@ use crate::{
 static SELECTOR_META_REFRESH: LazyLock<scraper::Selector> =
     LazyLock::new(|| scraper::Selector::parse("meta[http-equiv='refresh' i]").unwrap());
 
-// Anubis (and derivatives) by default only challenges UAs that look like browsers
-// so we kind of have to fake it for out of the box testing without extensive reconfiguration
-const ANUBIS_USER_AGENT: &str =
-    "Mozilla/5.0 (Android 15; Mobile; rv:140.0) Gecko/140.0 Firefox/140.0";
+static DEFAULT_USER_AGENT_VALUE_BUF_LEN: ([u8; 256], usize) = {
+    let mut buf = [0u8; 256];
+    let mut i = 0;
+    let cargo_pkg_name = env!("CARGO_PKG_NAME").as_bytes();
+    let mut j = 0;
+    while i < 256 && j < cargo_pkg_name.len() {
+        buf[i] = cargo_pkg_name[j];
+        j += 1;
+        i += 1;
+    }
+    buf[i] = b'/';
+    i += 1;
+    j = 0;
+    let cargo_pkg_version = env!("CARGO_PKG_VERSION").as_bytes();
+    while i < 256 && j < cargo_pkg_version.len() {
+        buf[i] = cargo_pkg_version[j];
+        j += 1;
+        i += 1;
+    }
+    buf[i] = b' ';
+    i += 1;
+    buf[i] = b'(';
+    i += 1;
+    j = 0;
+    // Anubis (and derivatives) by default only challenges UAs that look like browsers
+    // so a Mozilla magic word is need for the challenge to appear out of the box
+    let tag = b"NotAMozilla";
+    while i < 256 && j < tag.len() {
+        buf[i] = tag[j];
+        j += 1;
+        i += 1;
+    }
+    buf[i] = b')';
+    i += 1;
+    (buf, i)
+};
+
+#[cfg(feature = "client")]
+const DEFAULT_USER_AGENT: &str = unsafe {
+    std::str::from_utf8_unchecked(core::slice::from_raw_parts(
+        DEFAULT_USER_AGENT_VALUE_BUF_LEN.0.as_ptr(),
+        DEFAULT_USER_AGENT_VALUE_BUF_LEN.1,
+    ))
+};
+
+#[cfg(feature = "client")]
+static OVERRIDE_USER_AGENT: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| {
+    std::env::var("POW_BUSTER_USER_AGENT")
+        .or_else(|_| std::env::var("USER_AGENT"))
+        .ok()
+});
+
+/// Start building a client suitable for use for end-to-end PoW solving.
+///
+/// This client is configured to:
+/// - not follow redirects
+/// - use the default user agent or whatever is set in the `POW_BUSTER_USER_AGENT` or `USER_AGENT` environment variable
+/// - support transparent gzip compression
+pub fn build_client() -> reqwest::ClientBuilder {
+    reqwest::ClientBuilder::new()
+        .redirect(reqwest::redirect::Policy::none())
+        .user_agent(OVERRIDE_USER_AGENT.as_deref().unwrap_or(DEFAULT_USER_AGENT))
+        .gzip(true)
+}
 
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
 /// mCaptcha PoW configuration
@@ -346,6 +406,9 @@ pub async fn solve_anubis_ex(
     base_url: &str,
     time_iowait: &mut u32,
 ) -> Result<String, SolveError> {
+    #[cfg(feature = "tracing")]
+    let _span = tracing::span!(tracing::Level::INFO, "solve_anubis_ex");
+
     struct Selectors {
         anubis_challenge: scraper::Selector,
         challenge_script: scraper::Selector,
@@ -364,6 +427,8 @@ pub async fn solve_anubis_ex(
         })
         .unwrap(),
     });
+
+    #[derive(Debug)]
     struct DocumentPresentation {
         meta_refresh: Option<String>,
         anubis_challenge: Option<String>,
@@ -376,7 +441,6 @@ pub async fn solve_anubis_ex(
         .get(base_url)
         .header("Accept", "text/html")
         .header("Sec-Gpc", "1")
-        .header("User-Agent", ANUBIS_USER_AGENT)
         .send()
         .await?;
     let mut redirects = 5u32;
@@ -391,7 +455,6 @@ pub async fn solve_anubis_ex(
             .get(location)
             .header("Accept", "text/html")
             .header("Sec-Gpc", "1")
-            .header("User-Agent", ANUBIS_USER_AGENT)
             .send()
             .await?;
     }
@@ -441,6 +504,10 @@ pub async fn solve_anubis_ex(
                 .next()
                 .is_none()
         {
+            #[cfg(feature = "tracing")]
+            {
+                tracing::warn!("no challenge found");
+            }
             return Ok(String::new());
         }
 
@@ -449,6 +516,11 @@ pub async fn solve_anubis_ex(
             anubis_challenge,
         }
     };
+
+    #[cfg(feature = "tracing")]
+    {
+        tracing::debug!("document presentation: {:?}", document_presentation);
+    }
 
     let (final_url, delay) = match document_presentation {
         DocumentPresentation {
@@ -488,13 +560,21 @@ pub async fn solve_anubis_ex(
                         .post(make_challenge_url)
                         .header("Accept", "application/json")
                         .header("Sec-Gpc", "1")
-                        .header("User-Agent", ANUBIS_USER_AGENT)
                         .send()
                         .await?;
                     response.text().await?
                 }
             };
             let challenge: AnubisChallengeDescriptor = serde_json::from_str(&json_text)?;
+
+            #[cfg(feature = "tracing")]
+            {
+                tracing::info!(
+                    algorithm = challenge.rules().algorithm(),
+                    estimated_workload = challenge.estimated_workload(),
+                    "Anubis cryptographic challenge",
+                );
+            }
 
             if !challenge.supported() {
                 return Err(SolveError::UnknownAlgorithm(
@@ -504,6 +584,15 @@ pub async fn solve_anubis_ex(
             let (result, attempted_nonces) = tokio::task::block_in_place(|| challenge.solve());
 
             let (nonce, result) = result.ok_or(SolveError::SolverFailed)?;
+
+            #[cfg(feature = "tracing")]
+            {
+                tracing::info!(
+                    nonce = nonce,
+                    attempted_nonces = attempted_nonces,
+                    "solver finished",
+                );
+            }
 
             let plausible_time = crate::compute_plausible_time_sha256(attempted_nonces) + 10;
 
@@ -549,6 +638,10 @@ pub async fn solve_anubis_ex(
 
     // on non PoW protected challenges, Anubis enforces a delay, wait for it
     if delay > 0 {
+        #[cfg(feature = "tracing-subscriber")]
+        {
+            tracing::info!("Applying Anubis server-enforced delay: {}ms", delay);
+        }
         tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
     }
 
@@ -561,7 +654,6 @@ pub async fn solve_anubis_ex(
         .header("Accept", "text/html")
         .header("Referer", base_url)
         .header("Sec-Gpc", "1")
-        .header("User-Agent", ANUBIS_USER_AGENT)
         .send()
         .await?;
     let iotime = iotime.elapsed();
@@ -609,7 +701,6 @@ pub async fn solve_cerberus_ex(
         .get(base_url)
         .header("Accept", "text/html")
         .header("Sec-Gpc", "1")
-        .header("User-Agent", ANUBIS_USER_AGENT)
         .send()
         .await?
         .error_for_status()?;
@@ -625,7 +716,6 @@ pub async fn solve_cerberus_ex(
             .get(location)
             .header("Accept", "text/html")
             .header("Sec-Gpc", "1")
-            .header("User-Agent", ANUBIS_USER_AGENT)
             .send()
             .await?;
     }
@@ -715,7 +805,6 @@ pub async fn solve_cerberus_ex(
         .header("Accept", "text/html")
         .header("Referer", base_url)
         .header("Sec-Gpc", "1")
-        .header("User-Agent", ANUBIS_USER_AGENT)
         .send()
         .await?;
     let iotime = iotime.elapsed();

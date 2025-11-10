@@ -59,17 +59,6 @@ compile_error!("Only x86_64 and wasm32 are supported");
 #[cfg(all(not(doc), target_arch = "wasm32", feature = "compare-64bit"))]
 compile_error!("compare-64bit is only supported on x86_64 architectures");
 
-#[cfg(all(
-    not(doc),
-    target_arch = "wasm32",
-    not(feature = "ignore-target-feature-checks"),
-    not(target_feature = "simd128")
-))]
-compile_error!(concat!(
-    "SIMD128 extensions required. Compile with -Ctarget-feature=+simd128, ",
-    "alternatively pass --features ignore-target-feature-checks to build a slow reference implementation."
-));
-
 /// A trait for a trivial aligner that has no function except setting the alignment and transparently holding a value of type `T`.
 ///
 /// # Safety
