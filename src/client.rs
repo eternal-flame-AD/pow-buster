@@ -49,9 +49,6 @@ pub struct Work<'a> {
 #[derive(Debug, thiserror::Error)]
 /// mCaptcha PoW solve error
 pub enum SolveError {
-    #[error("challenge not present")]
-    /// challenge not present
-    ChallengeNotPresent,
     #[error("broken redirect")]
     /// broken redirect
     BrokenRedirect,
@@ -444,7 +441,7 @@ pub async fn solve_anubis_ex(
                 .next()
                 .is_none()
         {
-            return Err(SolveError::ChallengeNotPresent);
+            return Ok(String::new());
         }
 
         DocumentPresentation {
