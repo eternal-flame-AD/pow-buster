@@ -401,14 +401,15 @@ pub async fn solve_anubis(client: &Client, base_url: &str) -> Result<String, Sol
 /// Solve an Anubis PoW with extended functionality.
 ///
 /// `time_iowait` is a pointer to a u32 that will be incremented by the time spent waiting for the IO instead of solving the PoW.
+#[cfg_attr(
+    feature = "tracing",
+    tracing::instrument(level = "info", skip(client, time_iowait))
+)]
 pub async fn solve_anubis_ex(
     client: &Client,
     base_url: &str,
     time_iowait: &mut u32,
 ) -> Result<String, SolveError> {
-    #[cfg(feature = "tracing")]
-    let _span = tracing::span!(tracing::Level::INFO, "solve_anubis_ex");
-
     struct Selectors {
         anubis_challenge: scraper::Selector,
         challenge_script: scraper::Selector,

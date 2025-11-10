@@ -106,14 +106,18 @@ For example TLNET blocks all UAs that do not start with "Mozilla", we can make a
 ```sh
 > target/release/pow-buster anubis --url https://texlive.info/tlnet-archive/
   2025-11-10T08:03:13.766683Z  WARN pow_buster::client: no challenge found
-    at src/client.rs:509
+    at src/client.rs:510
+    in pow_buster::client::solve_anubis_ex with base_url: "https://texlive.info/tlnet-archive/"
 
-> USER_AGENT="Mozilla/5.0 MyDocumentationBot/0.1.0" target/release/pow-buster anubis --url https://texlive.info/tlnet-archive/
-  2025-11-10T08:09:40.523166Z  INFO pow_buster::client: Anubis cryptographic challenge, algorithm: "fast", estimated_workload: 1048576
-    at src/client.rs:572
+> USER_AGENT="Mozilla/5.0 MyDocumentationBot/0.1.0" target/release/
+pow-buster anubis --url https://texlive.info/tlnet-archive/
+  2025-11-10T08:39:40.397760Z  INFO pow_buster::client: Anubis cryptographic challenge, algorithm: "fast", estimated_workload: 1048576
+    at src/client.rs:573
+    in pow_buster::client::solve_anubis_ex with base_url: "https://texlive.info/tlnet-archive/"
 
-  2025-11-10T08:09:40.527119Z  INFO pow_buster::client: solver finished, nonce: 1000000000051158442, attempted_nonces: 322960
-    at src/client.rs:590
+  2025-11-10T08:39:40.418282Z  INFO pow_buster::client: solver finished, nonce: 1000000000081456411, attempted_nonces: 1879040
+    at src/client.rs:591
+    in pow_buster::client::solve_anubis_ex with base_url: "https://texlive.info/tlnet-archive/"
 
 cookie: techaro.lol-anubis-auth=eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.ey<...>
 ```
