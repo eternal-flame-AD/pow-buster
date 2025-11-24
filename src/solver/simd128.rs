@@ -674,7 +674,7 @@ impl crate::solver::Solver for GoAwaySolver {
     }
 }
 
-/// SIMD128 Ceberus solver.
+/// SIMD128 Cerberus solver.
 ///
 /// Current implementation: 9-digit out-of-order kernel with 4 way SIMD with quarter-round hotstart granularity.
 pub struct CerberusSolver {

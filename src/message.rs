@@ -659,13 +659,13 @@ pub struct CerberusBinaryMessage {
 }
 
 impl CerberusBinaryMessage {
-    /// Create a new Ceberus message
+    /// Create a new Cerberus message
     pub fn new(salt: &[u8], first_word: u32) -> Self {
         let prehash = ::blake3::hash(salt).to_hex();
         Self::new_prehashed(prehash.as_bytes().try_into().unwrap(), first_word)
     }
 
-    /// Create a new Ceberus message with a prehashed midstate
+    /// Create a new Cerberus message with a prehashed midstate
     pub fn new_prehashed(prehash: &[u8; 64], first_word: u32) -> Self {
         let mut block = [0; 16];
         for i in 0..16 {
@@ -704,7 +704,7 @@ pub struct CerberusDecimalMessage {
 }
 
 impl CerberusDecimalMessage {
-    /// Create a new Ceberus message
+    /// Create a new Cerberus message
     ///
     /// End-to-end salt construction: `${challenge}|${inputNonce}|${ts}|${signature}|`
     pub fn new(salt: &[u8], mut working_set: u32) -> Option<Self> {

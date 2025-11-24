@@ -33,7 +33,7 @@ mod static_asserts {
         [(); (LANE_ID_STR_COMBINED_LE_HI.0[123] == u32::from_be_bytes(*b"321\x00")) as usize];
 }
 
-/// AVX-2 Ceberus solver.
+/// AVX-2 Cerberus solver.
 ///
 /// Current implementation: 9-digit out-of-order kernel with dual-wavefront 8 way SIMD and quarter-round hotstart granularity.
 pub struct CerberusSolver {
