@@ -484,8 +484,7 @@ impl crate::solver::Solver for CerberusSolver {
                     ])
                 });
                 assert!(
-                    message.salt_residual_len + 8
-                        < message.salt_residual.len() * core::mem::size_of::<u32>(),
+                    message.salt_residual_len + 8 < message.salt_residual.len(),
                     "there must be at least 9 bytes of headroom for the nonce"
                 );
                 for nonce in 0u64..remaining_limit {
