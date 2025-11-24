@@ -64,6 +64,11 @@ impl ChallengeDescriptor {
         )
     }
 
+    /// Set the version of a Cerberus PoW.
+    pub fn set_version(&mut self, version: semver::Version) {
+        self.version = MaybeSemver::Yes(version);
+    }
+
     /// Return the estimated workload.
     pub fn estimated_workload(&self) -> u64 {
         4u64.saturating_pow(self.difficulty.get().try_into().unwrap())
