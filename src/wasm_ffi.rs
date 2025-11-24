@@ -38,25 +38,6 @@ impl AnubisResponse {
     }
 }
 
-#[wasm_bindgen(js_name = "CerberusWorkerResponse")]
-#[derive(Debug, Clone)]
-struct CerberusWorkerResponse {
-    hash: String,
-    nonce: u64,
-}
-
-#[wasm_bindgen]
-impl CerberusWorkerResponse {
-    #[wasm_bindgen(getter)]
-    pub fn hash(&self) -> String {
-        self.hash.clone()
-    }
-    #[wasm_bindgen(getter)]
-    pub fn nonce(&self) -> u64 {
-        self.nonce
-    }
-}
-
 #[wasm_bindgen]
 pub fn solve_json(input: &str) -> Result<AnubisResponse, JsError> {
     if let Ok(descriptor) =

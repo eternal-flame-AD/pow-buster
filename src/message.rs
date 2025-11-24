@@ -643,10 +643,59 @@ impl BinaryMessage {
 /// A message in the cerberus format
 ///
 /// Note cerberus official solver only supports 32-bit range nonces, but the validator accepts machine sized nonces and should always remain inter-block
+pub enum CerberusMessage {
+    /// A decimal message
+    Decimal(CerberusDecimalMessage),
+    /// A binary message (0.4.6+)
+    Binary(CerberusBinaryMessage),
+}
+
+/// A message in the cerberus binary format (0.4.6+)
+///
+/// Construct: Proof := (prefix || U64(nonce))
+pub struct CerberusBinaryMessage {
+    pub(crate) midstate: Align16<[u32; 8]>,
+    pub(crate) first_word: u32,
+}
+
+impl CerberusBinaryMessage {
+    /// Create a new Cerberus message
+    pub fn new(salt: &[u8], first_word: u32) -> Self {
+        let prehash = ::blake3::hash(salt).to_hex();
+        Self::new_prehashed(prehash.as_bytes().try_into().unwrap(), first_word)
+    }
+
+    /// Create a new Cerberus message with a prehashed midstate
+    pub fn new_prehashed(prehash: &[u8; 64], first_word: u32) -> Self {
+        let mut block = [0; 16];
+        for i in 0..16 {
+            block[i] = u32::from_le_bytes([
+                prehash[i * 4],
+                prehash[i * 4 + 1],
+                prehash[i * 4 + 2],
+                prehash[i * 4 + 3],
+            ]);
+        }
+        let midstate = crate::blake3::compress8(
+            &crate::blake3::IV,
+            &block,
+            0,
+            64,
+            crate::blake3::FLAG_CHUNK_START,
+        );
+
+        Self {
+            midstate: Align16(midstate),
+            first_word,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+/// A message in the cerberus decimal format (pre 0.4.6)
 ///
 /// Construct: Proof := (prefix || ASCII_GO_INT_DECIMAL(nonce))
-#[derive(Debug, Clone)]
-pub struct CerberusMessage {
+pub struct CerberusDecimalMessage {
     pub(crate) prefix_state: Align16<[u32; 8]>,
     pub(crate) salt_residual: Align64<[u8; 64]>,
     pub(crate) salt_residual_len: usize,
@@ -654,8 +703,8 @@ pub struct CerberusMessage {
     pub(crate) nonce_addend: u64,
 }
 
-impl CerberusMessage {
-    /// Create a new Ceberus message
+impl CerberusDecimalMessage {
+    /// Create a new Cerberus message
     ///
     /// End-to-end salt construction: `${challenge}|${inputNonce}|${ts}|${signature}|`
     pub fn new(salt: &[u8], mut working_set: u32) -> Option<Self> {

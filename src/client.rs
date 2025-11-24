@@ -676,8 +676,7 @@ pub async fn solve_cerberus_ex(
         .header("Accept", "text/html")
         .header("Sec-Gpc", "1")
         .send()
-        .await?
-        .error_for_status()?;
+        .await?;
     let mut redirects = 5u32;
     while response.status().is_redirection() && redirects > 0 {
         redirects -= 1;
@@ -700,6 +699,7 @@ pub async fn solve_cerberus_ex(
     *time_iowait += iotime.as_micros() as u32;
 
     fn extract_challenge(
+        base_url: &url::Url,
         body: &str,
     ) -> Result<(String, adapter::cerberus::ChallengeDescriptor), SolveError> {
         static ELEMENT_CHALLENGE_SCRIPT: LazyLock<scraper::Selector> = LazyLock::new(|| {
@@ -724,19 +724,32 @@ pub async fn solve_cerberus_ex(
             .ok_or(SolveError::ScrapeElementNotFound(
                 "script#challenge-script[x-meta]",
             ))?;
+
         #[derive(serde::Deserialize, Debug)]
         struct Meta {
             #[serde(rename = "baseURL")]
             base_url: String,
         }
         let meta: Meta = serde_json::from_str(&meta)?;
-        let challenge = serde_json::from_str(&json_text)?;
+        let mut challenge: adapter::cerberus::ChallengeDescriptor =
+            serde_json::from_str(&json_text)?;
+        if let Some(version) = element
+            .attr("src")
+            .and_then(|src| base_url.join(src).ok())
+            .and_then(|url| {
+                url.query_pairs()
+                    .find(|(k, _)| k == "v")
+                    .and_then(|(_, v)| v.trim_start_matches('v').parse::<semver::Version>().ok())
+            })
+        {
+            challenge.set_version(version);
+        }
 
         Ok((meta.base_url, challenge))
     }
 
     let text = response.text().await?;
-    let (mut answer_url, challenge) = extract_challenge(&text)?;
+    let (mut answer_url, challenge) = extract_challenge(&url_parsed, &text)?;
     answer_url.push_str("/answer");
     let mask = challenge.mask();
     let (nonce, result) = tokio::task::block_in_place(|| {

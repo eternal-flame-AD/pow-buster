@@ -35,6 +35,7 @@ tracing = { version = "0.1.41", optional = true }
 axum-extra = { version = "0.10.1", features = ["typed-header"], optional = true }
 headers = { version = "0.4", optional = true }
 rust-embed = { version = "8.7", optional = true, features = ["mime-guess"] }
+semver = { version = "1.0", default-features = false, optional = true }
 generic-array = { version = "=0.14.7" } # TODO: remove this pin once RustCrypt migrate off of it
 
 [profile.test]
@@ -79,7 +80,7 @@ default = ["std"]
 alloc = []
 std = ["alloc"]
 compare-64bit = []
-adapter = ["alloc", "dep:serde", "dep:serde_json"]
+adapter = ["alloc", "dep:serde", "dep:serde_json", "dep:semver", "semver/serde"]
 client = ["std", "adapter", "rayon", "tokio", "tokio/rt-multi-thread", "dep:url", "dep:reqwest", "dep:thiserror", "dep:num_cpus", "dep:scraper"]
 live-throughput-test = ["client"]
 cli = ["std", "dep:clap", "rayon", "dep:num_cpus"]

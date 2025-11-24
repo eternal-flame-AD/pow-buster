@@ -13,7 +13,10 @@ use pow_buster::{
     Align16, BinarySolver, CerberusSolver, DecimalSolver, DoubleBlockSolver, GoAwaySolver,
     SingleBlockSolver, compute_mask_anubis, compute_mask_cerberus, compute_mask_goaway,
     compute_target_mcaptcha,
-    message::{BinaryMessage, CerberusMessage, DecimalMessage, GoAwayMessage},
+    message::{
+        BinaryMessage, CerberusBinaryMessage, CerberusDecimalMessage, CerberusMessage,
+        DecimalMessage, GoAwayMessage,
+    },
     solver::Solver,
 };
 
@@ -49,7 +52,8 @@ impl std::str::FromStr for ApiType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Scheme {
     Anubis,
-    Cerberus,
+    CerberusBinary,
+    CerberusDecimal,
     GoAway,
     Mcaptcha,
 }
@@ -61,7 +65,8 @@ impl std::str::FromStr for Scheme {
             "anubis" => Ok(Scheme::Anubis),
             "mcaptcha" => Ok(Scheme::Mcaptcha),
             "goaway" | "go-away" => Ok(Scheme::GoAway),
-            "cerberus" => Ok(Scheme::Cerberus),
+            "cerberus" | "cerberus-binary" => Ok(Scheme::CerberusBinary),
+            "cerberus-decimal" => Ok(Scheme::CerberusDecimal),
             _ => Err(format!("invalid scheme: {}", s)),
         }
     }
@@ -455,7 +460,9 @@ fn main() {
             let mut total_nonces = 0;
             for i in 0..40u8 {
                 salt[0] = i;
-                let mut solver = CerberusSolver::from(CerberusMessage::new(&salt, 0).unwrap());
+                let mut solver = CerberusSolver::from(CerberusMessage::Binary(
+                    CerberusBinaryMessage::new(&salt, i as u32),
+                ));
                 let inner_begin = Instant::now();
                 let nonce = solver
                     .solve_nonce_only::<{ pow_buster::solver::SOLVE_TYPE_MASK }>(0, mask as u64)
@@ -493,7 +500,7 @@ fn main() {
                     compute_mask_anubis(difficulty.try_into().expect("difficulty out of range")),
                 ),
                 Scheme::Mcaptcha => (compute_target_mcaptcha(difficulty.get()), !0),
-                Scheme::Cerberus => (
+                Scheme::CerberusBinary | Scheme::CerberusDecimal => (
                     0,
                     compute_mask_cerberus(
                         u8::try_from(difficulty.get())
@@ -543,13 +550,27 @@ fn main() {
                                 tx.send(result).unwrap();
                             }
                         }
-                        Scheme::Cerberus => {
+                        Scheme::CerberusDecimal => {
                             for working_set in (ix..).step_by(num_threads.get() as usize) {
-                                let Some(message) = CerberusMessage::new(salt_bytes, working_set) else {
+                                let Some(message) = CerberusDecimalMessage::new(salt_bytes, working_set) else {
                                     return;
                                 };
-                                let mut solver = CerberusSolver::from(message);
-                                let result = solver.solve::<{ pow_buster::solver::SOLVE_TYPE_MASK }>(0, target);
+                                let mut solver = CerberusSolver::from(CerberusMessage::Decimal(message));
+                                let result = solver.solve::<{ pow_buster::solver::SOLVE_TYPE_MASK }>(0, mask);
+                                nonce_attempted.fetch_add(solver.get_attempted_nonces(), Ordering::Relaxed);
+                                ws_churn.fetch_add(1, Ordering::Relaxed);
+                                let Some(result) = result else {
+                                    continue;
+                                };
+                                tx.send(result).unwrap();
+                            }
+                        }
+                        Scheme::CerberusBinary => {
+                            let prehash = ::blake3::hash(salt_bytes).to_hex();
+                            for working_set in (ix..).step_by(num_threads.get() as usize) {
+                                let message = CerberusBinaryMessage::new_prehashed(prehash.as_bytes().try_into().unwrap(), working_set);
+                                let mut solver = CerberusSolver::from(CerberusMessage::Binary(message));
+                                let result = solver.solve::<{ pow_buster::solver::SOLVE_TYPE_MASK }>(0, mask);
                                 nonce_attempted.fetch_add(solver.get_attempted_nonces(), Ordering::Relaxed);
                                 ws_churn.fetch_add(1, Ordering::Relaxed);
                                 let Some(result) = result else {
@@ -676,7 +697,7 @@ fn main() {
                             core::str::from_utf8(&goaway_id[..]).unwrap()
                         );
                     }
-                    Scheme::Cerberus => {
+                    Scheme::CerberusBinary | Scheme::CerberusDecimal => {
                         let mut hex = [0u8; 64];
                         pow_buster::encode_hex_le(&mut hex, result);
                         println!(

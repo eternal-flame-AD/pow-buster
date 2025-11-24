@@ -473,50 +473,75 @@ impl crate::solver::Solver for CerberusSolver {
 
         let remaining_limit = self.limit.saturating_sub(self.attempted_nonces);
 
-        let mut msg = core::array::from_fn(|i| {
-            u32::from_le_bytes([
-                self.message.salt_residual[i * 4],
-                self.message.salt_residual[i * 4 + 1],
-                self.message.salt_residual[i * 4 + 2],
-                self.message.salt_residual[i * 4 + 3],
-            ])
-        });
-        assert!(
-            self.message.salt_residual_len + 8 < msg.len() * core::mem::size_of::<u32>(),
-            "there must be at least 9 bytes of headroom for the nonce"
-        );
-        for nonce in 0u64..remaining_limit {
-            let mut nonce_copy = nonce;
-            for i in (0..9).rev() {
-                let msg = decompose_blocks_mut(&mut msg);
-                #[cfg(target_endian = "little")]
-                unsafe {
-                    *msg.get_unchecked_mut(self.message.salt_residual_len + i) =
-                        (nonce_copy % 10) as u8 + b'0';
-                }
-                #[cfg(target_endian = "big")]
-                {
-                    *msg.get_unchecked_mut(self.message.salt_residual_len + i) =
-                        (nonce_copy % 10) as u8 + b'0';
-                }
-                nonce_copy /= 10;
-            }
-            debug_assert_eq!(nonce_copy, 0);
+        match &self.message {
+            CerberusMessage::Decimal(message) => {
+                let mut msg = core::array::from_fn(|i| {
+                    u32::from_le_bytes([
+                        message.salt_residual[i * 4],
+                        message.salt_residual[i * 4 + 1],
+                        message.salt_residual[i * 4 + 2],
+                        message.salt_residual[i * 4 + 3],
+                    ])
+                });
+                assert!(
+                    message.salt_residual_len + 8 < message.salt_residual.len(),
+                    "there must be at least 9 bytes of headroom for the nonce"
+                );
+                for nonce in 0u64..remaining_limit {
+                    let mut nonce_copy = nonce;
+                    for i in (0..9).rev() {
+                        let msg = decompose_blocks_mut(&mut msg);
+                        #[cfg(target_endian = "little")]
+                        unsafe {
+                            *msg.get_unchecked_mut(message.salt_residual_len + i) =
+                                (nonce_copy % 10) as u8 + b'0';
+                        }
+                        #[cfg(target_endian = "big")]
+                        {
+                            *msg.get_unchecked_mut(message.salt_residual_len + i) =
+                                (nonce_copy % 10) as u8 + b'0';
+                        }
+                        nonce_copy /= 10;
+                    }
+                    debug_assert_eq!(nonce_copy, 0);
 
-            let hash = crate::blake3::compress8(
-                &mut self.message.prefix_state,
-                &msg,
-                0,
-                self.message.salt_residual_len as u32 + 9,
-                self.message.flags,
-            );
-            self.attempted_nonces += 1;
-            if ((hash[0] as u64) << 32 | (hash[1] as u64)) & mask == 0 {
-                crate::unlikely();
+                    let hash = crate::blake3::compress8(
+                        &message.prefix_state,
+                        &msg,
+                        0,
+                        message.salt_residual_len as u32 + 9,
+                        message.flags,
+                    );
+                    self.attempted_nonces += 1;
+                    if ((hash[0] as u64) << 32 | (hash[1] as u64)) & mask == 0 {
+                        crate::unlikely();
 
-                return Some(((nonce + self.message.nonce_addend) as u64, hash));
+                        return Some(((nonce + message.nonce_addend) as u64, hash));
+                    }
+                }
             }
-        }
+            CerberusMessage::Binary(message) => {
+                let mut msg = [0; 16];
+                msg[0] = message.first_word;
+                for nonce in 0..(remaining_limit.min(u32::MAX as u64) as u32) {
+                    msg[1] = nonce;
+
+                    let hash = crate::blake3::compress8(
+                        &message.midstate,
+                        &msg,
+                        0,
+                        8,
+                        crate::blake3::FLAG_CHUNK_END | crate::blake3::FLAG_ROOT,
+                    );
+                    self.attempted_nonces += 1;
+                    if ((hash[0] as u64) << 32 | (hash[1] as u64)) & mask == 0 {
+                        crate::unlikely();
+
+                        return Some((msg[1] as u64 | ((msg[0] as u64) << 32), hash));
+                    }
+                }
+            }
+        };
 
         None
     }
@@ -524,6 +549,8 @@ impl crate::solver::Solver for CerberusSolver {
 
 #[cfg(test)]
 mod tests {
+    use crate::message::{CerberusBinaryMessage, CerberusDecimalMessage};
+
     use super::*;
 
     #[test]
@@ -538,10 +565,20 @@ mod tests {
     }
 
     #[test]
-    fn test_solve_cerberus() {
-        crate::solver::tests::test_cerberus_validator::<CerberusSolver, _>(|prefix| {
-            CerberusMessage::new(prefix, 0).map(Into::into)
-        });
+    fn test_solve_cerberus_decimal() {
+        for i in 0..=1 {
+            crate::solver::tests::test_cerberus_decimal_validator::<CerberusSolver, _>(|prefix| {
+                Some(CerberusMessage::Decimal(CerberusDecimalMessage::new(prefix, i)?).into())
+            });
+        }
+    }
+    #[test]
+    fn test_solve_cerberus_binary() {
+        for i in 0..=1 {
+            crate::solver::tests::test_cerberus_binary_validator::<CerberusSolver, _>(|prefix| {
+                Some(CerberusMessage::Binary(CerberusBinaryMessage::new(prefix, i)).into())
+            });
+        }
     }
 
     #[test]
