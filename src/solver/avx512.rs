@@ -1385,7 +1385,7 @@ impl CerberusSolver {
 
 impl CerberusSolver {
     #[inline(never)]
-    fn solve_impl<
+    fn solve_decimal_impl<
         const CENTER_WORD_IDX: usize,
         const LANE_ID_WORD_IDX: usize,
         const CONSTANT_WORD_COUNT: usize,
@@ -1397,15 +1397,19 @@ impl CerberusSolver {
     ) -> Option<(u64, u64)> {
         debug_assert_eq!(target, 0);
 
+        let CerberusMessage::Decimal(message) = &self.message else {
+            unsafe { core::hint::unreachable_unchecked() };
+        };
+
         // inform LLVM that padding is guaranteed to be zero
         let mut msg = Align64([0u32; 16]);
         msg.0[..=CENTER_WORD_IDX + 1].copy_from_slice(&msg_tpl.0[..=CENTER_WORD_IDX + 1]);
         let prepared_state = crate::blake3::ingest_message_prefix(
-            *self.message.prefix_state,
+            *message.prefix_state,
             &msg[..CONSTANT_WORD_COUNT],
             0,
-            self.message.salt_residual_len as u32 + 9,
-            self.message.flags,
+            message.salt_residual_len as u32 + 9,
+            message.flags,
         );
 
         for lane_id_idx in 0..(LANE_ID_STR_COMBINED_LE_HI.len() / 16) {
@@ -1480,108 +1484,158 @@ impl CerberusSolver {
 
 impl crate::solver::Solver for CerberusSolver {
     fn solve_nonce_only<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<u64> {
-        // two digits as lane ID, N=\x00, ? is prefix
-        // position % 4 =0: |1234|5678|NNN9
-        // position % 4 =1: |123?|4567|NN89
-        // position % 4 =2: |12??|3456|N789
-        // position % 4 =3: |1???|2345|6789
+        match &self.message {
+            CerberusMessage::Binary(message) => unsafe {
+                let mut msg = [0; 16];
+                msg[0] = message.first_word;
+                let prepared_state = crate::blake3::ingest_message_prefix(
+                    *message.midstate,
+                    &msg[..1],
+                    0,
+                    8,
+                    crate::blake3::FLAG_CHUNK_END | crate::blake3::FLAG_ROOT,
+                );
+                let state_base =
+                    core::array::from_fn(|i| _mm512_set1_epi32(prepared_state[i] as _));
+                let mut nonce =
+                    _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+                let increment_nonce = _mm512_set1_epi32(16);
+                let maskv = _mm512_set1_epi32((mask >> 32) as _);
+                for rep in 0..=(u32::MAX / 16) {
+                    let mut state = state_base;
+                    crate::blake3::avx512::compress_mb16::<1, 1>(&mut state, &msg, nonce);
+                    self.attempted_nonces += 16;
 
-        let center_word_idx = self.message.salt_residual_len / 4 + 1;
-        let position_mod = self.message.salt_residual_len % 4;
+                    let hit = _mm512_testn_epi32_mask(state[0], maskv);
+                    if hit != 0 {
+                        crate::unlikely();
 
-        for resid0 in 0..10u64 {
-            for resid1 in 0..10u64 {
-                if self.attempted_nonces >= self.limit {
-                    return None;
+                        let success_lane_idx = hit.trailing_zeros();
+
+                        return Some(
+                            (rep * 16 + success_lane_idx) as u64
+                                | (message.first_word as u64) << 32,
+                        );
+                    }
+                    nonce = _mm512_add_epi32(nonce, increment_nonce);
+                    if self.attempted_nonces >= self.limit {
+                        return None;
+                    }
                 }
-                let mut msg = self.message.salt_residual;
+            },
+            CerberusMessage::Decimal(message) => {
+                // two digits as lane ID, N=\x00, ? is prefix
+                // position % 4 =0: |1234|5678|NNN9
+                // position % 4 =1: |123?|4567|NN89
+                // position % 4 =2: |12??|3456|N789
+                // position % 4 =3: |1???|2345|6789
 
-                match position_mod {
-                    0 => {
-                        msg[self.message.salt_residual_len] = resid0 as u8 + b'0';
-                        msg[self.message.salt_residual_len + 8] = resid1 as u8 + b'0';
-                    }
-                    1 => {
-                        msg[self.message.salt_residual_len + 7] = resid0 as u8 + b'0';
-                        msg[self.message.salt_residual_len + 8] = resid1 as u8 + b'0';
-                    }
-                    2 => {
-                        msg[self.message.salt_residual_len] = resid0 as u8 + b'0';
-                        msg[self.message.salt_residual_len + 1] = resid1 as u8 + b'0';
-                    }
-                    3 => {
-                        msg[self.message.salt_residual_len] = resid0 as u8 + b'0';
-                        msg[self.message.salt_residual_len + 8] = resid1 as u8 + b'0';
-                    }
-                    _ => unreachable!(),
-                }
+                let center_word_idx = message.salt_residual_len / 4 + 1;
+                let position_mod = message.salt_residual_len % 4;
+                let nonce_addend = message.nonce_addend;
+                let salt_residual = message.salt_residual;
+                let salt_residual_len = message.salt_residual_len;
 
-                let msg = Align64(core::array::from_fn(|i| {
-                    u32::from_le_bytes([msg[i * 4], msg[i * 4 + 1], msg[i * 4 + 2], msg[i * 4 + 3]])
-                }));
-
-                macro_rules! dispatch {
-                    ($center_word_idx:literal) => {
-                        if position_mod < 2 {
-                            self.solve_impl::<$center_word_idx, { $center_word_idx - 1 }, {$center_word_idx - 1}>(
-                                msg, target, mask,
-                            )
-                        } else {
-                            self.solve_impl::<$center_word_idx, { $center_word_idx + 1 }, $center_word_idx>(
-                                msg, target, mask,
-                            )
+                for resid0 in 0..10u64 {
+                    for resid1 in 0..10u64 {
+                        if self.attempted_nonces >= self.limit {
+                            return None;
                         }
-                    };
-                }
+                        let mut msg = salt_residual;
 
-                if let Some((middle_word, success_lane_idx)) = match center_word_idx {
-                    1 => dispatch!(1),
-                    2 => dispatch!(2),
-                    3 => dispatch!(3),
-                    4 => dispatch!(4),
-                    5 => dispatch!(5),
-                    6 => dispatch!(6),
-                    7 => dispatch!(7),
-                    8 => dispatch!(8),
-                    9 => dispatch!(9),
-                    10 => dispatch!(10),
-                    11 => dispatch!(11),
-                    12 => dispatch!(12),
-                    13 => dispatch!(13),
-                    14 => dispatch!(14),
-                    15 => dispatch!(15),
-                    _ => unreachable!(),
-                } {
-                    let output_nonce = self.message.nonce_addend
-                        + match position_mod {
+                        match position_mod {
                             0 => {
-                                10 * middle_word
-                                    + 100_000 * success_lane_idx
-                                    + 100_000_000 * resid0
-                                    + resid1
+                                msg[salt_residual_len] = resid0 as u8 + b'0';
+                                msg[salt_residual_len + 8] = resid1 as u8 + b'0';
                             }
                             1 => {
-                                100 * middle_word
-                                    + 1_000_000 * success_lane_idx
-                                    + 10 * resid0
-                                    + resid1
+                                msg[salt_residual_len + 7] = resid0 as u8 + b'0';
+                                msg[salt_residual_len + 8] = resid1 as u8 + b'0';
                             }
                             2 => {
-                                1000 * middle_word
-                                    + success_lane_idx
-                                    + 100_000_000 * resid0
-                                    + 10_000_000 * resid1
+                                msg[salt_residual_len] = resid0 as u8 + b'0';
+                                msg[salt_residual_len + 1] = resid1 as u8 + b'0';
                             }
                             3 => {
-                                10000 * middle_word
-                                    + 10 * success_lane_idx
-                                    + 100_000_000 * resid0
-                                    + resid1
+                                msg[salt_residual_len] = resid0 as u8 + b'0';
+                                msg[salt_residual_len + 8] = resid1 as u8 + b'0';
                             }
                             _ => unreachable!(),
-                        };
+                        }
 
-                    return Some(output_nonce);
+                        let msg = Align64(core::array::from_fn(|i| {
+                            u32::from_le_bytes([
+                                msg[i * 4],
+                                msg[i * 4 + 1],
+                                msg[i * 4 + 2],
+                                msg[i * 4 + 3],
+                            ])
+                        }));
+
+                        macro_rules! dispatch {
+                            ($center_word_idx:literal) => {
+                                if position_mod < 2 {
+                                    self.solve_decimal_impl::<$center_word_idx, { $center_word_idx - 1 }, {$center_word_idx - 1}>(
+                                        msg, target, mask,
+                                    )
+                                } else {
+                                    self.solve_decimal_impl::<$center_word_idx, { $center_word_idx + 1 }, $center_word_idx>(
+                                        msg, target, mask,
+                                    )
+                                }
+                            };
+                        }
+
+                        if let Some((middle_word, success_lane_idx)) = match center_word_idx {
+                            1 => dispatch!(1),
+                            2 => dispatch!(2),
+                            3 => dispatch!(3),
+                            4 => dispatch!(4),
+                            5 => dispatch!(5),
+                            6 => dispatch!(6),
+                            7 => dispatch!(7),
+                            8 => dispatch!(8),
+                            9 => dispatch!(9),
+                            10 => dispatch!(10),
+                            11 => dispatch!(11),
+                            12 => dispatch!(12),
+                            13 => dispatch!(13),
+                            14 => dispatch!(14),
+                            15 => dispatch!(15),
+                            _ => unreachable!(),
+                        } {
+                            let output_nonce = nonce_addend
+                                + match position_mod {
+                                    0 => {
+                                        10 * middle_word
+                                            + 100_000 * success_lane_idx
+                                            + 100_000_000 * resid0
+                                            + resid1
+                                    }
+                                    1 => {
+                                        100 * middle_word
+                                            + 1_000_000 * success_lane_idx
+                                            + 10 * resid0
+                                            + resid1
+                                    }
+                                    2 => {
+                                        1000 * middle_word
+                                            + success_lane_idx
+                                            + 100_000_000 * resid0
+                                            + 10_000_000 * resid1
+                                    }
+                                    3 => {
+                                        10000 * middle_word
+                                            + 10 * success_lane_idx
+                                            + 100_000_000 * resid0
+                                            + resid1
+                                    }
+                                    _ => unreachable!(),
+                                };
+
+                            return Some(output_nonce);
+                        }
+                    }
                 }
             }
         }
@@ -1591,28 +1645,49 @@ impl crate::solver::Solver for CerberusSolver {
 
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         if let Some(nonce) = self.solve_nonce_only::<TYPE>(target, mask) {
-            let mut output_state = *self.message.prefix_state;
-            let mut msg = self.message.salt_residual;
+            match &self.message {
+                CerberusMessage::Decimal(message) => {
+                    let mut msg = message.salt_residual;
 
-            let mut nonce_copy = nonce;
-            for i in (0..9).rev() {
-                msg[self.message.salt_residual_len + i] = (nonce_copy % 10) as u8 + b'0';
-                nonce_copy /= 10;
+                    let mut nonce_copy = nonce;
+                    for i in (0..9).rev() {
+                        msg[message.salt_residual_len + i] = (nonce_copy % 10) as u8 + b'0';
+                        nonce_copy /= 10;
+                    }
+
+                    let mut msg = core::array::from_fn(|i| {
+                        u32::from_le_bytes([
+                            msg[i * 4],
+                            msg[i * 4 + 1],
+                            msg[i * 4 + 2],
+                            msg[i * 4 + 3],
+                        ])
+                    });
+
+                    let hash = crate::blake3::compress8(
+                        &message.prefix_state,
+                        &mut msg,
+                        0,
+                        message.salt_residual_len as u32 + 9,
+                        message.flags,
+                    );
+
+                    Some((nonce, hash))
+                }
+                CerberusMessage::Binary(message) => {
+                    let mut msg = [0; 16];
+                    msg[0] = message.first_word;
+                    msg[1] = nonce as u32;
+                    let hash = crate::blake3::compress8(
+                        &message.midstate,
+                        &msg,
+                        0,
+                        8,
+                        crate::blake3::FLAG_CHUNK_END | crate::blake3::FLAG_ROOT,
+                    );
+                    Some((msg[1] as u64 | (msg[0] as u64) << 32, hash))
+                }
             }
-
-            let mut msg = core::array::from_fn(|i| {
-                u32::from_le_bytes([msg[i * 4], msg[i * 4 + 1], msg[i * 4 + 2], msg[i * 4 + 3]])
-            });
-
-            let hash = crate::blake3::compress8(
-                &mut output_state,
-                &mut msg,
-                0,
-                self.message.salt_residual_len as u32 + 9,
-                self.message.flags,
-            );
-
-            Some((nonce, hash))
         } else {
             None
         }
@@ -1621,13 +1696,26 @@ impl crate::solver::Solver for CerberusSolver {
 
 #[cfg(test)]
 mod tests {
+    use crate::message::{CerberusBinaryMessage, CerberusDecimalMessage};
+
     use super::*;
 
     #[test]
-    fn test_solve_cerberus() {
-        crate::solver::tests::test_cerberus_validator::<CerberusSolver, _>(|prefix| {
-            CerberusMessage::new(prefix, 0).map(Into::into)
-        });
+    fn test_solve_cerberus_decimal() {
+        for i in 0..=1 {
+            crate::solver::tests::test_cerberus_decimal_validator::<CerberusSolver, _>(|prefix| {
+                Some(CerberusMessage::Decimal(CerberusDecimalMessage::new(prefix, i)?).into())
+            });
+        }
+    }
+
+    #[test]
+    fn test_solve_cerberus_binary() {
+        for i in 0..=1 {
+            crate::solver::tests::test_cerberus_binary_validator::<CerberusSolver, _>(|prefix| {
+                Some(CerberusMessage::Binary(CerberusBinaryMessage::new(prefix, i)).into())
+            });
+        }
     }
 
     #[test]

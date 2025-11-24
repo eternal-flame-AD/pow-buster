@@ -364,7 +364,10 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn test_cerberus_validator<S: Solver, F: for<'a> FnMut(&'a [u8]) -> Option<S>>(
+    pub(crate) fn test_cerberus_decimal_validator<
+        S: Solver,
+        F: for<'a> FnMut(&'a [u8]) -> Option<S>,
+    >(
         mut factory: F,
     ) {
         use std::io::Write;
@@ -416,6 +419,58 @@ pub(crate) mod tests {
                     "incorrect output: {} (seed_len: {})",
                     nonce, seed_len
                 );
+                assert!(hit);
+                assert!(check_small(&ref_hash_bytes, df as usize));
+            }
+        }
+    }
+
+    pub(crate) fn test_cerberus_binary_validator<
+        S: Solver,
+        F: for<'a> FnMut(&'a [u8]) -> Option<S>,
+    >(
+        mut factory: F,
+    ) {
+        for seed in [b"a", b"b"] {
+            let seed_hash = ::blake3::hash(seed).to_hex();
+
+            for df in (5..=7).chain(core::iter::once(9)) {
+                let mask = compute_mask_cerberus(df.try_into().unwrap());
+                eprintln!("mask: {:08x}", mask);
+
+                let Some(mut solver) = factory(seed) else {
+                    panic!("solver is None for seed: {:?}", seed);
+                };
+
+                let (nonce, hash) = solver
+                    .solve::<{ crate::solver::SOLVE_TYPE_MASK }>(0, mask as u64)
+                    .unwrap();
+                let mut msg = seed_hash.as_bytes().to_vec();
+                msg.extend_from_slice(nonce.rotate_right(32).to_le_bytes().as_slice());
+
+                fn check_small(hash: &[u8; 32], n: usize) -> bool {
+                    // https://github.com/sjtug/cerberus/blob/ee8f903f1311da7022aec68c8686739b40f4a168/pow/src/check_dubit.rs
+                    let first_word: u32 = (hash[0] as u32) << 24
+                        | (hash[1] as u32) << 16
+                        | (hash[2] as u32) << 8
+                        | (hash[3] as u32);
+                    first_word.leading_zeros() >= (n as u32 * 2)
+                }
+
+                let mut ref_hasher = blake3::Hasher::new();
+                ref_hasher.update(msg.as_slice());
+                let ref_hash = ref_hasher.finalize();
+                let ref_hash_bytes = ref_hash.as_bytes();
+                let ref_hash = core::array::from_fn(|i| {
+                    u32::from_le_bytes([
+                        ref_hash_bytes[i * 4],
+                        ref_hash_bytes[i * 4 + 1],
+                        ref_hash_bytes[i * 4 + 2],
+                        ref_hash_bytes[i * 4 + 3],
+                    ])
+                });
+                let hit = ((ref_hash[0] as u64) << 32 | (ref_hash[1] as u64)) & mask == 0;
+                assert_eq!(hash, ref_hash, "incorrect output: {}", nonce);
                 assert!(hit);
                 assert!(check_small(&ref_hash_bytes, df as usize));
             }

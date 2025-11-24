@@ -49,12 +49,20 @@
         myPort.onMessage.addListener(listener);
         myPort.postMessage({ type: "fetch-challenge", subtype: "anubis", url: window.location.href });
     } else if (cerberusChallenge = document.querySelector("script#challenge-script[x-challenge]")) {
-        const challengeJSONText = cerberusChallenge.getAttribute('x-challenge');
+        const thisScript = document.getElementById('challenge-script');
+        const challengeJSON = JSON.parse(cerberusChallenge.getAttribute('x-challenge'));
+        try {
+            challengeJSON.version = new URL(thisScript.src).searchParams.get('v');
+            if (challengeJSON.version && challengeJSON.version.startsWith('v')) {
+                challengeJSON.version = challengeJSON.version.slice(1);
+            }
+        } catch (error) {
+            console.error("Failed to get cerberus version: ", error);
+        }
         myPort.onMessage.addListener((result) => {
             console.log("received message from background script: ", result);
             if (result.type === "solution") {
                 ((hash, nonce) => {
-                    const thisScript = document.getElementById('challenge-script');
                     function createAnswerForm(hash, solution, baseURL, nonce, ts, signature) {
                         /* 
                         Copyright (c) 2025 Yanning Chen <self@lightquantum.me>
@@ -112,7 +120,7 @@
                 eval(result.script);
             }
         });
-        myPort.postMessage({ type: "challenge", challenge: challengeJSONText, multithreaded: true });
+        myPort.postMessage({ type: "challenge", challenge: JSON.stringify(challengeJSON), multithreaded: true });
     } else {
         console.log("No challenge found, cleaning up...");
         myPort.disconnect();
