@@ -852,14 +852,14 @@ pub async fn solve_goaway_js_pow_sha256(
                 .as_bytes()
                 .try_into()
                 .ok()
-                .and_then(GoAwayMessage::new_hex)
+                .and_then(|x| GoAwayMessage::new_hex(x, 0))
                 .or_else(|| {
                     config
                         .challenge()
                         .as_bytes()
                         .try_into()
                         .ok()
-                        .map(GoAwayMessage::new_bytes)
+                        .map(|x| GoAwayMessage::new_bytes(x, 0))
                 })
                 .ok_or(SolveError::UnexpectedChallengeFormat)?,
         );

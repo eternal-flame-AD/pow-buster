@@ -433,7 +433,8 @@ pub fn bench_proof_multi_threaded(c: &mut Criterion) {
                             }
                             let mut prefix = [0; 32];
                             prefix[..8].copy_from_slice(&this_work.to_le_bytes());
-                            let mut solver = GoAwaySolver::from(GoAwayMessage::new_bytes(&prefix));
+                            let mut solver =
+                                GoAwaySolver::from(GoAwayMessage::new_bytes(&prefix, 0));
                             core::hint::black_box(
                                 solver
                                     .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)

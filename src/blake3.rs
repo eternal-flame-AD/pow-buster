@@ -1,10 +1,7 @@
-#[cfg(all(target_arch = "x86_64", any(doc, target_feature = "avx512f")))]
+#[cfg(target_arch = "x86_64")]
 pub mod avx512;
 
-#[cfg(all(
-    any(target_arch = "x86_64", target_arch = "x86"),
-    any(doc, target_feature = "avx2")
-))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 pub mod avx2;
 
 #[cfg(target_arch = "wasm32")]

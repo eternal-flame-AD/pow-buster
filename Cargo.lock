@@ -1363,6 +1363,7 @@ dependencies = [
  "blake3",
  "cfg-if",
  "clap",
+ "cpufeatures",
  "criterion",
  "generic-array",
  "headers",

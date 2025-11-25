@@ -8,24 +8,6 @@ macro_rules! impl_decimal_solver {
             DoubleBlock($double_block_solver),
         }
 
-        impl $decimal_solver {
-            /// Get the attempted nonces.
-            pub fn get_attempted_nonces(&self) -> u64 {
-                match self {
-                    Self::SingleBlock(solver) => solver.get_attempted_nonces(),
-                    Self::DoubleBlock(solver) => solver.get_attempted_nonces(),
-                }
-            }
-
-            /// Set the limit.
-            pub fn set_limit(&mut self, limit: u64) {
-                match self {
-                    Self::SingleBlock(solver) => solver.set_limit(limit),
-                    Self::DoubleBlock(solver) => solver.set_limit(limit),
-                }
-            }
-        }
-
         impl From<SingleBlockMessage> for $decimal_solver {
             fn from(message: SingleBlockMessage) -> Self {
                 Self::SingleBlock(SingleBlockSolver::from(message))
@@ -52,6 +34,20 @@ macro_rules! impl_decimal_solver {
         }
 
         impl crate::solver::Solver for $decimal_solver {
+            fn set_limit(&mut self, limit: u64) {
+                match self {
+                    Self::SingleBlock(solver) => solver.set_limit(limit),
+                    Self::DoubleBlock(solver) => solver.set_limit(limit),
+                }
+            }
+
+            fn get_attempted_nonces(&self) -> u64 {
+                match self {
+                    Self::SingleBlock(solver) => solver.get_attempted_nonces(),
+                    Self::DoubleBlock(solver) => solver.get_attempted_nonces(),
+                }
+            }
+
             fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
                 match self {
                     Self::SingleBlock(solver) => solver.solve::<TYPE>(target, mask),

@@ -63,19 +63,13 @@ impl From<SingleBlockMessage> for SingleBlockSolver {
     }
 }
 
-impl SingleBlockSolver {
-    /// Set the limit.
-    pub fn set_limit(&mut self, limit: u64) {
+impl crate::solver::Solver for SingleBlockSolver {
+    fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
-
-    /// Get the attempted nonces.
-    pub fn get_attempted_nonces(&self) -> u64 {
+    fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
     }
-}
-
-impl crate::solver::Solver for SingleBlockSolver {
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         if self.message.no_trailing_zeros {
             self.solve_impl::<TYPE, true>(target, mask)
@@ -321,19 +315,13 @@ impl From<DoubleBlockMessage> for DoubleBlockSolver {
     }
 }
 
-impl DoubleBlockSolver {
-    /// Set the limit.
-    pub fn set_limit(&mut self, limit: u64) {
+impl crate::solver::Solver for DoubleBlockSolver {
+    fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
-
-    /// Get the attempted nonces.
-    pub fn get_attempted_nonces(&self) -> u64 {
+    fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
     }
-}
-
-impl crate::solver::Solver for DoubleBlockSolver {
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         let target = target & mask;
 
@@ -534,43 +522,32 @@ impl_decimal_solver!(
 ///
 /// Current implementation: 4 way SIMD with 1-round hotstart granularity.
 pub struct GoAwaySolver {
-    challenge: [u32; 8],
+    message: GoAwayMessage,
     attempted_nonces: u64,
     limit: u64,
-    fixed_high_word: Option<u32>,
 }
 
 impl From<GoAwayMessage> for GoAwaySolver {
-    fn from(challenge: GoAwayMessage) -> Self {
+    fn from(message: GoAwayMessage) -> Self {
         Self {
-            challenge: challenge.challenge,
+            message,
             attempted_nonces: 0,
             limit: u64::MAX,
-            fixed_high_word: None,
         }
     }
 }
 
 impl GoAwaySolver {
     const MSG_LEN: u32 = 10 * 4 * 8;
-
-    /// Set the limit.
-    pub fn set_limit(&mut self, limit: u64) {
-        self.limit = limit;
-    }
-
-    /// Get the attempted nonces.
-    pub fn get_attempted_nonces(&self) -> u64 {
-        self.attempted_nonces
-    }
-
-    /// Set the fixed high word.
-    pub fn set_fixed_high_word(&mut self, high_word: u32) {
-        self.fixed_high_word = Some(high_word);
-    }
 }
 
 impl crate::solver::Solver for GoAwaySolver {
+    fn set_limit(&mut self, limit: u64) {
+        self.limit = limit;
+    }
+    fn get_attempted_nonces(&self) -> u64 {
+        self.attempted_nonces
+    }
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         let target = target & mask;
 
@@ -581,29 +558,25 @@ impl crate::solver::Solver for GoAwaySolver {
             let lane_id_v = u32x4(0, 1, 2, 3);
 
             let mut prefix_state = crate::sha256::IV;
-            crate::sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
+            crate::sha256::ingest_message_prefix(&mut prefix_state, self.message.challenge);
 
-            for high_word in if let Some(high_word) = self.fixed_high_word {
-                high_word..=high_word
-            } else {
-                0..=u32::MAX
-            } {
+            {
                 let mut partial_state = prefix_state;
-                crate::sha256::sha2_arx::<8>(&mut partial_state, &[high_word]);
+                crate::sha256::sha2_arx::<8>(&mut partial_state, &[self.message.high_word]);
 
                 for low_word in (0..=u32::MAX).step_by(4) {
                     let mut state = core::array::from_fn(|i| u32x4_splat(partial_state[i]));
 
                     let mut msg = [
-                        u32x4_splat(self.challenge[0]),
-                        u32x4_splat(self.challenge[1]),
-                        u32x4_splat(self.challenge[2]),
-                        u32x4_splat(self.challenge[3]),
-                        u32x4_splat(self.challenge[4]),
-                        u32x4_splat(self.challenge[5]),
-                        u32x4_splat(self.challenge[6]),
-                        u32x4_splat(self.challenge[7]),
-                        u32x4_splat(high_word),
+                        u32x4_splat(self.message.challenge[0]),
+                        u32x4_splat(self.message.challenge[1]),
+                        u32x4_splat(self.message.challenge[2]),
+                        u32x4_splat(self.message.challenge[3]),
+                        u32x4_splat(self.message.challenge[4]),
+                        u32x4_splat(self.message.challenge[5]),
+                        u32x4_splat(self.message.challenge[6]),
+                        u32x4_splat(self.message.challenge[7]),
+                        u32x4_splat(self.message.high_word),
                         v128_or(u32x4_splat(low_word), lane_id_v),
                         u32x4_splat(u32::from_be_bytes([0x80, 0, 0, 0])),
                         u32x4_splat(0),
@@ -646,8 +619,8 @@ impl crate::solver::Solver for GoAwaySolver {
                             .unwrap();
                         let final_low_word = low_word | (success_lane_idx as u32);
                         let mut output_msg: [u32; 16] = [0; 16];
-                        output_msg[..8].copy_from_slice(&self.challenge);
-                        output_msg[8] = high_word;
+                        output_msg[..8].copy_from_slice(&self.message.challenge);
+                        output_msg[8] = self.message.high_word;
                         output_msg[9] = final_low_word;
                         output_msg[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
                         output_msg[15] = Self::MSG_LEN as _;
@@ -656,7 +629,7 @@ impl crate::solver::Solver for GoAwaySolver {
                         crate::sha256::digest_block(&mut final_sha_state, &output_msg);
 
                         return Some((
-                            (high_word as u64) << 32 | final_low_word as u64,
+                            (self.message.high_word as u64) << 32 | final_low_word as u64,
                             final_sha_state,
                         ));
                     }
@@ -681,18 +654,6 @@ pub struct CerberusSolver {
     message: CerberusMessage,
     attempted_nonces: u64,
     limit: u64,
-}
-
-impl CerberusSolver {
-    /// Set the limit.
-    pub fn set_limit(&mut self, limit: u64) {
-        self.limit = limit;
-    }
-
-    /// Get the attempted nonces.
-    pub fn get_attempted_nonces(&self) -> u64 {
-        self.attempted_nonces
-    }
 }
 
 impl From<CerberusMessage> for CerberusSolver {
@@ -782,6 +743,12 @@ impl CerberusSolver {
 }
 
 impl crate::solver::Solver for CerberusSolver {
+    fn set_limit(&mut self, limit: u64) {
+        self.limit = limit;
+    }
+    fn get_attempted_nonces(&self) -> u64 {
+        self.attempted_nonces
+    }
     fn solve_nonce_only<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<u64> {
         match &self.message {
             CerberusMessage::Decimal(message) => {
@@ -1047,14 +1014,17 @@ mod tests {
     #[test]
     fn test_solve_goaway() {
         crate::solver::tests::test_goaway_validator::<GoAwaySolver, _>(|prefix| {
-            GoAwaySolver::from(GoAwayMessage::new(core::array::from_fn(|i| {
-                u32::from_be_bytes([
-                    prefix[i * 4],
-                    prefix[i * 4 + 1],
-                    prefix[i * 4 + 2],
-                    prefix[i * 4 + 3],
-                ])
-            })))
+            GoAwaySolver::from(GoAwayMessage::new(
+                core::array::from_fn(|i| {
+                    u32::from_be_bytes([
+                        prefix[i * 4],
+                        prefix[i * 4 + 1],
+                        prefix[i * 4 + 2],
+                        prefix[i * 4 + 3],
+                    ])
+                }),
+                0,
+            ))
         });
     }
 }

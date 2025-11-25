@@ -424,7 +424,7 @@ fn main() {
             for i in 0..40u8 {
                 let mut prefix = [0u8; 32];
                 prefix[0] = i;
-                let mut solver = GoAwaySolver::from(GoAwayMessage::new_bytes(&prefix));
+                let mut solver = GoAwaySolver::from(GoAwayMessage::new_bytes(&prefix, 0));
                 let inner_begin = Instant::now();
                 let nonce = solver
                     .solve_nonce_only::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)
@@ -532,13 +532,14 @@ fn main() {
                             {
                                 assert_ne!(target >> 32, 0, "64-bit comparison is required for this difficulty, rebuild with `compare-64bit` feature");
                             }
-                            let message = GoAwayMessage::new_hex(
+                            let mut message = GoAwayMessage::new_hex(
                                 salt_bytes.try_into().expect("invalid salt length"),
+                                0,
                             )
                             .expect("invalid salt: must be hex");
-                            let mut solver = GoAwaySolver::from(message);
-                            for high_word in (ix..).step_by(num_threads.get() as usize) {
-                                solver.set_fixed_high_word(high_word);
+                        for high_word in (ix..).step_by(num_threads.get() as usize) {
+                                message.set_high_word(high_word);
+                                let mut solver = GoAwaySolver::from(message.clone());
                                 let result = solver
                                     .solve::<{ pow_buster::solver::SOLVE_TYPE_MASK }>(target, mask);
                                 nonce_attempted

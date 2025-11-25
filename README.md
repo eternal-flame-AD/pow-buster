@@ -65,12 +65,10 @@ Recommended CPU feature flags in order of preference (Tagged releases will have 
 - `-Ctarget-cpu=native`
 - `-Ctarget-feature=+avx512vbmi` (Artifacts released on top of x86-64-v4)
 - `-Ctarget-feature=+avx512f` (Artifacts released on top of x86-64-v3)
-- `-Ctarget-feature=+sha,+avx2` (Artifacts released on top of x86-64-v2)
-- `-Ctarget-feature=+avx2` (only BLAKE3 will be accelerated!)
-- `-Ctarget-feature=+sha,+sse4_1` (only SHA-2 will be accelerated!)
+- `-Ctarget-cpu=x86-64-v2` (Will auto dispatch to accelerated solvers at runtime)
 
 ```sh
-RUSTFLAGS="-Ctarget-cpu=native" cargo build --release --features cli
+RUSTFLAGS="-Ctarget-cpu=x86-64-v2" cargo build --release --features cli
 ```
 
 Optional Features:
@@ -78,7 +76,7 @@ Optional Features:
 - `compare-64bit`: Compare 64-bit words instead of 32-bit words at ~5% penalty, almost never needed for realistic challenges. Not compatible with WASM.
 - `client`: End-to-end solver client, required for most non-computational functionality.
 - `live-throughput-test`: End-to-end multi-worker throughput benchmark.
-- `server`: Solver-as-a-Service API. It is recommended to also use `--profile release-unwinding` instead of `--release` to prevent unexpected panics from aborting the server.
+- `server`: Solver-as-a-Service API.
 - `server-wasm`: Solver-as-a-Service API (with WASM simd128 solver, build first with `./build_wasm.sh`).
 - `tracing`: Write tracing for debugging.
 - `tracing-subscriber`: For binary releases only, writes tracing logs to console.

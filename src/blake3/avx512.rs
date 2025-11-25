@@ -154,6 +154,7 @@ pub(crate) fn compress_mb16<const CONSTANT_WORD_COUNT: usize, const PATCH_1: usi
     }
 }
 
+#[cfg(target_feature = "avx512f")]
 #[cfg(test)]
 mod tests {
     use blake3::Hasher;
