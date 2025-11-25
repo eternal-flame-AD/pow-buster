@@ -182,28 +182,28 @@ cfg_if::cfg_if! {
             crate::solver::avx512::RequiredFeatures,
             crate::message::SingleBlockMessage,
             crate::solver::avx512::SingleBlockSolver,
-            crate::solver::sha_ni::RequiredFeatures,
+            crate::solver::sha_ni::SingleBlockSolver,
         >;
         /// Double block solver
         pub type DoubleBlockSolver = crate::solver::SolverRouter<
             crate::solver::avx512::RequiredFeatures,
             crate::message::DoubleBlockMessage,
             crate::solver::avx512::DoubleBlockSolver,
-            crate::solver::sha_ni::RequiredFeatures,
+            crate::solver::sha_ni::DoubleBlockSolver,
         >;
         /// Dynamic dispatching Decimal solver
         pub type DecimalSolver = crate::solver::SolverRouter<
             crate::solver::avx512::RequiredFeatures,
             crate::message::DecimalMessage,
             crate::solver::avx512::DecimalSolver,
-            crate::solver::sha_ni::RequiredFeatures,
+            crate::solver::sha_ni::DecimalSolver,
         >;
         /// Go away solver
         pub type GoAwaySolver = crate::solver::SolverRouter<
             crate::solver::avx512::RequiredFeatures,
             crate::message::GoAwayMessage,
             crate::solver::avx512::GoAwaySolver,
-            crate::solver::sha_ni::RequiredFeatures,
+            crate::solver::sha_ni::GoAwaySolver,
         >;
         /// Binary solver
         pub type BinarySolver = crate::solver::SolverRouter<
@@ -288,7 +288,7 @@ cfg_if::cfg_if! {
             crate::solver::avx512::RequiredFeatures,
             crate::message::CerberusMessage,
             crate::solver::avx512::CerberusSolver,
-            crate::solver::safe::CerberusSolver,
+            crate::solver::avx2::CerberusSolver,
         >;
         /// Blake3 solver name
         pub const BLAKE3_SOLVER_NAME: &str = "AVX2";
