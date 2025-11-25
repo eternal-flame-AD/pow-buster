@@ -100,6 +100,8 @@ jobs:
           cp target/scalar-build/x86_64-unknown-linux-musl/release/pow-buster artifacts/pow-buster
           cp browser-addon/web-ext-artifacts/pow_buster-*.zip artifacts/pow-buster-browser-extension.xpi
 
+          ls -la artifacts/
+
       # Upload artifacts for tagged builds
       - if: startsWith(github.ref, 'refs/tags/v')
         uses: svenstaro/upload-release-action@2.9.0
