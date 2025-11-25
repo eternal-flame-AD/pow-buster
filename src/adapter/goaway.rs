@@ -76,3 +76,20 @@ impl GoAwayConfig {
         (None, attempted_nonces)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_goaway_solver_terminates() {
+        let config = GoAwayConfig {
+            challenge: String::from("abc"),
+            difficulty: core::num::NonZeroU8::new(20).unwrap(),
+        };
+
+        let (result, attempted_nonces) = config.solve_with_limit(1000);
+        assert!(result.is_none());
+        assert!(attempted_nonces < 2000);
+    }
+}
