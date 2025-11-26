@@ -6,7 +6,7 @@ repository = "https://github.com/eternal-flame-AD/pow-buster"
 categories = ["cryptography"]
 keywords = ["sha-2", "captcha", "proof-of-work", "mining"]
 authors = ["Yumechi <yume@yumechi.jp>"]
-version = "0.1.2"
+version = "0.2.0"
 edition = "2024"
 exclude = ["/browser-addon", "/logs", "/emails", "/.vscode"]
 
