@@ -9,6 +9,24 @@ use crate::{
     message::{DecimalMessage, DoubleBlockMessage, GoAwayMessage, SingleBlockMessage},
 };
 
+cpufeatures::new!(sse41sha, "sha", "sse4.1");
+
+#[derive(Debug, Copy, Clone)]
+/// Required features for SHA-NI solver.
+pub struct RequiredFeatures;
+
+impl Default for RequiredFeatures {
+    fn default() -> Self {
+        Self
+    }
+}
+
+impl crate::solver::CpuIDToken for RequiredFeatures {
+    fn get() -> bool {
+        sse41sha::get()
+    }
+}
+
 /// SHA-NI decimal nonce single block solver.
 ///
 ///
@@ -41,19 +59,14 @@ impl From<SingleBlockMessage> for SingleBlockSolver {
     }
 }
 
-impl SingleBlockSolver {
-    /// Set the limit.
-    pub fn set_limit(&mut self, limit: u64) {
+impl crate::solver::Solver for SingleBlockSolver {
+    fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
 
-    /// Get the attempted nonces.
-    pub fn get_attempted_nonces(&self) -> u64 {
+    fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
     }
-}
-
-impl crate::solver::Solver for SingleBlockSolver {
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         if self.message.no_trailing_zeros {
             self.solve_impl::<TYPE, true>(target, mask)
@@ -84,339 +97,30 @@ impl SingleBlockSolver {
 
         let lane_id_1_word_idx = (self.message.digit_index + 1) / 4;
 
-        #[inline(never)]
-        fn solve_inner<
-            const DIGIT_WORD_IDX0_DIV_4_TIMES_4: usize,
-            const DIGIT_WORD_IDX0_DIV_4: usize,
-            const DIGIT_WORD_IDX0_MOD_4: usize,
-            const DIGIT_WORD_IDX1_INC: bool,
-            const TYPE: u8,
-            const NO_TRAILING_ZEROS: bool,
-            const ON_REGISTER_BOUNDARY: bool,
-        >(
-            this: &mut SingleBlockSolver,
-            target: u64,
-            mask: u64,
-        ) -> Option<u64> {
-            let mut partial_state = Align16(this.message.prefix_state);
-            crate::sha256::ingest_message_prefix::<{ DIGIT_WORD_IDX0_DIV_4_TIMES_4 }>(
-                &mut partial_state,
-                core::array::from_fn(|i| this.message.message[i]),
-            );
-            let prepared_state = crate::sha256::sha_ni::prepare_state(&partial_state);
-            let lane_id_0_byte_idx = this.message.digit_index % 4;
-            let lane_id_1_byte_idx = (this.message.digit_index + 1) % 4;
-
-            // move AB into position for feedback
-            let feedback_ab = unsafe {
-                let lows = _mm_cvtsi64x_si128(
-                    ((this.message.prefix_state[0] as u64) << 32
-                        | this.message.prefix_state[1] as u64) as _,
-                );
-
-                _mm_shuffle_epi32(lows, 0b01001010)
-            };
-
-            for nonce_prefix_start in (10u32..=96).step_by(4) {
-                unsafe {
-                    const fn to_ascii_u32(input: u32) -> u32 {
-                        let high_digit = input / 10;
-                        let low_digit = input % 10;
-                        u32::from_be_bytes([0, 0, high_digit as u8 + b'0', low_digit as u8 + b'0'])
-                    }
-                    let lane_index_values = [
-                        to_ascii_u32(nonce_prefix_start),
-                        to_ascii_u32(nonce_prefix_start + 1),
-                        to_ascii_u32(nonce_prefix_start + 2),
-                        to_ascii_u32(nonce_prefix_start + 3),
-                    ];
-
-                    let lane_id_1_or_value = core::array::from_fn(|i| {
-                        (lane_index_values[i] & 0xff) << ((3 - lane_id_1_byte_idx) * 8)
-                    });
-
-                    let lane_id_0_or_value = core::array::from_fn(|i| {
-                        let mut r = (lane_index_values[i] >> 8) << ((3 - lane_id_0_byte_idx) * 8);
-                        if !DIGIT_WORD_IDX1_INC {
-                            r |= lane_id_1_or_value[i]
-                        }
-                        r
-                    });
-
-                    struct LaneIdPlucker<
-                        'a,
-                        const DIGIT_WORD_IDX0_DIV_4: usize,
-                        const DIGIT_WORD_IDX0_MOD_4: usize,
-                        const DIGIT_WORD_IDX1_INC: bool,
-                    > {
-                        lane_0_or_value: &'a [u32; 4],
-                        lane_1_or_value: &'a [u32; 4],
-                    }
-
-                    impl<
-                        'a,
-                        const DIGIT_WORD_IDX0_DIV_4: usize,
-                        const DIGIT_WORD_IDX0_MOD_4: usize,
-                        const DIGIT_WORD_IDX1_INC: bool,
-                    >
-                        LaneIdPlucker<
-                            'a,
-                            DIGIT_WORD_IDX0_DIV_4,
-                            DIGIT_WORD_IDX0_MOD_4,
-                            DIGIT_WORD_IDX1_INC,
-                        >
-                    {
-                        #[inline(always)]
-                        fn fetch_msg_or(&self, idx: usize, lane: usize) -> u32 {
-                            if idx == DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 {
-                                self.lane_0_or_value[lane]
-                            } else if DIGIT_WORD_IDX1_INC
-                                && idx == DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 + 1
-                            {
-                                self.lane_1_or_value[lane]
-                            } else {
-                                0
-                            }
-                        }
-                    }
-
-                    impl<
-                        'a,
-                        const DIGIT_WORD_IDX0_DIV_4: usize,
-                        const DIGIT_WORD_IDX0_MOD_4: usize,
-                        const DIGIT_WORD_IDX1_INC: bool,
-                    > crate::sha256::sha_ni::Plucker
-                        for LaneIdPlucker<
-                            'a,
-                            DIGIT_WORD_IDX0_DIV_4,
-                            DIGIT_WORD_IDX0_MOD_4,
-                            DIGIT_WORD_IDX1_INC,
-                        >
-                    {
-                        #[inline(always)]
-                        fn pluck_qword0(&mut self, lane: usize, w: &mut __m128i) {
-                            unsafe {
-                                *w = _mm_or_si128(
-                                    *w,
-                                    _mm_setr_epi32(
-                                        self.fetch_msg_or(0, lane) as _,
-                                        self.fetch_msg_or(1, lane) as _,
-                                        self.fetch_msg_or(2, lane) as _,
-                                        self.fetch_msg_or(3, lane) as _,
-                                    ),
-                                );
-                            }
-                        }
-                        #[inline(always)]
-                        fn pluck_qword1(&mut self, lane: usize, w: &mut __m128i) {
-                            unsafe {
-                                *w = _mm_or_si128(
-                                    *w,
-                                    _mm_setr_epi32(
-                                        self.fetch_msg_or(4, lane) as _,
-                                        self.fetch_msg_or(5, lane) as _,
-                                        self.fetch_msg_or(6, lane) as _,
-                                        self.fetch_msg_or(7, lane) as _,
-                                    ),
-                                );
-                            }
-                        }
-                        #[inline(always)]
-                        fn pluck_qword2(&mut self, lane: usize, w: &mut __m128i) {
-                            unsafe {
-                                *w = _mm_or_si128(
-                                    *w,
-                                    _mm_setr_epi32(
-                                        self.fetch_msg_or(8, lane) as _,
-                                        self.fetch_msg_or(9, lane) as _,
-                                        self.fetch_msg_or(10, lane) as _,
-                                        self.fetch_msg_or(11, lane) as _,
-                                    ),
-                                );
-                            }
-                        }
-                        #[inline(always)]
-                        fn pluck_qword3(&mut self, lane: usize, w: &mut __m128i) {
-                            unsafe {
-                                *w = _mm_or_si128(
-                                    *w,
-                                    _mm_setr_epi32(
-                                        self.fetch_msg_or(12, lane) as _,
-                                        self.fetch_msg_or(13, lane) as _,
-                                        self.fetch_msg_or(14, lane) as _,
-                                        self.fetch_msg_or(15, lane) as _,
-                                    ),
-                                );
-                            }
-                        }
-                    }
-
-                    #[cfg(target_feature = "avx2")]
-                    let mut itoa_buf = if NO_TRAILING_ZEROS && ON_REGISTER_BOUNDARY {
-                        Align16(*b"0000\x80100")
-                    } else {
-                        Align16(*b"0000\x80000")
-                    };
-
-                    let mut next_inner_key = if NO_TRAILING_ZEROS { 2 } else { 1 };
-                    while next_inner_key <= 10_000_000 {
-                        let mut state0 = prepared_state;
-                        let mut state1 = prepared_state;
-                        let mut state2 = prepared_state;
-                        let mut state3 = prepared_state;
-
-                        crate::sha256::sha_ni::multiway_arx_abef_cdgh::<
-                            { DIGIT_WORD_IDX0_DIV_4 },
-                            4,
-                            _,
-                        >(
-                            [&mut state0, &mut state1, &mut state2, &mut state3],
-                            (&this.message.message).into(),
-                            LaneIdPlucker::<
-                                DIGIT_WORD_IDX0_DIV_4,
-                                DIGIT_WORD_IDX0_MOD_4,
-                                DIGIT_WORD_IDX1_INC,
-                            > {
-                                lane_0_or_value: &lane_id_0_or_value,
-                                lane_1_or_value: &lane_id_1_or_value,
-                            },
-                        );
-
-                        // paddd is basically free on modern CPUs so do the feedback uncondtionally
-                        state0[0] = _mm_add_epi32(state0[0], feedback_ab);
-                        state1[0] = _mm_add_epi32(state1[0], feedback_ab);
-                        state2[0] = _mm_add_epi32(state2[0], feedback_ab);
-                        state3[0] = _mm_add_epi32(state3[0], feedback_ab);
-
-                        let cmp_fn = |x: &u64, y: &u64| {
-                            if TYPE == crate::solver::SOLVE_TYPE_GT {
-                                x > y
-                            } else if TYPE == crate::solver::SOLVE_TYPE_LT {
-                                x < y
-                            } else {
-                                x & mask == y & mask
-                            }
-                        };
-
-                        let success_lane_idx = {
-                            let result_abs = [
-                                _mm_extract_epi64(state0[0], 1) as u64,
-                                _mm_extract_epi64(state1[0], 1) as u64,
-                                _mm_extract_epi64(state2[0], 1) as u64,
-                                _mm_extract_epi64(state3[0], 1) as u64,
-                            ];
-
-                            result_abs.iter().position(|x| cmp_fn(x, &target))
-                        };
-
-                        if let Some(success_lane_idx) = success_lane_idx {
-                            crate::unlikely();
-
-                            let nonce_prefix = nonce_prefix_start + success_lane_idx as u32;
-
-                            // stamp the lane ID back onto the message
-                            {
-                                let message_bytes = decompose_blocks_mut(&mut this.message.message);
-                                *message_bytes.get_unchecked_mut(
-                                    *SWAP_DWORD_BYTE_ORDER.get_unchecked(this.message.digit_index),
-                                ) = (nonce_prefix / 10) as u8 + b'0';
-                                *message_bytes.get_unchecked_mut(
-                                    *SWAP_DWORD_BYTE_ORDER
-                                        .get_unchecked(this.message.digit_index + 1),
-                                ) = (nonce_prefix % 10) as u8 + b'0';
-                            }
-
-                            let mut prev_inner_key = next_inner_key - 1;
-                            if NO_TRAILING_ZEROS && prev_inner_key % 10 == 0 {
-                                prev_inner_key -= 1;
-                            }
-
-                            return Some(nonce_prefix as u64 * 10u64.pow(7) + prev_inner_key);
-                        }
-
-                        if NO_TRAILING_ZEROS && next_inner_key % 10 == 0 {
-                            next_inner_key += 1;
-                        }
-
-                        #[cfg(target_feature = "avx2")]
-                        {
-                            if ON_REGISTER_BOUNDARY {
-                                crate::strings::simd_itoa8::<7, true, 0x80>(
-                                    this.message
-                                        .message
-                                        .as_mut_ptr()
-                                        .add(DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 + 1)
-                                        .cast::<Align16<[u8; 8]>>()
-                                        .as_mut()
-                                        .unwrap(),
-                                    next_inner_key as u32,
-                                );
-                            } else {
-                                crate::strings::simd_itoa8::<7, false, 0x80>(
-                                    &mut itoa_buf,
-                                    next_inner_key as u32,
-                                );
-                                for i in 0..7 {
-                                    let message_bytes =
-                                        decompose_blocks_mut(&mut this.message.message);
-                                    *message_bytes.get_unchecked_mut(
-                                        *SWAP_DWORD_BYTE_ORDER
-                                            .get_unchecked(this.message.digit_index + i + 2),
-                                    ) = itoa_buf[i];
-                                }
-                            }
-                        }
-
-                        #[cfg(not(target_feature = "avx2"))]
-                        {
-                            let mut key_copy = next_inner_key;
-                            {
-                                let message_bytes = decompose_blocks_mut(&mut this.message.message);
-
-                                for i in (0..7).rev() {
-                                    let output = key_copy % 10;
-                                    key_copy /= 10;
-                                    *message_bytes.get_unchecked_mut(
-                                        *SWAP_DWORD_BYTE_ORDER
-                                            .get_unchecked(this.message.digit_index + i + 2),
-                                    ) = output as u8 + b'0';
-                                }
-                            }
-                        }
-
-                        this.attempted_nonces += 4;
-                        if this.attempted_nonces >= this.limit {
-                            return None;
-                        }
-                        next_inner_key += 1;
-                    }
-                }
-            }
-            None
-        }
-
         macro_rules! dispatch {
             ($idx0_0:literal, $idx0_1:literal, $idx0_2:literal, $lane_id_1_word_idx_inc:literal) => {
-                if self.message.digit_index % 4 == 2 {
-                    solve_inner::<
-                        { $idx0_0 },
-                        { $idx0_1 },
-                        { $idx0_2 },
-                        { $lane_id_1_word_idx_inc },
-                        TYPE,
-                        NO_TRAILING_ZEROS,
-                        true,
-                    >(self, target, mask)
-                } else {
-                    solve_inner::<
-                        { $idx0_0 },
-                        { $idx0_1 },
-                        { $idx0_2 },
-                        { $lane_id_1_word_idx_inc },
-                        TYPE,
-                        NO_TRAILING_ZEROS,
-                        false,
-                    >(self, target, mask)
+                unsafe {
+                    if self.message.digit_index % 4 == 2 {
+                        self.solve_inner::<
+                                                            { $idx0_0 },
+                                                            { $idx0_1 },
+                                                            { $idx0_2 },
+                                                            { $lane_id_1_word_idx_inc },
+                                                            TYPE,
+                                                            NO_TRAILING_ZEROS,
+                                                            true,
+                                                        >(target, mask)
+                    } else {
+                        self.solve_inner::<
+                                                            { $idx0_0 },
+                                                            { $idx0_1 },
+                                                            { $idx0_2 },
+                                                            { $lane_id_1_word_idx_inc },
+                                                            TYPE,
+                                                            NO_TRAILING_ZEROS,
+                                                            false,
+                                                        >(target, mask)
+                    }
                 }
             };
             ($idx0_0:literal, $idx0_1:literal, $idx0_2:literal) => {
@@ -451,6 +155,312 @@ impl SingleBlockSolver {
 
         Some((nonce + self.message.nonce_addend, final_sha_state))
     }
+
+    #[inline(never)]
+    #[target_feature(enable = "sse4.1,sha")]
+    fn solve_inner<
+        const DIGIT_WORD_IDX0_DIV_4_TIMES_4: usize,
+        const DIGIT_WORD_IDX0_DIV_4: usize,
+        const DIGIT_WORD_IDX0_MOD_4: usize,
+        const DIGIT_WORD_IDX1_INC: bool,
+        const TYPE: u8,
+        const NO_TRAILING_ZEROS: bool,
+        const ON_REGISTER_BOUNDARY: bool,
+    >(
+        &mut self,
+        target: u64,
+        mask: u64,
+    ) -> Option<u64> {
+        let mut partial_state = Align16(self.message.prefix_state);
+        crate::sha256::ingest_message_prefix::<{ DIGIT_WORD_IDX0_DIV_4_TIMES_4 }>(
+            &mut partial_state,
+            core::array::from_fn(|i| self.message.message[i]),
+        );
+        let prepared_state = crate::sha256::sha_ni::prepare_state(&partial_state);
+        let lane_id_0_byte_idx = self.message.digit_index % 4;
+        let lane_id_1_byte_idx = (self.message.digit_index + 1) % 4;
+
+        // move AB into position for feedback
+        unsafe {
+            let feedback_ab = {
+                let lows = _mm_cvtsi64x_si128(
+                    ((self.message.prefix_state[0] as u64) << 32
+                        | self.message.prefix_state[1] as u64) as _,
+                );
+
+                _mm_shuffle_epi32(lows, 0b01001010)
+            };
+
+            for nonce_prefix_start in (10u32..=96).step_by(4) {
+                const fn to_ascii_u32(input: u32) -> u32 {
+                    let high_digit = input / 10;
+                    let low_digit = input % 10;
+                    u32::from_be_bytes([0, 0, high_digit as u8 + b'0', low_digit as u8 + b'0'])
+                }
+                let lane_index_values = [
+                    to_ascii_u32(nonce_prefix_start),
+                    to_ascii_u32(nonce_prefix_start + 1),
+                    to_ascii_u32(nonce_prefix_start + 2),
+                    to_ascii_u32(nonce_prefix_start + 3),
+                ];
+
+                let lane_id_1_or_value = core::array::from_fn(|i| {
+                    (lane_index_values[i] & 0xff) << ((3 - lane_id_1_byte_idx) * 8)
+                });
+
+                let lane_id_0_or_value = core::array::from_fn(|i| {
+                    let mut r = (lane_index_values[i] >> 8) << ((3 - lane_id_0_byte_idx) * 8);
+                    if !DIGIT_WORD_IDX1_INC {
+                        r |= lane_id_1_or_value[i]
+                    }
+                    r
+                });
+
+                struct LaneIdPlucker<
+                    'a,
+                    const DIGIT_WORD_IDX0_DIV_4: usize,
+                    const DIGIT_WORD_IDX0_MOD_4: usize,
+                    const DIGIT_WORD_IDX1_INC: bool,
+                > {
+                    lane_0_or_value: &'a [u32; 4],
+                    lane_1_or_value: &'a [u32; 4],
+                }
+
+                impl<
+                    'a,
+                    const DIGIT_WORD_IDX0_DIV_4: usize,
+                    const DIGIT_WORD_IDX0_MOD_4: usize,
+                    const DIGIT_WORD_IDX1_INC: bool,
+                >
+                    LaneIdPlucker<
+                        'a,
+                        DIGIT_WORD_IDX0_DIV_4,
+                        DIGIT_WORD_IDX0_MOD_4,
+                        DIGIT_WORD_IDX1_INC,
+                    >
+                {
+                    #[inline(always)]
+                    fn fetch_msg_or(&self, idx: usize, lane: usize) -> u32 {
+                        if idx == DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 {
+                            self.lane_0_or_value[lane]
+                        } else if DIGIT_WORD_IDX1_INC
+                            && idx == DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 + 1
+                        {
+                            self.lane_1_or_value[lane]
+                        } else {
+                            0
+                        }
+                    }
+                }
+
+                impl<
+                    'a,
+                    const DIGIT_WORD_IDX0_DIV_4: usize,
+                    const DIGIT_WORD_IDX0_MOD_4: usize,
+                    const DIGIT_WORD_IDX1_INC: bool,
+                > crate::sha256::sha_ni::Plucker
+                    for LaneIdPlucker<
+                        'a,
+                        DIGIT_WORD_IDX0_DIV_4,
+                        DIGIT_WORD_IDX0_MOD_4,
+                        DIGIT_WORD_IDX1_INC,
+                    >
+                {
+                    #[inline(always)]
+                    fn pluck_qword0(&mut self, lane: usize, w: &mut __m128i) {
+                        unsafe {
+                            *w = _mm_or_si128(
+                                *w,
+                                _mm_setr_epi32(
+                                    self.fetch_msg_or(0, lane) as _,
+                                    self.fetch_msg_or(1, lane) as _,
+                                    self.fetch_msg_or(2, lane) as _,
+                                    self.fetch_msg_or(3, lane) as _,
+                                ),
+                            );
+                        }
+                    }
+                    #[inline(always)]
+                    fn pluck_qword1(&mut self, lane: usize, w: &mut __m128i) {
+                        unsafe {
+                            *w = _mm_or_si128(
+                                *w,
+                                _mm_setr_epi32(
+                                    self.fetch_msg_or(4, lane) as _,
+                                    self.fetch_msg_or(5, lane) as _,
+                                    self.fetch_msg_or(6, lane) as _,
+                                    self.fetch_msg_or(7, lane) as _,
+                                ),
+                            );
+                        }
+                    }
+                    #[inline(always)]
+                    fn pluck_qword2(&mut self, lane: usize, w: &mut __m128i) {
+                        unsafe {
+                            *w = _mm_or_si128(
+                                *w,
+                                _mm_setr_epi32(
+                                    self.fetch_msg_or(8, lane) as _,
+                                    self.fetch_msg_or(9, lane) as _,
+                                    self.fetch_msg_or(10, lane) as _,
+                                    self.fetch_msg_or(11, lane) as _,
+                                ),
+                            );
+                        }
+                    }
+                    #[inline(always)]
+                    fn pluck_qword3(&mut self, lane: usize, w: &mut __m128i) {
+                        unsafe {
+                            *w = _mm_or_si128(
+                                *w,
+                                _mm_setr_epi32(
+                                    self.fetch_msg_or(12, lane) as _,
+                                    self.fetch_msg_or(13, lane) as _,
+                                    self.fetch_msg_or(14, lane) as _,
+                                    self.fetch_msg_or(15, lane) as _,
+                                ),
+                            );
+                        }
+                    }
+                }
+
+                #[cfg(target_feature = "avx2")]
+                let mut itoa_buf = if NO_TRAILING_ZEROS && ON_REGISTER_BOUNDARY {
+                    Align16(*b"0000\x80100")
+                } else {
+                    Align16(*b"0000\x80000")
+                };
+
+                let mut next_inner_key = if NO_TRAILING_ZEROS { 2 } else { 1 };
+                while next_inner_key <= 10_000_000 {
+                    let mut state0 = prepared_state;
+                    let mut state1 = prepared_state;
+                    let mut state2 = prepared_state;
+                    let mut state3 = prepared_state;
+
+                    crate::sha256::sha_ni::multiway_arx_abef_cdgh::<{ DIGIT_WORD_IDX0_DIV_4 }, 4, _>(
+                        [&mut state0, &mut state1, &mut state2, &mut state3],
+                        (&self.message.message).into(),
+                        LaneIdPlucker::<
+                            DIGIT_WORD_IDX0_DIV_4,
+                            DIGIT_WORD_IDX0_MOD_4,
+                            DIGIT_WORD_IDX1_INC,
+                        > {
+                            lane_0_or_value: &lane_id_0_or_value,
+                            lane_1_or_value: &lane_id_1_or_value,
+                        },
+                    );
+
+                    // paddd is basically free on modern CPUs so do the feedback uncondtionally
+                    state0[0] = _mm_add_epi32(state0[0], feedback_ab);
+                    state1[0] = _mm_add_epi32(state1[0], feedback_ab);
+                    state2[0] = _mm_add_epi32(state2[0], feedback_ab);
+                    state3[0] = _mm_add_epi32(state3[0], feedback_ab);
+
+                    let cmp_fn = |x: &u64, y: &u64| {
+                        if TYPE == crate::solver::SOLVE_TYPE_GT {
+                            x > y
+                        } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                            x < y
+                        } else {
+                            x & mask == y & mask
+                        }
+                    };
+
+                    let success_lane_idx = {
+                        let result_abs = [
+                            _mm_extract_epi64(state0[0], 1) as u64,
+                            _mm_extract_epi64(state1[0], 1) as u64,
+                            _mm_extract_epi64(state2[0], 1) as u64,
+                            _mm_extract_epi64(state3[0], 1) as u64,
+                        ];
+
+                        result_abs.iter().position(|x| cmp_fn(x, &target))
+                    };
+
+                    if let Some(success_lane_idx) = success_lane_idx {
+                        crate::unlikely();
+
+                        let nonce_prefix = nonce_prefix_start + success_lane_idx as u32;
+
+                        // stamp the lane ID back onto the message
+                        {
+                            let message_bytes = decompose_blocks_mut(&mut self.message.message);
+                            *message_bytes.get_unchecked_mut(
+                                *SWAP_DWORD_BYTE_ORDER.get_unchecked(self.message.digit_index),
+                            ) = (nonce_prefix / 10) as u8 + b'0';
+                            *message_bytes.get_unchecked_mut(
+                                *SWAP_DWORD_BYTE_ORDER.get_unchecked(self.message.digit_index + 1),
+                            ) = (nonce_prefix % 10) as u8 + b'0';
+                        }
+
+                        let mut prev_inner_key = next_inner_key - 1;
+                        if NO_TRAILING_ZEROS && prev_inner_key % 10 == 0 {
+                            prev_inner_key -= 1;
+                        }
+
+                        return Some(nonce_prefix as u64 * 10u64.pow(7) + prev_inner_key);
+                    }
+
+                    if NO_TRAILING_ZEROS && next_inner_key % 10 == 0 {
+                        next_inner_key += 1;
+                    }
+
+                    #[cfg(target_feature = "avx2")]
+                    {
+                        if ON_REGISTER_BOUNDARY {
+                            crate::strings::simd_itoa8::<7, true, 0x80>(
+                                self.message
+                                    .message
+                                    .as_mut_ptr()
+                                    .add(DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 + 1)
+                                    .cast::<Align16<[u8; 8]>>()
+                                    .as_mut()
+                                    .unwrap(),
+                                next_inner_key as u32,
+                            );
+                        } else {
+                            crate::strings::simd_itoa8::<7, false, 0x80>(
+                                &mut itoa_buf,
+                                next_inner_key as u32,
+                            );
+                            for i in 0..7 {
+                                let message_bytes = decompose_blocks_mut(&mut self.message.message);
+                                *message_bytes.get_unchecked_mut(
+                                    *SWAP_DWORD_BYTE_ORDER
+                                        .get_unchecked(self.message.digit_index + i + 2),
+                                ) = itoa_buf[i];
+                            }
+                        }
+                    }
+
+                    #[cfg(not(target_feature = "avx2"))]
+                    {
+                        let mut key_copy = next_inner_key;
+                        {
+                            let message_bytes = decompose_blocks_mut(&mut self.message.message);
+
+                            for i in (0..7).rev() {
+                                let output = key_copy % 10;
+                                key_copy /= 10;
+                                *message_bytes.get_unchecked_mut(
+                                    *SWAP_DWORD_BYTE_ORDER
+                                        .get_unchecked(self.message.digit_index + i + 2),
+                                ) = output as u8 + b'0';
+                            }
+                        }
+                    }
+
+                    self.attempted_nonces += 4;
+                    if self.attempted_nonces >= self.limit {
+                        return None;
+                    }
+                    next_inner_key += 1;
+                }
+            }
+        }
+        None
+    }
 }
 
 /// SHA-NI decimal nonce double block solver.
@@ -484,20 +494,22 @@ impl From<DoubleBlockMessage> for DoubleBlockSolver {
     }
 }
 
-impl DoubleBlockSolver {
-    /// Set the limit.
-    pub fn set_limit(&mut self, limit: u64) {
+impl crate::solver::Solver for DoubleBlockSolver {
+    fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
 
-    /// Get the attempted nonces.
-    pub fn get_attempted_nonces(&self) -> u64 {
+    fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
+    }
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+        unsafe { self.solve_impl::<TYPE>(target, mask) }
     }
 }
 
-impl crate::solver::Solver for DoubleBlockSolver {
-    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+impl DoubleBlockSolver {
+    #[target_feature(enable = "sse4.1,sha")]
+    fn solve_impl<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         if self.attempted_nonces >= self.limit {
             return None;
         }
@@ -687,60 +699,58 @@ impl_decimal_solver!(
 ///
 /// Current implementation: 4 way multi-issued solver with 4-round hotstart granularity.
 pub struct GoAwaySolver {
-    challenge: [u32; 8],
+    message: GoAwayMessage,
     attempted_nonces: u64,
     limit: u64,
-    fixed_high_word: Option<u32>,
 }
 
 impl From<super::safe::GoAwaySolver> for GoAwaySolver {
     fn from(solver: super::safe::GoAwaySolver) -> Self {
         Self {
-            challenge: solver.challenge,
+            message: solver.message,
             attempted_nonces: solver.attempted_nonces,
             limit: solver.limit,
-            fixed_high_word: solver.fixed_high_word,
         }
     }
 }
 
 impl From<GoAwayMessage> for GoAwaySolver {
-    fn from(challenge: GoAwayMessage) -> Self {
+    fn from(message: GoAwayMessage) -> Self {
         Self {
-            challenge: challenge.challenge,
+            message,
             attempted_nonces: 0,
             limit: u64::MAX,
-            fixed_high_word: None,
         }
     }
 }
 
 impl GoAwaySolver {
     const MSG_LEN: u32 = 10 * 4 * 8;
-
-    /// Set the limit.
-    pub fn set_limit(&mut self, limit: u64) {
-        self.limit = limit;
-    }
-
-    /// Get the attempted nonces.
-    pub fn get_attempted_nonces(&self) -> u64 {
-        self.attempted_nonces
-    }
-
-    /// Set the fixed high word.
-    pub fn set_fixed_high_word(&mut self, high_word: u32) {
-        self.fixed_high_word = Some(high_word);
-    }
 }
 
 impl crate::solver::Solver for GoAwaySolver {
+    fn set_limit(&mut self, limit: u64) {
+        self.limit = limit;
+    }
+
+    fn get_attempted_nonces(&self) -> u64 {
+        self.attempted_nonces
+    }
+
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+        unsafe { self.solve_impl::<TYPE>(target, mask) }
+    }
+}
+
+impl GoAwaySolver {
+    #[target_feature(enable = "sse4.1,sha")]
+    fn solve_impl<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+        #[allow(unused_unsafe)]
         unsafe {
             let target = target & mask;
 
             let mut prefix_state = Align16(crate::sha256::IV);
-            crate::sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
+            crate::sha256::ingest_message_prefix(&mut prefix_state, self.message.challenge);
             let prepared_state = crate::sha256::sha_ni::prepare_state(&prefix_state);
 
             let feedback_ab = {
@@ -751,11 +761,7 @@ impl crate::solver::Solver for GoAwaySolver {
                 _mm_shuffle_epi32(lows, 0b01001010)
             };
 
-            for high_word in if let Some(high_word) = self.fixed_high_word {
-                high_word..=high_word
-            } else {
-                0..=u32::MAX
-            } {
+            {
                 for low_word in (0..=u32::MAX).step_by(4) {
                     let mut states0 = prepared_state;
                     let mut states1 = prepared_state;
@@ -763,8 +769,8 @@ impl crate::solver::Solver for GoAwaySolver {
                     let mut states3 = prepared_state;
 
                     let mut msg0 = Align16([0; 16]);
-                    msg0[0..8].copy_from_slice(&self.challenge);
-                    msg0[8] = high_word;
+                    msg0[0..8].copy_from_slice(&self.message.challenge);
+                    msg0[8] = self.message.high_word;
                     msg0[9] = low_word;
                     msg0[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
                     msg0[15] = Self::MSG_LEN as _;
@@ -815,8 +821,8 @@ impl crate::solver::Solver for GoAwaySolver {
                         let mut output_msg: [u32; 16] = [0; 16];
 
                         let final_low_word = low_word | (success_lane_idx as u32);
-                        output_msg[..8].copy_from_slice(&self.challenge);
-                        output_msg[8] = high_word;
+                        output_msg[..8].copy_from_slice(&self.message.challenge);
+                        output_msg[8] = self.message.high_word;
                         output_msg[9] = final_low_word;
                         output_msg[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
                         output_msg[15] = Self::MSG_LEN as _;
@@ -825,7 +831,7 @@ impl crate::solver::Solver for GoAwaySolver {
                         crate::sha256::digest_block(&mut final_sha_state, &output_msg);
 
                         return Some((
-                            (high_word as u64) << 32 | final_low_word as u64,
+                            (self.message.high_word as u64) << 32 | final_low_word as u64,
                             final_sha_state,
                         ));
                     }
@@ -842,6 +848,7 @@ impl crate::solver::Solver for GoAwaySolver {
     }
 }
 
+#[cfg(all(target_feature = "sse4.1", target_feature = "sha"))]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -876,14 +883,17 @@ mod tests {
     #[test]
     fn test_solve_goaway() {
         crate::solver::tests::test_goaway_validator::<GoAwaySolver, _>(|prefix| {
-            GoAwaySolver::from(GoAwayMessage::new(core::array::from_fn(|i| {
-                u32::from_be_bytes([
-                    prefix[i * 4],
-                    prefix[i * 4 + 1],
-                    prefix[i * 4 + 2],
-                    prefix[i * 4 + 3],
-                ])
-            })))
+            GoAwaySolver::from(GoAwayMessage::new(
+                core::array::from_fn(|i| {
+                    u32::from_be_bytes([
+                        prefix[i * 4],
+                        prefix[i * 4 + 1],
+                        prefix[i * 4 + 2],
+                        prefix[i * 4 + 3],
+                    ])
+                }),
+                0,
+            ))
         });
     }
 }

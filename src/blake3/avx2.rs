@@ -166,6 +166,7 @@ pub(crate) fn compress_mb8<const CONSTANT_WORD_COUNT: usize, const PATCH_1: usiz
     }
 }
 
+#[cfg(target_feature = "avx2")]
 #[cfg(test)]
 mod tests {
     use super::*;

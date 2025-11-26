@@ -9,6 +9,24 @@ use crate::{
 };
 use core::arch::x86_64::*;
 
+cpufeatures::new!(avx512f, "avx512f");
+
+#[derive(Debug, Copy, Clone)]
+/// Required features for AVX-512 solver.
+pub struct RequiredFeatures;
+
+impl Default for RequiredFeatures {
+    fn default() -> Self {
+        Self
+    }
+}
+
+impl crate::solver::CpuIDToken for RequiredFeatures {
+    fn get() -> bool {
+        avx512f::get()
+    }
+}
+
 static LANE_ID_MSB_STR: Align16<[u8; 5 * 16]> =
     Align16(*b"11111111112222222222333333333344444444445555555555666666666677777777778888888888");
 
@@ -94,18 +112,6 @@ impl From<SingleBlockMessage> for SingleBlockSolver {
     }
 }
 
-impl SingleBlockSolver {
-    /// Set the limit.
-    pub fn set_limit(&mut self, limit: u64) {
-        self.limit = limit;
-    }
-
-    /// Get the attempted nonces.
-    pub fn get_attempted_nonces(&self) -> u64 {
-        self.attempted_nonces
-    }
-}
-
 const MUTATION_TYPE_UNALIGNED: u8 = 0;
 const MUTATION_TYPE_ALIGNED: u8 = 1;
 const MUTATION_TYPE_OCTAL: u8 = 2;
@@ -114,6 +120,7 @@ const MUTATION_TYPE_UNALIGNED_OCTAL: u8 = MUTATION_TYPE_UNALIGNED | MUTATION_TYP
 
 impl SingleBlockSolver {
     #[inline(never)]
+    #[target_feature(enable = "avx512f")]
     fn solve_impl<
         const DIGIT_WORD_IDX0: usize,
         const DIGIT_WORD_IDX1_INCREMENT: bool,
@@ -433,6 +440,14 @@ impl SingleBlockSolver {
 }
 
 impl crate::solver::Solver for SingleBlockSolver {
+    fn set_limit(&mut self, limit: u64) {
+        self.limit = limit;
+    }
+
+    fn get_attempted_nonces(&self) -> u64 {
+        self.attempted_nonces
+    }
+
     fn solve_nonce_only<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<u64> {
         if self.attempted_nonces >= self.limit {
             return None;
@@ -450,26 +465,30 @@ impl crate::solver::Solver for SingleBlockSolver {
 
         macro_rules! dispatch {
             ($idx0:literal, $idx1_inc:literal) => {
-                if self.message.digit_index % 4 == 2 {
-                    // if we have to much search space it doesn't matter
-                    // use the octal kernel
-                    if self.message.no_trailing_zeros
-                        || self.message.approx_working_set_count.get() >= 100
-                    {
-                        self.solve_impl::<$idx0, $idx1_inc, TYPE, MUTATION_TYPE_ALIGNED_OCTAL>(
+                unsafe {
+                    if self.message.digit_index % 4 == 2 {
+                        // if we have to much search space it doesn't matter
+                        // use the octal kernel
+                        if self.message.no_trailing_zeros
+                            || self.message.approx_working_set_count.get() >= 100
+                        {
+                            self.solve_impl::<$idx0, $idx1_inc, TYPE, MUTATION_TYPE_ALIGNED_OCTAL>(
+                                target, mask,
+                            )
+                        } else {
+                            self.solve_impl::<$idx0, $idx1_inc, TYPE, MUTATION_TYPE_ALIGNED>(
+                                target, mask,
+                            )
+                        }
+                    } else if self.message.no_trailing_zeros {
+                        self.solve_impl::<$idx0, $idx1_inc, TYPE, MUTATION_TYPE_UNALIGNED_OCTAL>(
                             target, mask,
                         )
                     } else {
-                        self.solve_impl::<$idx0, $idx1_inc, TYPE, MUTATION_TYPE_ALIGNED>(
+                        self.solve_impl::<$idx0, $idx1_inc, TYPE, MUTATION_TYPE_UNALIGNED>(
                             target, mask,
                         )
                     }
-                } else if self.message.no_trailing_zeros {
-                    self.solve_impl::<$idx0, $idx1_inc, TYPE, MUTATION_TYPE_UNALIGNED_OCTAL>(
-                        target, mask,
-                    )
-                } else {
-                    self.solve_impl::<$idx0, $idx1_inc, TYPE, MUTATION_TYPE_UNALIGNED>(target, mask)
                 }
             };
             ($idx0:literal) => {
@@ -545,20 +564,25 @@ impl From<DoubleBlockMessage> for DoubleBlockSolver {
     }
 }
 
-impl DoubleBlockSolver {
-    /// Set the limit.
-    pub fn set_limit(&mut self, limit: u64) {
+impl crate::solver::Solver for DoubleBlockSolver {
+    fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
 
-    /// Get the attempted nonces.
-    pub fn get_attempted_nonces(&self) -> u64 {
+    fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
+    }
+
+    #[inline]
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+        unsafe { self.solve_impl::<TYPE>(target, mask) }
     }
 }
 
-impl crate::solver::Solver for DoubleBlockSolver {
-    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+impl DoubleBlockSolver {
+    #[inline(never)]
+    #[target_feature(enable = "avx512f")]
+    fn solve_impl<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         let target = target & mask;
 
         if self.attempted_nonces >= self.limit {
@@ -813,19 +837,8 @@ impl From<crate::solver::safe::BinarySolver> for BinarySolver {
 }
 
 impl BinarySolver {
-    /// Set the limit.
-    ///
-    /// Limits are approximate and should not be used to constrain search space, use `BinaryMessage` instead.
-    pub fn set_limit(&mut self, limit: u64) {
-        self.limit = limit;
-    }
-
-    /// Get the attempted nonces.
-    pub fn get_attempted_nonces(&self) -> u64 {
-        self.attempted_nonces
-    }
-
     #[inline(never)]
+    #[target_feature(enable = "avx512f")]
     fn solve_impl<
         const TYPE: u8,
         const FIRST_NONCE_WORD_IDX: usize,
@@ -1030,6 +1043,14 @@ impl BinarySolver {
 }
 
 impl crate::solver::Solver for BinarySolver {
+    fn set_limit(&mut self, limit: u64) {
+        self.limit = limit;
+    }
+
+    fn get_attempted_nonces(&self) -> u64 {
+        self.attempted_nonces
+    }
+
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         if (self.message.nonce_byte_count.get() == 1) // edge case not worth optimizing, bail out
             || (self.message.salt_residual_len + self.message.nonce_byte_count.get() as usize > 64)
@@ -1081,41 +1102,43 @@ impl crate::solver::Solver for BinarySolver {
 
         macro_rules! dispatch {
             ($skipped_rounds:expr) => {
-                if cur_block == 1 {
-                    if let Some(nonce) = self.solve_impl::<TYPE, { $skipped_rounds }, true>(
-                        *self.message.prefix_state,
-                        &block_template_be,
-                        &second_block_schedule,
-                        self.message.salt_residual_len,
-                        self.message.nonce_byte_count,
-                        target,
-                        mask,
-                    ) {
-                        let mut final_sha_state = self.message.prefix_state;
-                        for i in 0..self.message.nonce_byte_count.get() as usize {
-                            used_blocks[0][self.message.salt_residual_len + i] =
-                                nonce.to_le_bytes()[i];
+                unsafe {
+                    if cur_block == 1 {
+                        if let Some(nonce) = self.solve_impl::<TYPE, { $skipped_rounds }, true>(
+                            *self.message.prefix_state,
+                            &block_template_be,
+                            &second_block_schedule,
+                            self.message.salt_residual_len,
+                            self.message.nonce_byte_count,
+                            target,
+                            mask,
+                        ) {
+                            let mut final_sha_state = self.message.prefix_state;
+                            for i in 0..self.message.nonce_byte_count.get() as usize {
+                                used_blocks[0][self.message.salt_residual_len + i] =
+                                    nonce.to_le_bytes()[i];
+                            }
+                            sha2::compress256(&mut final_sha_state, &used_blocks);
+                            return Some((nonce, final_sha_state.0));
                         }
-                        sha2::compress256(&mut final_sha_state, &used_blocks);
-                        return Some((nonce, final_sha_state.0));
-                    }
-                } else {
-                    if let Some(nonce) = self.solve_impl::<TYPE, { $skipped_rounds }, false>(
-                        *self.message.prefix_state,
-                        &block_template_be,
-                        &[0; 64],
-                        self.message.salt_residual_len,
-                        self.message.nonce_byte_count,
-                        target,
-                        mask,
-                    ) {
-                        let mut final_sha_state = self.message.prefix_state;
-                        for i in 0..self.message.nonce_byte_count.get() as usize {
-                            used_blocks[0][self.message.salt_residual_len + i] =
-                                nonce.to_le_bytes()[i];
+                    } else {
+                        if let Some(nonce) = self.solve_impl::<TYPE, { $skipped_rounds }, false>(
+                            *self.message.prefix_state,
+                            &block_template_be,
+                            &[0; 64],
+                            self.message.salt_residual_len,
+                            self.message.nonce_byte_count,
+                            target,
+                            mask,
+                        ) {
+                            let mut final_sha_state = self.message.prefix_state;
+                            for i in 0..self.message.nonce_byte_count.get() as usize {
+                                used_blocks[0][self.message.salt_residual_len + i] =
+                                    nonce.to_le_bytes()[i];
+                            }
+                            sha2::compress256(&mut final_sha_state, &used_blocks);
+                            return Some((nonce, final_sha_state.0));
                         }
-                        sha2::compress256(&mut final_sha_state, &used_blocks);
-                        return Some((nonce, final_sha_state.0));
                     }
                 }
             };
@@ -1152,30 +1175,27 @@ impl crate::solver::Solver for BinarySolver {
 ///
 /// Current implementation: 16 way SIMD with 1-round hotstart granularity.
 pub struct GoAwaySolver {
-    challenge: [u32; 8],
+    message: GoAwayMessage,
     attempted_nonces: u64,
     limit: u64,
-    fixed_high_word: Option<u32>,
 }
 
 impl From<super::safe::GoAwaySolver> for GoAwaySolver {
     fn from(solver: super::safe::GoAwaySolver) -> Self {
         Self {
-            challenge: solver.challenge,
+            message: solver.message,
             attempted_nonces: solver.attempted_nonces,
             limit: solver.limit,
-            fixed_high_word: solver.fixed_high_word,
         }
     }
 }
 
 impl From<GoAwayMessage> for GoAwaySolver {
-    fn from(challenge: GoAwayMessage) -> Self {
+    fn from(message: GoAwayMessage) -> Self {
         Self {
-            challenge: challenge.challenge,
+            message,
             attempted_nonces: 0,
             limit: u64::MAX,
-            fixed_high_word: None,
         }
     }
 }
@@ -1183,163 +1203,150 @@ impl From<GoAwayMessage> for GoAwaySolver {
 impl GoAwaySolver {
     const MSG_LEN: u32 = 10 * 4 * 8;
 
-    /// Set the limit.
-    pub fn set_limit(&mut self, limit: u64) {
-        self.limit = limit;
-    }
+    #[inline(never)]
+    #[target_feature(enable = "avx512f")]
+    unsafe fn solve_nonce_only_impl<const TYPE: u8>(
+        &mut self,
+        target: u64,
+        mask: u64,
+    ) -> Option<u64> {
+        let lane_id_v = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
 
-    /// Get the attempted nonces.
-    pub fn get_attempted_nonces(&self) -> u64 {
-        self.attempted_nonces
-    }
+        let target = target & mask;
 
-    /// Set the fixed high word.
-    pub fn set_fixed_high_word(&mut self, high_word: u32) {
-        self.fixed_high_word = Some(high_word);
-    }
-}
+        let mut prefix_state = crate::sha256::IV;
+        crate::sha256::ingest_message_prefix(&mut prefix_state, self.message.challenge);
 
-impl crate::solver::Solver for GoAwaySolver {
-    fn solve_nonce_only<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<u64> {
-        unsafe {
-            let lane_id_v = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+        let remaining_limit = self.limit.min(u32::MAX as u64) as u32;
 
-            let target = target & mask;
+        {
+            let mut partial_state = prefix_state;
+            crate::sha256::sha2_arx::<8>(&mut partial_state, &[self.message.high_word]);
 
-            let mut prefix_state = crate::sha256::IV;
-            crate::sha256::ingest_message_prefix(&mut prefix_state, self.challenge);
+            for low_word in (0..=remaining_limit).step_by(16) {
+                let mut state = core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
 
-            let high_limit = (self.limit >> 32) as u32;
-            let low_limit = self.limit as u32;
+                let mut msg = [
+                    _mm512_set1_epi32(self.message.challenge[0] as _),
+                    _mm512_set1_epi32(self.message.challenge[1] as _),
+                    _mm512_set1_epi32(self.message.challenge[2] as _),
+                    _mm512_set1_epi32(self.message.challenge[3] as _),
+                    _mm512_set1_epi32(self.message.challenge[4] as _),
+                    _mm512_set1_epi32(self.message.challenge[5] as _),
+                    _mm512_set1_epi32(self.message.challenge[6] as _),
+                    _mm512_set1_epi32(self.message.challenge[7] as _),
+                    _mm512_set1_epi32(self.message.high_word as _),
+                    _mm512_or_epi32(_mm512_set1_epi32(low_word as _), lane_id_v),
+                    _mm512_set1_epi32(u32::from_be_bytes([0x80, 0, 0, 0]) as _),
+                    _mm512_setzero_epi32(),
+                    _mm512_setzero_epi32(),
+                    _mm512_setzero_epi32(),
+                    _mm512_setzero_epi32(),
+                    _mm512_set1_epi32(Self::MSG_LEN as _),
+                ];
+                crate::sha256::avx512::multiway_arx::<9>(&mut state, &mut msg);
 
-            for high_word in if let Some(high_word) = self.fixed_high_word {
-                high_word..=high_word
-            } else {
-                0..=u32::MAX
-            } {
-                let mut partial_state = prefix_state;
-                crate::sha256::sha2_arx::<8>(&mut partial_state, &[high_word]);
+                state[0] = _mm512_add_epi32(state[0], _mm512_set1_epi32(crate::sha256::IV[0] as _));
 
-                for low_word in (0..=if high_word == high_limit {
-                    low_limit
-                } else {
-                    u32::MAX
-                })
-                    .step_by(16)
+                #[cfg(feature = "compare-64bit")]
                 {
-                    let mut state =
-                        core::array::from_fn(|i| _mm512_set1_epi32(partial_state[i] as _));
+                    state[1] =
+                        _mm512_add_epi32(state[1], _mm512_set1_epi32(crate::sha256::IV[1] as _));
+                }
 
-                    let mut msg = [
-                        _mm512_set1_epi32(self.challenge[0] as _),
-                        _mm512_set1_epi32(self.challenge[1] as _),
-                        _mm512_set1_epi32(self.challenge[2] as _),
-                        _mm512_set1_epi32(self.challenge[3] as _),
-                        _mm512_set1_epi32(self.challenge[4] as _),
-                        _mm512_set1_epi32(self.challenge[5] as _),
-                        _mm512_set1_epi32(self.challenge[6] as _),
-                        _mm512_set1_epi32(self.challenge[7] as _),
-                        _mm512_set1_epi32(high_word as _),
-                        _mm512_or_epi32(_mm512_set1_epi32(low_word as _), lane_id_v),
-                        _mm512_set1_epi32(u32::from_be_bytes([0x80, 0, 0, 0]) as _),
-                        _mm512_setzero_epi32(),
-                        _mm512_setzero_epi32(),
-                        _mm512_setzero_epi32(),
-                        _mm512_setzero_epi32(),
-                        _mm512_set1_epi32(Self::MSG_LEN as _),
-                    ];
-                    crate::sha256::avx512::multiway_arx::<9>(&mut state, &mut msg);
-
-                    state[0] =
-                        _mm512_add_epi32(state[0], _mm512_set1_epi32(crate::sha256::IV[0] as _));
-
-                    #[cfg(feature = "compare-64bit")]
-                    {
-                        state[1] = _mm512_add_epi32(
-                            state[1],
-                            _mm512_set1_epi32(crate::sha256::IV[1] as _),
-                        );
+                #[cfg(not(feature = "compare-64bit"))]
+                let cmp_fn = |x: __m512i, y: __m512i| {
+                    if TYPE == crate::solver::SOLVE_TYPE_GT {
+                        _mm512_cmpgt_epu32_mask(x, y)
+                    } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                        _mm512_cmplt_epu32_mask(x, y)
+                    } else {
+                        _mm512_cmpeq_epu32_mask(
+                            _mm512_and_si512(x, _mm512_set1_epi32((mask >> 32) as _)),
+                            y,
+                        )
                     }
+                };
+
+                #[cfg(feature = "compare-64bit")]
+                let cmp64_fn = |x: __m512i, y: __m512i| {
+                    if TYPE == crate::solver::SOLVE_TYPE_GT {
+                        _mm512_cmpgt_epu64_mask(x, y)
+                    } else if TYPE == crate::solver::SOLVE_TYPE_LT {
+                        _mm512_cmplt_epu64_mask(x, y)
+                    } else {
+                        _mm512_cmpeq_epu64_mask(
+                            _mm512_and_si512(x, _mm512_set1_epi64(mask as _)),
+                            y,
+                        )
+                    }
+                };
+
+                #[cfg(not(feature = "compare-64bit"))]
+                let met_target = cmp_fn(state[0], _mm512_set1_epi32((target >> 32) as _));
+
+                #[cfg(feature = "compare-64bit")]
+                let result_ab_lo = _mm512_unpacklo_epi32(state[1], state[0]);
+                #[cfg(feature = "compare-64bit")]
+                let result_ab_hi = _mm512_unpackhi_epi32(state[1], state[0]);
+                #[cfg(feature = "compare-64bit")]
+                let (met_target_high, met_target_lo) = {
+                    let ab_met_target_lo =
+                        cmp64_fn(result_ab_lo, _mm512_set1_epi64(target as _)) as u16;
+                    let ab_met_target_high =
+                        cmp64_fn(result_ab_hi, _mm512_set1_epi64(target as _)) as u16;
+                    (ab_met_target_high, ab_met_target_lo)
+                };
+
+                #[cfg(feature = "compare-64bit")]
+                let met_target_test = met_target_high != 0 || met_target_lo != 0;
+                #[cfg(not(feature = "compare-64bit"))]
+                let met_target_test = met_target != 0;
+
+                self.attempted_nonces += 16;
+
+                if met_target_test {
+                    crate::unlikely();
 
                     #[cfg(not(feature = "compare-64bit"))]
-                    let cmp_fn = |x: __m512i, y: __m512i| {
-                        if TYPE == crate::solver::SOLVE_TYPE_GT {
-                            _mm512_cmpgt_epu32_mask(x, y)
-                        } else if TYPE == crate::solver::SOLVE_TYPE_LT {
-                            _mm512_cmplt_epu32_mask(x, y)
-                        } else {
-                            _mm512_cmpeq_epu32_mask(
-                                _mm512_and_si512(x, _mm512_set1_epi32((mask >> 32) as _)),
-                                y,
-                            )
-                        }
-                    };
+                    let success_lane_idx = met_target.trailing_zeros();
 
                     #[cfg(feature = "compare-64bit")]
-                    let cmp64_fn = |x: __m512i, y: __m512i| {
-                        if TYPE == crate::solver::SOLVE_TYPE_GT {
-                            _mm512_cmpgt_epu64_mask(x, y)
-                        } else if TYPE == crate::solver::SOLVE_TYPE_LT {
-                            _mm512_cmplt_epu64_mask(x, y)
-                        } else {
-                            _mm512_cmpeq_epu64_mask(
-                                _mm512_and_si512(x, _mm512_set1_epi64(mask as _)),
-                                y,
-                            )
-                        }
-                    };
+                    let success_lane_idx = INDEX_REMAP_PUNPCKLDQ
+                        [(met_target_high << 8 | met_target_lo).trailing_zeros() as usize];
 
-                    #[cfg(not(feature = "compare-64bit"))]
-                    let met_target = cmp_fn(state[0], _mm512_set1_epi32((target >> 32) as _));
+                    let final_low_word = low_word | (success_lane_idx as u32);
 
-                    #[cfg(feature = "compare-64bit")]
-                    let result_ab_lo = _mm512_unpacklo_epi32(state[1], state[0]);
-                    #[cfg(feature = "compare-64bit")]
-                    let result_ab_hi = _mm512_unpackhi_epi32(state[1], state[0]);
-                    #[cfg(feature = "compare-64bit")]
-                    let (met_target_high, met_target_lo) = {
-                        let ab_met_target_lo =
-                            cmp64_fn(result_ab_lo, _mm512_set1_epi64(target as _)) as u16;
-                        let ab_met_target_high =
-                            cmp64_fn(result_ab_hi, _mm512_set1_epi64(target as _)) as u16;
-                        (ab_met_target_high, ab_met_target_lo)
-                    };
+                    return Some((self.message.high_word as u64) << 32 | final_low_word as u64);
+                }
 
-                    #[cfg(feature = "compare-64bit")]
-                    let met_target_test = met_target_high != 0 || met_target_lo != 0;
-                    #[cfg(not(feature = "compare-64bit"))]
-                    let met_target_test = met_target != 0;
-
-                    self.attempted_nonces += 16;
-
-                    if met_target_test {
-                        crate::unlikely();
-
-                        #[cfg(not(feature = "compare-64bit"))]
-                        let success_lane_idx = met_target.trailing_zeros();
-
-                        #[cfg(feature = "compare-64bit")]
-                        let success_lane_idx = INDEX_REMAP_PUNPCKLDQ
-                            [(met_target_high << 8 | met_target_lo).trailing_zeros() as usize];
-
-                        let final_low_word = low_word | (success_lane_idx as u32);
-
-                        return Some((high_word as u64) << 32 | final_low_word as u64);
-                    }
-
-                    if self.attempted_nonces >= self.limit {
-                        return None;
-                    }
+                if self.attempted_nonces >= self.limit {
+                    return None;
                 }
             }
         }
         None
     }
+}
+
+impl crate::solver::Solver for GoAwaySolver {
+    fn set_limit(&mut self, limit: u64) {
+        self.limit = limit;
+    }
+
+    fn get_attempted_nonces(&self) -> u64 {
+        self.attempted_nonces
+    }
+
+    #[inline(always)]
+    fn solve_nonce_only<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<u64> {
+        unsafe { self.solve_nonce_only_impl::<TYPE>(target, mask) }
+    }
 
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         let mut output_msg = [0; 16];
         let nonce = self.solve_nonce_only::<TYPE>(target, mask)?;
-        output_msg[..8].copy_from_slice(&self.challenge);
+        output_msg[..8].copy_from_slice(&self.message.challenge);
         output_msg[8] = (nonce >> 32) as u32;
         output_msg[9] = nonce as u32;
         output_msg[10] = u32::from_be_bytes([0x80, 0, 0, 0]);
@@ -1372,19 +1379,8 @@ impl From<CerberusMessage> for CerberusSolver {
 }
 
 impl CerberusSolver {
-    /// Set the limit.
-    pub fn set_limit(&mut self, limit: u64) {
-        self.limit = limit;
-    }
-
-    /// Get the attempted nonces.
-    pub fn get_attempted_nonces(&self) -> u64 {
-        self.attempted_nonces
-    }
-}
-
-impl CerberusSolver {
     #[inline(never)]
+    #[target_feature(enable = "avx512f")]
     fn solve_decimal_impl<
         const CENTER_WORD_IDX: usize,
         const LANE_ID_WORD_IDX: usize,
@@ -1398,7 +1394,7 @@ impl CerberusSolver {
         debug_assert_eq!(target, 0);
 
         let CerberusMessage::Decimal(message) = &self.message else {
-            unsafe { core::hint::unreachable_unchecked() };
+            return None;
         };
 
         // inform LLVM that padding is guaranteed to be zero
@@ -1480,49 +1476,62 @@ impl CerberusSolver {
         }
         None
     }
+
+    #[inline(never)]
+    #[target_feature(enable = "avx512f")]
+    unsafe fn solve_binary_impl(&mut self, _target: u64, mask: u64) -> Option<u64> {
+        let CerberusMessage::Binary(message) = &self.message else {
+            return None;
+        };
+        let mut msg = [0; 16];
+        msg[0] = message.first_word;
+        let prepared_state = crate::blake3::ingest_message_prefix(
+            *message.midstate,
+            &msg[..1],
+            0,
+            8,
+            crate::blake3::FLAG_CHUNK_END | crate::blake3::FLAG_ROOT,
+        );
+        let state_base = core::array::from_fn(|i| _mm512_set1_epi32(prepared_state[i] as _));
+        let mut nonce = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+        let increment_nonce = _mm512_set1_epi32(16);
+        let maskv = _mm512_set1_epi32((mask >> 32) as _);
+        for rep in 0..=(u32::MAX / 16) {
+            let mut state = state_base;
+            crate::blake3::avx512::compress_mb16::<1, 1>(&mut state, &msg, nonce);
+            self.attempted_nonces += 16;
+
+            let hit = _mm512_testn_epi32_mask(state[0], maskv);
+            if hit != 0 {
+                crate::unlikely();
+
+                let success_lane_idx = hit.trailing_zeros();
+
+                return Some(
+                    (rep * 16 + success_lane_idx) as u64 | (message.first_word as u64) << 32,
+                );
+            }
+            nonce = _mm512_add_epi32(nonce, increment_nonce);
+            if self.attempted_nonces >= self.limit {
+                return None;
+            }
+        }
+        None
+    }
 }
 
 impl crate::solver::Solver for CerberusSolver {
+    fn set_limit(&mut self, limit: u64) {
+        self.limit = limit;
+    }
+
+    fn get_attempted_nonces(&self) -> u64 {
+        self.attempted_nonces
+    }
+
     fn solve_nonce_only<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<u64> {
         match &self.message {
-            CerberusMessage::Binary(message) => unsafe {
-                let mut msg = [0; 16];
-                msg[0] = message.first_word;
-                let prepared_state = crate::blake3::ingest_message_prefix(
-                    *message.midstate,
-                    &msg[..1],
-                    0,
-                    8,
-                    crate::blake3::FLAG_CHUNK_END | crate::blake3::FLAG_ROOT,
-                );
-                let state_base =
-                    core::array::from_fn(|i| _mm512_set1_epi32(prepared_state[i] as _));
-                let mut nonce =
-                    _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
-                let increment_nonce = _mm512_set1_epi32(16);
-                let maskv = _mm512_set1_epi32((mask >> 32) as _);
-                for rep in 0..=(u32::MAX / 16) {
-                    let mut state = state_base;
-                    crate::blake3::avx512::compress_mb16::<1, 1>(&mut state, &msg, nonce);
-                    self.attempted_nonces += 16;
-
-                    let hit = _mm512_testn_epi32_mask(state[0], maskv);
-                    if hit != 0 {
-                        crate::unlikely();
-
-                        let success_lane_idx = hit.trailing_zeros();
-
-                        return Some(
-                            (rep * 16 + success_lane_idx) as u64
-                                | (message.first_word as u64) << 32,
-                        );
-                    }
-                    nonce = _mm512_add_epi32(nonce, increment_nonce);
-                    if self.attempted_nonces >= self.limit {
-                        return None;
-                    }
-                }
-            },
+            CerberusMessage::Binary(_) => unsafe { self.solve_binary_impl(target, mask) },
             CerberusMessage::Decimal(message) => {
                 // two digits as lane ID, N=\x00, ? is prefix
                 // position % 4 =0: |1234|5678|NNN9
@@ -1574,14 +1583,16 @@ impl crate::solver::Solver for CerberusSolver {
 
                         macro_rules! dispatch {
                             ($center_word_idx:literal) => {
-                                if position_mod < 2 {
-                                    self.solve_decimal_impl::<$center_word_idx, { $center_word_idx - 1 }, {$center_word_idx - 1}>(
-                                        msg, target, mask,
-                                    )
-                                } else {
-                                    self.solve_decimal_impl::<$center_word_idx, { $center_word_idx + 1 }, $center_word_idx>(
-                                        msg, target, mask,
-                                    )
+                                unsafe {
+                                    if position_mod < 2 {
+                                        self.solve_decimal_impl::<$center_word_idx, { $center_word_idx - 1 }, {$center_word_idx - 1}>(
+                                            msg, target, mask,
+                                        )
+                                    } else {
+                                        self.solve_decimal_impl::<$center_word_idx, { $center_word_idx + 1 }, $center_word_idx>(
+                                            msg, target, mask,
+                                        )
+                                    }
                                 }
                             };
                         }
@@ -1637,10 +1648,9 @@ impl crate::solver::Solver for CerberusSolver {
                         }
                     }
                 }
+                None
             }
         }
-
-        None
     }
 
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
@@ -1694,6 +1704,7 @@ impl crate::solver::Solver for CerberusSolver {
     }
 }
 
+#[cfg(target_feature = "avx512f")]
 #[cfg(test)]
 mod tests {
     use crate::message::{CerberusBinaryMessage, CerberusDecimalMessage};
@@ -1757,14 +1768,17 @@ mod tests {
     #[test]
     fn test_solve_goaway() {
         crate::solver::tests::test_goaway_validator::<GoAwaySolver, _>(|prefix| {
-            GoAwaySolver::from(GoAwayMessage::new(core::array::from_fn(|i| {
-                u32::from_be_bytes([
-                    prefix[i * 4],
-                    prefix[i * 4 + 1],
-                    prefix[i * 4 + 2],
-                    prefix[i * 4 + 3],
-                ])
-            })))
+            GoAwaySolver::from(GoAwayMessage::new(
+                core::array::from_fn(|i| {
+                    u32::from_be_bytes([
+                        prefix[i * 4],
+                        prefix[i * 4 + 1],
+                        prefix[i * 4 + 2],
+                        prefix[i * 4 + 3],
+                    ])
+                }),
+                0,
+            ))
         });
     }
 }

@@ -1,8 +1,7 @@
+#[cfg(any(target_feature = "avx512f", target_feature = "avx2"))]
 use core::num::NonZeroU32;
 
-use crate::Align16;
-#[cfg(any(target_feature = "avx512f", target_feature = "avx2"))]
-use crate::Align64;
+use crate::{Align16, Align64};
 
 pub(crate) static DIGIT_LUT_10000_LE_EVEN: Align64<[u32; 10000 / 2]> = const {
     let mut out = [0; 10000 / 2];
@@ -39,12 +38,14 @@ mod static_asserts {
         [(); (DIGIT_LUT_10000_LE_EVEN.0[1234] == u32::from_be_bytes(*b"8642")) as usize];
 }
 
+#[cfg(any(target_feature = "avx512f", target_feature = "avx2"))]
 #[derive(Debug, Clone, Copy)]
 struct MagicNumber {
     m: i32,
     s: i32,
 }
 
+#[cfg(any(target_feature = "avx512f", target_feature = "avx2"))]
 impl MagicNumber {
     const fn new(m: i32, s: i32) -> Self {
         Self { m, s }
@@ -61,6 +62,7 @@ impl MagicNumber {
     }
 }
 
+#[cfg(any(target_feature = "avx512f", target_feature = "avx2"))]
 const fn find_magic_number(d: NonZeroU32) -> MagicNumber {
     // https://github.com/milakov/int_fastdiv/blob/master/int_fastdiv.h#L53
 
@@ -99,6 +101,7 @@ const fn find_magic_number(d: NonZeroU32) -> MagicNumber {
     MagicNumber::new((q2 + 1) as i32, p - 32)
 }
 
+#[cfg(any(target_feature = "avx512f", target_feature = "avx2"))]
 const MAGIC_NUMBERS: [MagicNumber; 8] = [
     find_magic_number(NonZeroU32::new(1).unwrap()),
     find_magic_number(NonZeroU32::new(10).unwrap()),

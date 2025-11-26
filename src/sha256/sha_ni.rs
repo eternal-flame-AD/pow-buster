@@ -11,10 +11,6 @@ use core::arch::x86::*;
 use crate::Align16;
 use crate::sha256::K32;
 
-#[macro_use]
-#[path = "loop_macros.rs"]
-mod loop_macros;
-
 const K32X4: [[u32; 4]; 16] = [
     [K32[3], K32[2], K32[1], K32[0]],
     [K32[7], K32[6], K32[5], K32[4]],
@@ -60,7 +56,7 @@ pub(crate) fn prepare_state(state: &Align16<[u32; 8]>) -> [__m128i; 2] {
 }
 
 #[allow(unused_variables)]
-pub trait Plucker {
+pub trait Plucker: Sized {
     #[inline(always)]
     fn pluck_qword0(&mut self, lane: usize, w: &mut __m128i) {}
     #[inline(always)]
@@ -209,6 +205,8 @@ pub(crate) fn multiway_arx_abef_cdgh<
         });
     }
 }
+
+#[cfg(all(target_feature = "sse4.1", target_feature = "sha"))]
 #[cfg(test)]
 mod tests {
     use super::*;

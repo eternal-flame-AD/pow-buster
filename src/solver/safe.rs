@@ -31,18 +31,6 @@ impl From<SingleBlockMessage> for SingleBlockSolver {
 }
 
 impl SingleBlockSolver {
-    /// Set the limit.
-    pub fn set_limit(&mut self, limit: u64) {
-        self.limit = limit;
-    }
-
-    /// Get the attempted nonces.
-    pub fn get_attempted_nonces(&self) -> u64 {
-        self.attempted_nonces
-    }
-}
-
-impl SingleBlockSolver {
     fn solve_impl<const TYPE: u8, const NO_TRAILING_ZEROS: bool>(
         &mut self,
         target: u64,
@@ -102,6 +90,14 @@ impl SingleBlockSolver {
 }
 
 impl crate::solver::Solver for SingleBlockSolver {
+    fn set_limit(&mut self, limit: u64) {
+        self.limit = limit;
+    }
+
+    fn get_attempted_nonces(&self) -> u64 {
+        self.attempted_nonces
+    }
+
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         if self.message.no_trailing_zeros {
             self.solve_impl::<TYPE, true>(target, mask)
@@ -132,19 +128,15 @@ impl From<DoubleBlockMessage> for DoubleBlockSolver {
     }
 }
 
-impl DoubleBlockSolver {
-    /// Set the limit.
-    pub fn set_limit(&mut self, limit: u64) {
+impl crate::solver::Solver for DoubleBlockSolver {
+    fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
 
-    /// Get the attempted nonces.
-    pub fn get_attempted_nonces(&self) -> u64 {
+    fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
     }
-}
 
-impl crate::solver::Solver for DoubleBlockSolver {
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         if self.attempted_nonces >= self.limit {
             return None;
@@ -239,65 +231,48 @@ impl_decimal_solver!(
 ///
 /// Current implementation: generic sha2 crate fallback.
 pub struct GoAwaySolver {
-    pub(super) challenge: [u32; 8],
+    pub(super) message: GoAwayMessage,
     pub(super) attempted_nonces: u64,
     pub(super) limit: u64,
-    pub(super) fixed_high_word: Option<u32>,
 }
 
 impl From<GoAwayMessage> for GoAwaySolver {
-    fn from(challenge: GoAwayMessage) -> Self {
+    fn from(message: GoAwayMessage) -> Self {
         Self {
-            challenge: challenge.challenge,
+            message,
             attempted_nonces: 0,
             limit: u64::MAX,
-            fixed_high_word: None,
         }
     }
 }
 
 impl GoAwaySolver {
     const MSG_LEN: u32 = 10 * 4 * 8;
-
-    /// Set the limit.
-    pub fn set_limit(&mut self, limit: u64) {
-        self.limit = limit;
-    }
-
-    /// Get the attempted nonces.
-    pub fn get_attempted_nonces(&self) -> u64 {
-        self.attempted_nonces
-    }
-
-    /// Set the fixed high word.
-    pub fn set_fixed_high_word(&mut self, high_word: u32) {
-        self.fixed_high_word = Some(high_word);
-    }
 }
 
 impl crate::solver::Solver for GoAwaySolver {
+    fn set_limit(&mut self, limit: u64) {
+        self.limit = limit;
+    }
+
+    fn get_attempted_nonces(&self) -> u64 {
+        self.attempted_nonces
+    }
+
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         let target = target & mask;
 
         let mut buffer =
             Align16([sha2::digest::crypto_common::Block::<sha2::Sha256>::default(); 16]);
         for i in 0..8 {
-            buffer[0][i * 4..i * 4 + 4].copy_from_slice(&self.challenge[i].to_be_bytes());
+            buffer[0][i * 4..i * 4 + 4].copy_from_slice(&self.message.challenge[i].to_be_bytes());
         }
+        buffer[0][32..36].copy_from_slice(&self.message.high_word.to_be_bytes());
         buffer[0][40] = 0x80;
         buffer[0][60..64].copy_from_slice(&(Self::MSG_LEN).to_be_bytes());
 
-        let start = (self.fixed_high_word.unwrap_or(0) as u64) << 32;
-        let stop = if let Some(high_word) = self.fixed_high_word {
-            (high_word as u64 + 1) << 32 - 1
-        } else {
-            u64::MAX
-        };
-        for key in start..=stop {
-            unsafe {
-                *buffer[0].as_mut_ptr().add(32).cast::<u64>() =
-                    u64::from_ne_bytes(key.to_be_bytes());
-            }
+        for key in 0u32.. {
+            buffer[0][36..40].copy_from_slice(&key.to_be_bytes());
 
             let mut state = crate::sha256::IV;
             sha2::compress256(&mut state, &*buffer);
@@ -320,7 +295,7 @@ impl crate::solver::Solver for GoAwaySolver {
             if cmp_fn(&state_ab, &target) {
                 crate::unlikely();
 
-                return Some((key, state));
+                return Some(((self.message.high_word as u64) << 32 | key as u64, state));
             }
 
             if self.attempted_nonces >= self.limit {
@@ -354,19 +329,15 @@ impl From<BinaryMessage> for BinarySolver {
     }
 }
 
-impl BinarySolver {
-    /// Set the limit.
-    pub fn set_limit(&mut self, limit: u64) {
+impl crate::solver::Solver for BinarySolver {
+    fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
 
-    /// Get the attempted nonces.
-    pub fn get_attempted_nonces(&self) -> u64 {
+    fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
     }
-}
 
-impl crate::solver::Solver for BinarySolver {
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         let salt = &self.message.salt_residual[..self.message.salt_residual_len];
         let mut blocks = [GenericArray::default(); 2];
@@ -455,19 +426,15 @@ impl From<CerberusMessage> for CerberusSolver {
     }
 }
 
-impl CerberusSolver {
-    /// Set the limit.
-    pub fn set_limit(&mut self, limit: u64) {
+impl crate::solver::Solver for CerberusSolver {
+    fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
 
-    /// Get the attempted nonces.   
-    pub fn get_attempted_nonces(&self) -> u64 {
+    fn get_attempted_nonces(&self) -> u64 {
         self.attempted_nonces
     }
-}
 
-impl crate::solver::Solver for CerberusSolver {
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         debug_assert_eq!(target, 0);
 
@@ -609,14 +576,17 @@ mod tests {
     #[test]
     fn test_solve_goaway() {
         crate::solver::tests::test_goaway_validator::<GoAwaySolver, _>(|prefix| {
-            GoAwaySolver::from(GoAwayMessage::new(core::array::from_fn(|i| {
-                u32::from_be_bytes([
-                    prefix[i * 4],
-                    prefix[i * 4 + 1],
-                    prefix[i * 4 + 2],
-                    prefix[i * 4 + 3],
-                ])
-            })))
+            GoAwaySolver::from(GoAwayMessage::new(
+                core::array::from_fn(|i| {
+                    u32::from_be_bytes([
+                        prefix[i * 4],
+                        prefix[i * 4 + 1],
+                        prefix[i * 4 + 2],
+                        prefix[i * 4 + 3],
+                    ])
+                }),
+                0,
+            ))
         });
     }
 }

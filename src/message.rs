@@ -821,19 +821,29 @@ impl CerberusDecimalMessage {
 /// A message in the go-away format
 ///
 /// Construct: Proof := (prefix || U64(nonce)) where prefix is 32 bytes
+#[derive(Clone)]
 pub struct GoAwayMessage {
     /// the challenge
-    pub challenge: [u32; 8],
+    pub(crate) challenge: [u32; 8],
+    pub(crate) high_word: u32,
 }
 
 impl GoAwayMessage {
     /// creates a new go-away message
-    pub fn new(challenge: [u32; 8]) -> Self {
-        Self { challenge }
+    pub fn new(challenge: [u32; 8], high_word: u32) -> Self {
+        Self {
+            challenge,
+            high_word,
+        }
+    }
+
+    /// sets the high word of the message
+    pub fn set_high_word(&mut self, high_word: u32) {
+        self.high_word = high_word;
     }
 
     /// creates a new go-away message from a 32 byte challenge
-    pub fn new_bytes(challenge: &[u8; 32]) -> Self {
+    pub fn new_bytes(challenge: &[u8; 32], high_word: u32) -> Self {
         Self {
             challenge: core::array::from_fn(|i| {
                 u32::from_be_bytes([
@@ -843,11 +853,12 @@ impl GoAwayMessage {
                     challenge[i * 4 + 3],
                 ])
             }),
+            high_word,
         }
     }
 
     /// creates a new go-away message from a 64 byte challenge
-    pub fn new_hex(challenge: &[u8; 64]) -> Option<Self> {
+    pub fn new_hex(challenge: &[u8; 64], high_word: u32) -> Option<Self> {
         let mut prefix_fixed_up = [0; 32];
         for i in 0..32 {
             let byte_hex: [u8; 2] = challenge[i * 2..][..2].try_into().unwrap();
@@ -867,7 +878,7 @@ impl GoAwayMessage {
             };
             prefix_fixed_up[i] = (high_nibble << 4) | low_nibble;
         }
-        Some(Self::new_bytes(&prefix_fixed_up))
+        Some(Self::new_bytes(&prefix_fixed_up, high_word))
     }
 }
 

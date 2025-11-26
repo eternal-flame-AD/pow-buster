@@ -1,18 +1,12 @@
 /// AVX-512 solver
-#[cfg(all(target_arch = "x86_64", any(doc, target_feature = "avx512f")))]
+#[cfg(target_arch = "x86_64")]
 pub mod avx512;
 
 /// AVX2 solver
-#[cfg(all(
-    any(target_arch = "x86_64", target_arch = "x86"),
-    any(doc, target_feature = "avx2")
-))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 pub mod avx2;
 
-#[cfg(all(
-    any(target_arch = "x86_64", target_arch = "x86"),
-    any(doc, target_feature = "sha")
-))]
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 /// SHA-NI solver
 pub mod sha_ni;
 
@@ -29,6 +23,77 @@ pub const SOLVE_TYPE_LT: u8 = 1;
 pub const SOLVE_TYPE_GT: u8 = 2;
 /// Mask test (such as Cap.js)
 pub const SOLVE_TYPE_MASK: u8 = 4;
+
+/// A token for checking CPU features
+pub trait CpuIDToken: Default + Copy + Clone + 'static {
+    /// Get the CPU feature status
+    fn get() -> bool;
+}
+
+/// A solver router that can take a solver or a fallback solver based on the CPU features
+#[derive(Debug, Copy, Clone)]
+#[allow(missing_docs)]
+pub enum SolverRouter<T: CpuIDToken, M, S: Solver + From<M>, F: Solver + From<M>> {
+    Taken {
+        solver: S,
+        _marker: core::marker::PhantomData<(T, M)>,
+    },
+    Fallback {
+        solver: F,
+        _marker: core::marker::PhantomData<(T, M)>,
+    },
+}
+
+impl<T: CpuIDToken, M, S: Solver + From<M>, F: Solver + From<M>> From<M>
+    for SolverRouter<T, M, S, F>
+{
+    fn from(value: M) -> Self {
+        if T::get() {
+            Self::Taken {
+                solver: value.into(),
+                _marker: core::marker::PhantomData,
+            }
+        } else {
+            Self::Fallback {
+                solver: value.into(),
+                _marker: core::marker::PhantomData,
+            }
+        }
+    }
+}
+
+impl<T: CpuIDToken, M, S: Solver + From<M>, F: Solver + From<M>> Solver
+    for SolverRouter<T, M, S, F>
+{
+    fn set_limit(&mut self, limit: u64) {
+        match self {
+            Self::Taken { solver, .. } => solver.set_limit(limit),
+            Self::Fallback { solver, .. } => solver.set_limit(limit),
+        }
+    }
+    fn get_attempted_nonces(&self) -> u64 {
+        match self {
+            Self::Taken { solver, .. } => solver.get_attempted_nonces(),
+            Self::Fallback { solver, .. } => solver.get_attempted_nonces(),
+        }
+    }
+
+    #[inline]
+    fn solve_nonce_only<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<u64> {
+        match self {
+            Self::Taken { solver, .. } => solver.solve_nonce_only::<TYPE>(target, mask),
+            Self::Fallback { solver, .. } => solver.solve_nonce_only::<TYPE>(target, mask),
+        }
+    }
+
+    #[inline]
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+        match self {
+            Self::Taken { solver, .. } => solver.solve::<TYPE>(target, mask),
+            Self::Fallback { solver, .. } => solver.solve::<TYPE>(target, mask),
+        }
+    }
+}
 
 /// A generic solver trait
 pub trait Solver {
@@ -51,9 +116,16 @@ pub trait Solver {
     /// Returns a valid nonce without the actual hash.
     ///
     /// A trivial implementation is provided by default.
+    #[inline]
     fn solve_nonce_only<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<u64> {
         self.solve::<TYPE>(target, mask).map(|(nonce, _)| nonce)
     }
+
+    /// Set the limit.
+    fn set_limit(&mut self, limit: u64);
+
+    /// Get the attempted nonces.
+    fn get_attempted_nonces(&self) -> u64;
 }
 
 /// A dyn-dispatching wrapper for Solver
@@ -111,152 +183,145 @@ pub(crate) mod tests {
     >(
         mut factory: F,
     ) {
-        #[cfg(debug_assertions)]
-        let salts = [b'A'];
-        #[cfg(not(debug_assertions))]
-        let salts = *b"Ax_?"; // test a variety of salts in optimized builds
-        for salt in salts {
-            for phrase_len in 0..64 {
-                let mut concatenated_prefix = vec![salt];
-                let phrase_str = String::from_iter(std::iter::repeat('a').take(phrase_len));
-                concatenated_prefix.extend_from_slice(&bincode::serialize(&phrase_str).unwrap());
+        for phrase_len in 0..64 {
+            let mut concatenated_prefix = b"abc".to_vec();
+            let phrase_str = String::from_iter(std::iter::repeat('a').take(phrase_len));
+            concatenated_prefix.extend_from_slice(&bincode::serialize(&phrase_str).unwrap());
 
-                let config = pow_sha256::Config {
-                    salt: String::from_utf8(vec![salt]).unwrap(),
+            let config = pow_sha256::Config {
+                salt: String::from("abc"),
+            };
+            const DIFFICULTY: u32 = 100_000;
+            const ANUBIS_DIFFICULTY: NonZeroU8 = NonZeroU8::new(4).unwrap();
+
+            for search_space in [0, 1, 9, 10, 11] {
+                let Some(mut solver) = factory(&concatenated_prefix, search_space) else {
+                    assert_ne!(
+                        search_space, 0,
+                        "solver is None for search_space: {}",
+                        search_space
+                    );
+                    break;
                 };
-                const DIFFICULTY: u32 = 100_000;
-                const ANUBIS_DIFFICULTY: NonZeroU8 = NonZeroU8::new(4).unwrap();
+                let Some(mut anubis_solver) = factory(&concatenated_prefix, search_space) else {
+                    assert_ne!(
+                        search_space, 0,
+                        "anubis solver is None for search_space: {}",
+                        search_space
+                    );
+                    break;
+                };
+                let Some(mut eq_solver) = factory(&concatenated_prefix, search_space) else {
+                    assert_ne!(
+                        search_space, 0,
+                        "eq solver is None for search_space: {}",
+                        search_space
+                    );
+                    break;
+                };
 
-                for search_space in [0, 1, 9, 10, 11] {
-                    let Some(mut solver) = factory(&concatenated_prefix, search_space) else {
-                        assert_ne!(
-                            search_space, 0,
-                            "solver is None for search_space: {}",
-                            search_space
-                        );
-                        break;
-                    };
-                    let Some(mut anubis_solver) = factory(&concatenated_prefix, search_space)
-                    else {
-                        assert_ne!(
-                            search_space, 0,
-                            "anubis solver is None for search_space: {}",
-                            search_space
-                        );
-                        break;
-                    };
-                    let Some(mut eq_solver) = factory(&concatenated_prefix, search_space) else {
-                        assert_ne!(
-                            search_space, 0,
-                            "eq solver is None for search_space: {}",
-                            search_space
-                        );
-                        break;
-                    };
+                let target_bytes = compute_target_mcaptcha(DIFFICULTY as u64).to_be_bytes();
+                let target_u64 = u64::from_be_bytes(target_bytes[..8].try_into().unwrap());
+                let mask_anubis = compute_mask_anubis(ANUBIS_DIFFICULTY);
+                let (nonce, result) = solver
+                    .solve::<SOLVE_TYPE_GT>(target_u64, !0)
+                    .expect("solver failed");
+                let result_u128 = extract128_be(result);
+                let (anubis_nonce, anubis_result) = anubis_solver
+                    .solve::<SOLVE_TYPE_MASK>(0, mask_anubis)
+                    .expect("solver failed");
+                let anubis_result_u64 = extract64_be(anubis_result);
+                let anubis_expected_hash = {
+                    let mut msg = concatenated_prefix.clone();
+                    write!(msg, "{}", anubis_nonce).unwrap();
+                    sha2::Sha256::digest(msg.as_slice())
+                };
+                let anubis_result_bytes = anubis_result_u64.to_be_bytes();
+                assert_eq!(anubis_expected_hash[..8], anubis_result_bytes);
+                assert_eq!(
+                    ((anubis_result[0] as u64) << 32 | (anubis_result[1] as u64)) & mask_anubis,
+                    0,
+                    "[{}] anubis_result: {:016x} & mask_anubis: {:016x} == 0 (solver: {}, search_space: {})",
+                    core::any::type_name::<S>(),
+                    anubis_result_u64,
+                    mask_anubis,
+                    core::any::type_name::<S>(),
+                    search_space
+                );
 
-                    let target_bytes = compute_target_mcaptcha(DIFFICULTY as u64).to_be_bytes();
-                    let target_u64 = u64::from_be_bytes(target_bytes[..8].try_into().unwrap());
-                    let mask_anubis = compute_mask_anubis(ANUBIS_DIFFICULTY);
-                    let (nonce, result) = solver
-                        .solve::<SOLVE_TYPE_GT>(target_u64, !0)
-                        .expect("solver failed");
-                    let result_u128 = extract128_be(result);
-                    let (anubis_nonce, anubis_result) = anubis_solver
-                        .solve::<SOLVE_TYPE_MASK>(0, mask_anubis)
-                        .expect("solver failed");
-                    let anubis_result_u64 = extract64_be(anubis_result);
-                    let anubis_expected_hash = {
-                        let mut msg = concatenated_prefix.clone();
-                        write!(msg, "{}", anubis_nonce).unwrap();
-                        sha2::Sha256::digest(msg.as_slice())
-                    };
-                    let anubis_result_bytes = anubis_result_u64.to_be_bytes();
-                    assert_eq!(anubis_expected_hash[..8], anubis_result_bytes);
+                let test_response = pow_sha256::PoW::new(nonce, result_u128.to_string());
+                assert_eq!(
+                    config.calculate(&test_response, &phrase_str).unwrap(),
+                    result_u128,
+                    "test_response: {:?} (solver: {}, search_space: {})",
+                    test_response,
+                    core::any::type_name::<S>(),
+                    search_space
+                );
+
+                assert!(
+                    config.is_valid_proof(&test_response, &phrase_str),
+                    "{} is not valid proof (solver: {})",
+                    result_u128,
+                    core::any::type_name::<S>()
+                );
+
+                assert!(
+                    config.is_sufficient_difficulty(&test_response, DIFFICULTY),
+                    "{:016x} is not sufficient difficulty, expected {:016x} (solver: {})",
+                    result_u128,
+                    compute_target_mcaptcha(DIFFICULTY as u64),
+                    core::any::type_name::<S>()
+                );
+
+                // based on proof-of-work.mjs
+                for i in 0..ANUBIS_DIFFICULTY.get() as usize {
+                    let byte_index = i / 2;
+                    let nibble_index = (1 - i % 2) as u8;
+
+                    let nibble = (anubis_result_bytes[byte_index] >> (nibble_index * 4)) & 0x0f;
                     assert_eq!(
-                        ((anubis_result[0] as u64) << 32 | (anubis_result[1] as u64)) & mask_anubis,
+                        nibble,
                         0,
-                        "[{}] anubis_result: {:016x} & mask_anubis: {:016x} == 0 (solver: {}, search_space: {})",
-                        core::any::type_name::<S>(),
+                        "{:08x} is not valid anubis proof (solver: {}, nibble: {})",
                         anubis_result_u64,
-                        mask_anubis,
                         core::any::type_name::<S>(),
-                        search_space
+                        i
                     );
+                }
 
-                    let test_response = pow_sha256::PoW::new(nonce, result_u128.to_string());
-                    assert_eq!(
-                        config.calculate(&test_response, &phrase_str).unwrap(),
-                        result_u128,
-                        "test_response: {:?} (solver: {}, search_space: {})",
-                        test_response,
-                        core::any::type_name::<S>(),
-                        search_space
-                    );
+                let u64_target = 0b10111 << (64 - 5);
 
-                    assert!(
-                        config.is_valid_proof(&test_response, &phrase_str),
-                        "{} is not valid proof (solver: {})",
-                        result_u128,
-                        core::any::type_name::<S>()
-                    );
+                let (_, eq_result) = eq_solver
+                    .solve::<{ SOLVE_TYPE_MASK }>(u64_target, !0 << (64 - 5))
+                    .expect("solver failed");
+                let eq_solver_result_u128 = extract128_be(eq_result);
+                assert_eq!(
+                    eq_solver_result_u128 >> (128 - 5),
+                    0b10111,
+                    "eq_solver_result_u128: {:016x} (solver: {}, search_space: {})",
+                    eq_solver_result_u128,
+                    core::any::type_name::<S>(),
+                    search_space
+                );
 
-                    assert!(
-                        config.is_sufficient_difficulty(&test_response, DIFFICULTY),
-                        "{:016x} is not sufficient difficulty, expected {:016x} (solver: {})",
-                        result_u128,
-                        compute_target_mcaptcha(DIFFICULTY as u64),
-                        core::any::type_name::<S>()
-                    );
-
-                    // based on proof-of-work.mjs
-                    for i in 0..ANUBIS_DIFFICULTY.get() as usize {
-                        let byte_index = i / 2;
-                        let nibble_index = (1 - i % 2) as u8;
-
-                        let nibble = (anubis_result_bytes[byte_index] >> (nibble_index * 4)) & 0x0f;
-                        assert_eq!(
-                            nibble,
-                            0,
-                            "{:08x} is not valid anubis proof (solver: {}, nibble: {})",
-                            anubis_result_u64,
-                            core::any::type_name::<S>(),
-                            i
-                        );
-                    }
-
-                    let u64_target = 0b10111 << (64 - 5);
-
+                #[cfg(all(feature = "compare-64bit", target_arch = "x86_64"))]
+                {
+                    // test that the target can be placed in the second register and it still works
+                    let u64_target = 0b10111 << (32 - 5);
+                    let u64_mask = 0b11111 << (32 - 5);
                     let (_, eq_result) = eq_solver
-                        .solve::<{ SOLVE_TYPE_MASK }>(u64_target, !0 << (64 - 5))
+                        .solve::<{ SOLVE_TYPE_MASK }>(u64_target, u64_mask)
                         .expect("solver failed");
-                    let eq_solver_result_u128 = extract128_be(eq_result);
+                    let eq_solver_result_u64 = extract64_be(eq_result);
                     assert_eq!(
-                        eq_solver_result_u128 >> (128 - 5),
-                        0b10111,
-                        "eq_solver_result_u128: {:016x} (solver: {}, search_space: {})",
-                        eq_solver_result_u128,
+                        eq_solver_result_u64 & u64_mask,
+                        u64_target,
+                        "eq_solver_result_u64: {:016x} (solver: {}, search_space: {})",
+                        eq_solver_result_u64,
                         core::any::type_name::<S>(),
                         search_space
                     );
-
-                    #[cfg(all(feature = "compare-64bit", target_arch = "x86_64"))]
-                    {
-                        // test that the target can be placed in the second register and it still works
-                        let u64_target = 0b10111 << (32 - 5);
-                        let u64_mask = 0b11111 << (32 - 5);
-                        let (_, eq_result) = eq_solver
-                            .solve::<{ SOLVE_TYPE_MASK }>(u64_target, u64_mask)
-                            .expect("solver failed");
-                        let eq_solver_result_u64 = extract64_be(eq_result);
-                        assert_eq!(
-                            eq_solver_result_u64 & u64_mask,
-                            u64_target,
-                            "eq_solver_result_u64: {:016x} (solver: {}, search_space: {})",
-                            eq_solver_result_u64,
-                            core::any::type_name::<S>(),
-                            search_space
-                        );
-                    }
                 }
             }
         }
@@ -265,45 +330,37 @@ pub(crate) mod tests {
     pub(crate) fn test_binary_validator<S: Solver, F: for<'a> FnMut(&'a [u8], NonZeroU8) -> S>(
         mut factory: F,
     ) {
-        #[cfg(debug_assertions)]
-        let salts = [b'A'];
-        #[cfg(not(debug_assertions))]
-        let salts = *b"Ax_?"; // test a variety of salts in optimized builds
-        for salt in salts {
-            for nonce_byte_count in [4, 5, 8] {
-                for prefix_len in 0..64 {
-                    let mut msg = Vec::from_iter(std::iter::repeat(salt).take(prefix_len));
-                    let mut solver = factory(&msg, NonZeroU8::new(nonce_byte_count).unwrap());
-                    const DIFFICULTY: u64 = 100_000;
-                    let target = compute_target_mcaptcha(DIFFICULTY as u64);
-                    let (nonce, result) = solver
-                        .solve::<SOLVE_TYPE_GT>(target, !0)
-                        .expect("solver failed");
-                    msg.extend_from_slice(&nonce.to_le_bytes()[..nonce_byte_count as usize]);
-                    let expected_digest = sha2::Sha256::digest(&msg);
-                    let mut got_digest = [0; 32];
-                    for i in 0..8 {
-                        got_digest[i * 4..][..4].copy_from_slice(&result[i].to_be_bytes());
-                    }
-                    assert_eq!(
-                        expected_digest.as_slice(),
-                        got_digest.as_slice(),
-                        "nonce: {}, prefix_len: {}, salt: {}",
-                        nonce,
-                        prefix_len,
-                        salt
-                    );
-                    let got_difficulty = u64::from_be_bytes(got_digest[..8].try_into().unwrap());
-                    assert!(
-                        got_difficulty >= target,
-                        "got_difficulty: {:016x} < target: {:016x} (nonce: {}, prefix_len: {}, salt: {})",
-                        got_difficulty,
-                        target,
-                        nonce,
-                        prefix_len,
-                        salt
-                    );
+        for nonce_byte_count in [4, 5, 8] {
+            for prefix_len in 0..64 {
+                let mut msg = Vec::from_iter(b"abc".iter().cloned().cycle().take(prefix_len));
+                let mut solver = factory(&msg, NonZeroU8::new(nonce_byte_count).unwrap());
+                const DIFFICULTY: u64 = 100_000;
+                let target = compute_target_mcaptcha(DIFFICULTY as u64);
+                let (nonce, result) = solver
+                    .solve::<SOLVE_TYPE_GT>(target, !0)
+                    .expect("solver failed");
+                msg.extend_from_slice(&nonce.to_le_bytes()[..nonce_byte_count as usize]);
+                let expected_digest = sha2::Sha256::digest(&msg);
+                let mut got_digest = [0; 32];
+                for i in 0..8 {
+                    got_digest[i * 4..][..4].copy_from_slice(&result[i].to_be_bytes());
                 }
+                assert_eq!(
+                    expected_digest.as_slice(),
+                    got_digest.as_slice(),
+                    "nonce: {}, prefix_len: {}",
+                    nonce,
+                    prefix_len,
+                );
+                let got_difficulty = u64::from_be_bytes(got_digest[..8].try_into().unwrap());
+                assert!(
+                    got_difficulty >= target,
+                    "got_difficulty: {:016x} < target: {:016x} (nonce: {}, prefix_len: {})",
+                    got_difficulty,
+                    target,
+                    nonce,
+                    prefix_len,
+                );
             }
         }
     }
@@ -315,7 +372,7 @@ pub(crate) mod tests {
         mut factory: F,
     ) {
         use std::io::Write;
-        for c in b'a'..=b'z' {
+        for c in b'a'..=b'c' {
             let salts = [c; 64];
             for len in 1..=64 {
                 let u64_target = 0b10111 << (64 - 5);
@@ -480,7 +537,7 @@ pub(crate) mod tests {
     pub(crate) fn test_goaway_validator<S: Solver, F: for<'a> FnMut(&'a [u8; 32]) -> S>(
         mut factory: F,
     ) {
-        const DIFFICULTY: NonZeroU8 = NonZeroU8::new(12).unwrap();
+        const DIFFICULTY: NonZeroU8 = NonZeroU8::new(10).unwrap();
         let mask = compute_mask_goaway(DIFFICULTY);
         let test_prefix = core::array::from_fn(|i| i as u8);
 

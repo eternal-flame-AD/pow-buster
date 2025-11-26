@@ -43,11 +43,12 @@ opt-level = 3
 
 [profile.release]
 opt-level = 3
-panic = "abort"
 
-[profile.release-unwinding]
-inherits = "release"
-panic = "unwind"
+[target.'cfg(target_arch = "x86")'.dependencies]
+cpufeatures = { version = "0.2", default-features = false }
+
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+cpufeatures = { version = "0.2", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { version = "0.2" }

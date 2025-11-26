@@ -33,6 +33,24 @@ mod static_asserts {
         [(); (LANE_ID_STR_COMBINED_LE_HI.0[123] == u32::from_be_bytes(*b"321\x00")) as usize];
 }
 
+cpufeatures::new!(avx2, "avx2");
+
+#[derive(Debug, Copy, Clone)]
+/// Required features for AVX-2 solver.
+pub struct RequiredFeatures;
+
+impl Default for RequiredFeatures {
+    fn default() -> Self {
+        Self
+    }
+}
+
+impl crate::solver::CpuIDToken for RequiredFeatures {
+    fn get() -> bool {
+        avx2::get()
+    }
+}
+
 /// AVX-2 Cerberus solver.
 ///
 /// Current implementation: 9-digit out-of-order kernel with dual-wavefront 8 way SIMD and quarter-round hotstart granularity.
@@ -66,6 +84,7 @@ impl CerberusSolver {
 
 impl CerberusSolver {
     #[inline(never)]
+    #[target_feature(enable = "avx2")]
     fn solve_decimal_impl<
         const CENTER_WORD_IDX: usize,
         const LANE_ID_WORD_IDX: usize,
@@ -170,50 +189,70 @@ impl CerberusSolver {
         }
         None
     }
+
+    #[inline(never)]
+    #[target_feature(enable = "avx2")]
+    fn solve_binary_impl(&mut self, target: u64, mask: u64) -> Option<u64> {
+        debug_assert_eq!(target, 0);
+
+        let CerberusMessage::Binary(message) = &self.message else {
+            return None;
+        };
+
+        let mut msg = [0; 16];
+        msg[0] = message.first_word;
+        let prepared_state = crate::blake3::ingest_message_prefix(
+            *message.midstate,
+            &msg[..1],
+            0,
+            8,
+            crate::blake3::FLAG_CHUNK_END | crate::blake3::FLAG_ROOT,
+        );
+        unsafe {
+            let state_base = core::array::from_fn(|i| _mm256_set1_epi32(prepared_state[i] as _));
+            let mut nonce = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
+            let increment_nonce = _mm256_set1_epi32(8);
+            let masks = (mask >> 32) as u32;
+            let maskv = _mm256_set1_epi32(masks as i32);
+            for rep in 0..=(u32::MAX / 8) {
+                let mut state = state_base;
+                crate::blake3::avx2::compress_mb8::<1, 1>(&mut state, &msg, nonce);
+                self.attempted_nonces += 8;
+                let m = _mm256_and_si256(state[0], maskv);
+                let cmp = _mm256_cmpeq_epi32(m, _mm256_setzero_si256());
+                let nothit = _mm256_testz_si256(cmp, cmp);
+                if nothit == 0 {
+                    crate::unlikely();
+                    let mut dump = Align64([0u32; 8]);
+                    _mm256_store_si256(dump.as_mut_ptr().cast(), state[0]);
+                    let success_lane_idx = dump.0.iter().position(|x| *x & masks == 0).unwrap();
+                    return Some(
+                        (rep * 8 + success_lane_idx as u32) as u64
+                            | (message.first_word as u64) << 32,
+                    );
+                }
+                nonce = _mm256_add_epi32(nonce, increment_nonce);
+                if self.attempted_nonces >= self.limit {
+                    return None;
+                }
+            }
+        }
+        None
+    }
 }
 
 impl crate::solver::Solver for CerberusSolver {
+    fn set_limit(&mut self, limit: u64) {
+        self.limit = limit;
+    }
+
+    fn get_attempted_nonces(&self) -> u64 {
+        self.attempted_nonces
+    }
+
     fn solve_nonce_only<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<u64> {
         match &self.message {
-            CerberusMessage::Binary(message) => unsafe {
-                let mut msg = [0; 16];
-                msg[0] = message.first_word;
-                let prepared_state = crate::blake3::ingest_message_prefix(
-                    *message.midstate,
-                    &msg[..1],
-                    0,
-                    8,
-                    crate::blake3::FLAG_CHUNK_END | crate::blake3::FLAG_ROOT,
-                );
-                let state_base =
-                    core::array::from_fn(|i| _mm256_set1_epi32(prepared_state[i] as _));
-                let mut nonce = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
-                let increment_nonce = _mm256_set1_epi32(8);
-                let masks = (mask >> 32) as u32;
-                let maskv = _mm256_set1_epi32(masks as i32);
-                for rep in 0..=(u32::MAX / 8) {
-                    let mut state = state_base;
-                    crate::blake3::avx2::compress_mb8::<1, 1>(&mut state, &msg, nonce);
-                    self.attempted_nonces += 8;
-                    let m = _mm256_and_si256(state[0], maskv);
-                    let cmp = _mm256_cmpeq_epi32(m, _mm256_setzero_si256());
-                    let nothit = _mm256_testz_si256(cmp, cmp);
-                    if nothit == 0 {
-                        crate::unlikely();
-                        let mut dump = Align64([0u32; 8]);
-                        _mm256_store_si256(dump.as_mut_ptr().cast(), state[0]);
-                        let success_lane_idx = dump.0.iter().position(|x| *x & masks == 0).unwrap();
-                        return Some(
-                            (rep * 8 + success_lane_idx as u32) as u64
-                                | (message.first_word as u64) << 32,
-                        );
-                    }
-                    nonce = _mm256_add_epi32(nonce, increment_nonce);
-                    if self.attempted_nonces >= self.limit {
-                        return None;
-                    }
-                }
-            },
+            CerberusMessage::Binary(_) => unsafe { self.solve_binary_impl(target, mask) },
             CerberusMessage::Decimal(message) => {
                 // two digits as lane ID, N=\x00, ? is prefix
                 // position % 4 =0: |1234|5678|NNN9
@@ -266,13 +305,17 @@ impl crate::solver::Solver for CerberusSolver {
                         macro_rules! dispatch {
                             ($center_word_idx:literal) => {
                                 if position_mod < 2 {
-                                    self.solve_decimal_impl::<$center_word_idx, { $center_word_idx - 1 }, {$center_word_idx - 1}>(
-                                    msg, target, mask,
-                                    )
+                                    unsafe {
+                                        self.solve_decimal_impl::<$center_word_idx, { $center_word_idx - 1 }, {$center_word_idx - 1}>(
+                                        msg, target, mask,
+                                        )
+                                    }
                                 } else {
-                                    self.solve_decimal_impl::<$center_word_idx, { $center_word_idx + 1 }, $center_word_idx>(
-                                    msg, target, mask,
-                                    )
+                                    unsafe {
+                                        self.solve_decimal_impl::<$center_word_idx, { $center_word_idx + 1 }, $center_word_idx>(
+                                        msg, target, mask,
+                                        )
+                                    }
                                 }
                             };
                         }
@@ -328,10 +371,10 @@ impl crate::solver::Solver for CerberusSolver {
                         }
                     }
                 }
+
+                None
             }
         }
-
-        None
     }
 
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
@@ -385,6 +428,7 @@ impl crate::solver::Solver for CerberusSolver {
     }
 }
 
+#[cfg(target_feature = "avx2")]
 #[cfg(test)]
 mod tests {
     use crate::message::{CerberusBinaryMessage, CerberusDecimalMessage};
