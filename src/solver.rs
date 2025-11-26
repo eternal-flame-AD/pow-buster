@@ -36,11 +36,11 @@ pub trait CpuIDToken: Default + Copy + Clone + 'static {
 pub enum SolverRouter<T: CpuIDToken, M, S: Solver + From<M>, F: Solver + From<M>> {
     Taken {
         solver: S,
-        _marker: core::marker::PhantomData<(T, S, M, F)>,
+        _marker: core::marker::PhantomData<(T, M)>,
     },
     Fallback {
         solver: F,
-        _marker: core::marker::PhantomData<(T, S, M, F)>,
+        _marker: core::marker::PhantomData<(T, M)>,
     },
 }
 
@@ -48,15 +48,16 @@ impl<T: CpuIDToken, M, S: Solver + From<M>, F: Solver + From<M>> From<M>
     for SolverRouter<T, M, S, F>
 {
     fn from(value: M) -> Self {
-        if !T::get() {
-            return Self::Fallback {
+        if T::get() {
+            Self::Taken {
                 solver: value.into(),
                 _marker: core::marker::PhantomData,
-            };
-        }
-        Self::Taken {
-            solver: value.into(),
-            _marker: core::marker::PhantomData,
+            }
+        } else {
+            Self::Fallback {
+                solver: value.into(),
+                _marker: core::marker::PhantomData,
+            }
         }
     }
 }
