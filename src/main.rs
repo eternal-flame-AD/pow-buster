@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use pow_buster::{
     Align16, BinarySolver, CerberusSolver, DecimalSolver, DoubleBlockSolver, GoAwaySolver,
@@ -58,16 +58,26 @@ enum Scheme {
     Mcaptcha,
 }
 
-impl std::str::FromStr for Scheme {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "anubis" => Ok(Scheme::Anubis),
-            "mcaptcha" => Ok(Scheme::Mcaptcha),
-            "goaway" | "go-away" => Ok(Scheme::GoAway),
-            "cerberus" | "cerberus-binary" => Ok(Scheme::CerberusBinary),
-            "cerberus-decimal" => Ok(Scheme::CerberusDecimal),
-            _ => Err(format!("invalid scheme: {}", s)),
+impl ValueEnum for Scheme {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[
+            Scheme::Anubis,
+            Scheme::CerberusBinary,
+            Scheme::CerberusDecimal,
+            Scheme::GoAway,
+            Scheme::Mcaptcha,
+        ]
+    }
+
+    fn to_possible_value(&self) -> Option<clap::builder::PossibleValue> {
+        match self {
+            Scheme::Anubis => Some(clap::builder::PossibleValue::new("anubis")),
+            Scheme::CerberusBinary => Some(clap::builder::PossibleValue::new("cerberus-binary")),
+            Scheme::CerberusDecimal => {
+                Some(clap::builder::PossibleValue::new("cerberus-decimal").alias("cerberus"))
+            }
+            Scheme::GoAway => Some(clap::builder::PossibleValue::new("goaway")),
+            Scheme::Mcaptcha => Some(clap::builder::PossibleValue::new("mcaptcha")),
         }
     }
 }
@@ -106,13 +116,13 @@ enum SubCommand {
         #[clap(short, long, help = "use the explicitly provided salt")]
         salt: String,
 
-        #[clap(short, long, help = "scheme to use, one of anubis, mcaptcha, goaway")]
-        scheme: String,
+        #[clap(short = 't', long)]
+        scheme: Scheme,
 
         #[clap(short, long, help = "use the explicitly provided difficulty")]
         difficulty: NonZeroU64,
 
-        #[clap(short, long, help = "thread count", default_value = "1")]
+        #[clap(short = 'j', long, help = "thread count", default_value = "1")]
         num_threads: NonZeroU32,
 
         #[clap(long, help = "show progress")]
@@ -491,15 +501,17 @@ fn main() {
             num_threads,
             progress,
         } => {
-            let scheme = scheme
-                .parse()
-                .expect("invalid scheme, must be one of anubis, mcaptcha, goaway, cerberus");
-            let (target, mask) = match scheme {
+            let (target, mask, estimated_work) = match scheme {
                 Scheme::Anubis => (
                     0,
                     compute_mask_anubis(difficulty.try_into().expect("difficulty out of range")),
+                    16u64.saturating_pow(difficulty.get().try_into().unwrap()),
                 ),
-                Scheme::Mcaptcha => (compute_target_mcaptcha(difficulty.get()), !0),
+                Scheme::Mcaptcha => (
+                    compute_target_mcaptcha(difficulty.get()),
+                    !0,
+                    difficulty.get(),
+                ),
                 Scheme::CerberusBinary | Scheme::CerberusDecimal => (
                     0,
                     compute_mask_cerberus(
@@ -508,13 +520,14 @@ fn main() {
                             .try_into()
                             .expect("difficulty cannot be zero"),
                     ) as u64,
+                    4u64.saturating_pow(difficulty.get().try_into().unwrap()),
                 ),
                 Scheme::GoAway => (
                     0,
                     compute_mask_goaway(difficulty.try_into().expect("difficulty out of range")),
+                    2u64.saturating_pow(difficulty.get().try_into().unwrap()),
                 ),
             };
-            let estimated_work = u64::MAX / mask;
 
             let (tx, rx) = std::sync::mpsc::channel();
             let salt_bytes = salt.as_bytes();
@@ -530,7 +543,7 @@ fn main() {
                         Scheme::GoAway => {
                             #[cfg(not(feature = "compare-64bit"))]
                             {
-                                assert_ne!(target >> 32, 0, "64-bit comparison is required for this difficulty, rebuild with `compare-64bit` feature");
+                                assert_eq!(mask as u32, 0, "64-bit comparison is required for this difficulty, rebuild with `compare-64bit` feature");
                             }
                             let mut message = GoAwayMessage::new_hex(
                                 salt_bytes.try_into().expect("invalid salt length"),
@@ -605,7 +618,7 @@ fn main() {
                         Scheme::Anubis => {
                             #[cfg(not(feature = "compare-64bit"))]
                             {
-                                assert_ne!(target >> 32, 0, "64-bit comparison is required for this difficulty, rebuild with `compare-64bit` feature");
+                                assert_eq!(mask as u32, 0, "64-bit comparison is required for this difficulty, rebuild with `compare-64bit` feature");
                             }
                             for working_set in (ix..).step_by(num_threads.get() as usize) {
                                 let Some(message) = DecimalMessage::new(salt_bytes, working_set)
@@ -627,7 +640,7 @@ fn main() {
                     });
                 });
 
-                if progress && Scheme::GoAway != scheme {
+                if progress {
                     s.spawn(|| {
                         let begin = Instant::now();
                         loop {
