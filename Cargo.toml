@@ -77,7 +77,8 @@ harness = false
 required-features = ["internals"]
 
 [features]
-default = ["std"]
+default = ["std", "runtime-dispatch"]
+runtime-dispatch = []
 alloc = []
 std = ["alloc"]
 compare-64bit = []

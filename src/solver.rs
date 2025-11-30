@@ -33,14 +33,16 @@ pub trait CpuIDToken: Default + Copy + Clone + 'static {
 /// A solver router that can take a solver or a fallback solver based on the CPU features
 #[derive(Debug, Copy, Clone)]
 #[allow(missing_docs)]
+#[cfg_attr(not(feature = "runtime-dispatch"), repr(transparent))]
 pub enum SolverRouter<T: CpuIDToken, M, S: Solver + From<M>, F: Solver + From<M>> {
+    #[cfg(feature = "runtime-dispatch")]
     Taken {
         solver: S,
-        _marker: core::marker::PhantomData<(T, M)>,
+        _marker: core::marker::PhantomData<(S, F, T, M)>,
     },
     Fallback {
         solver: F,
-        _marker: core::marker::PhantomData<(T, M)>,
+        _marker: core::marker::PhantomData<(S, F, T, M)>,
     },
 }
 
@@ -48,16 +50,16 @@ impl<T: CpuIDToken, M, S: Solver + From<M>, F: Solver + From<M>> From<M>
     for SolverRouter<T, M, S, F>
 {
     fn from(value: M) -> Self {
+        #[cfg(feature = "runtime-dispatch")]
         if T::get() {
-            Self::Taken {
+            return Self::Taken {
                 solver: value.into(),
                 _marker: core::marker::PhantomData,
-            }
-        } else {
-            Self::Fallback {
-                solver: value.into(),
-                _marker: core::marker::PhantomData,
-            }
+            };
+        }
+        Self::Fallback {
+            solver: value.into(),
+            _marker: core::marker::PhantomData,
         }
     }
 }
@@ -67,12 +69,14 @@ impl<T: CpuIDToken, M, S: Solver + From<M>, F: Solver + From<M>> Solver
 {
     fn set_limit(&mut self, limit: u64) {
         match self {
+            #[cfg(feature = "runtime-dispatch")]
             Self::Taken { solver, .. } => solver.set_limit(limit),
             Self::Fallback { solver, .. } => solver.set_limit(limit),
         }
     }
     fn get_attempted_nonces(&self) -> u64 {
         match self {
+            #[cfg(feature = "runtime-dispatch")]
             Self::Taken { solver, .. } => solver.get_attempted_nonces(),
             Self::Fallback { solver, .. } => solver.get_attempted_nonces(),
         }
@@ -81,6 +85,7 @@ impl<T: CpuIDToken, M, S: Solver + From<M>, F: Solver + From<M>> Solver
     #[inline]
     fn solve_nonce_only<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<u64> {
         match self {
+            #[cfg(feature = "runtime-dispatch")]
             Self::Taken { solver, .. } => solver.solve_nonce_only::<TYPE>(target, mask),
             Self::Fallback { solver, .. } => solver.solve_nonce_only::<TYPE>(target, mask),
         }
@@ -89,6 +94,7 @@ impl<T: CpuIDToken, M, S: Solver + From<M>, F: Solver + From<M>> Solver
     #[inline]
     fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
         match self {
+            #[cfg(feature = "runtime-dispatch")]
             Self::Taken { solver, .. } => solver.solve::<TYPE>(target, mask),
             Self::Fallback { solver, .. } => solver.solve::<TYPE>(target, mask),
         }
