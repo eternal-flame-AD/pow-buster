@@ -185,35 +185,6 @@ A default official docker-compose instance is used for the benchmark target (the
 
 #### CPU only
 
-The following were configured for difficulty 5_000_000 (default max tier).
-
-10 consecutive solutions using the official Captcha widget: [0.105s, 1.69s, 1.06s, 1.89s, 1.91s, 1.09s, 1.80s, 0.97s, 0.71s, 1.15s, 3.59s, 1.09s, 0.14s, 3.98s, 1.26s, 1.05s, 1.26s]
-
-```sh
-> RUSTFLAGS="-Ctarget-cpu=native" \
-    cargo run --features cli --release -- live \
-    --site-key emPgsyJP5SWeNEot2IBbg0ezOE1GNhof \
-    --n-workers 38 \
-    --do-control >/dev/null
-
-You are hitting host http://localhost:7000
-running 10 seconds of control sending random proofs
-[0.0s] succeeded: 0, failed: 0, 5s: 0.0rps, 5s_failed: 0.0rps
-[5.0s] succeeded: 725, failed: 0, 5s: 145.0rps, 5s_failed: 0.0rps
-[10.0s] succeeded: 1453, failed: 0, 5s: 145.6rps, 5s_failed: 0.0rps
-Fake Proof Control: 3732 requests in 10.1 seconds, 369.2 rps
-[15.0s] succeeded: 2690, failed: 0, 5s: 247.4rps, 5s_failed: 0.0rps
-[20.0s] succeeded: 3902, failed: 0, 5s: 242.4rps, 5s_failed: 0.0rps
-[25.0s] succeeded: 5110, failed: 0, 5s: 241.6rps, 5s_failed: 0.0rps
-[30.0s] succeeded: 6368, failed: 0, 5s: 251.6rps, 5s_failed: 0.0rps
-[35.0s] succeeded: 7587, failed: 0, 5s: 243.8rps, 5s_failed: 0.0rps
-[40.0s] succeeded: 8840, failed: 0, 5s: 250.6rps, 5s_failed: 0.0rps
-[45.0s] succeeded: 10081, failed: 0, 5s: 248.2rps, 5s_failed: 0.0rps
-[50.0s] succeeded: 11302, failed: 0, 5s: 244.2rps, 5s_failed: 0.0rps
-[55.0s] succeeded: 12505, failed: 0, 5s: 240.6rps, 5s_failed: 0.0rps
-[60.0s] succeeded: 13761, failed: 0, 5s: 251.2rps, 5s_failed: 0.0rps
-```
-
 Anubis "mild suspicion" (4, saturated Anubis Go runtime):
 
 ```sh
@@ -344,25 +315,39 @@ The throughput on 7950X for Anubis and go-away is about 100kH/s on Chromium and 
 
 #### Multi Threaded
 
+##### Zen 4
+
 The peak throughput on 7950X reported by `openssl speed -multi 32 sha256` is 239.76 MH/s (15.34 GB/s) single block, 1.14 GH/s (73.24 GB/s) continuous.
 
-| Workload                         | AVX-512 [log](logs/bench_sha2.log) | SHA-NI      | Vendor Official on Chromium [^4]        |
-| -------------------------------- | ---------------------------------- | ----------- | --------------------------------------- |
-| SingleBlock/Anubis               | 1.465 GH/s                         | 1.143 GH/s  | ~650kH/s                                |
-| DoubleBlock (mCaptcha edge case) | 850.97 MH/s                        | 827.74 MH/s | N/A                                     |
-| go-away (32 bytes)               | 1.564 GH/s                         | 1.291 GH/s  | N/A                                     |
-| Cerberus (BLAKE3)                | 3.426 GH/s                         | N/A         | ~465MH/s (Cherry picked from this repo) |
+| Workload                | AVX-512 [log](logs/bench_sha2.log) | SHA-NI      | Vendor Official on Chromium [^4]        |
+| ----------------------- | ---------------------------------- | ----------- | --------------------------------------- |
+| SingleBlock/Anubis      | 1.465 GH/s                         | 1.143 GH/s  | ~650kH/s                                |
+| DoubleBlock (edge case) | 850.97 MH/s                        | 827.74 MH/s | ?                                       |
+| go-away (32 bytes)      | 1.564 GH/s                         | 1.291 GH/s  | ?                                       |
+| Cerberus (BLAKE3) [^5]  | 3.426 GH/s                         | N/A         | ~465MH/s (Cherry picked from this repo) |
 
 [^4]: Due to instablity of WASM optimization and runtime throttling behavior and lack of vendor provided benchmark harness, only approximate numbers can be provided.
+[^5]: Vendor uses a variant of my implementation.
 
 On EPYC 9634 with better thermals, OpenSSL has 598.28 MH/s (38.29 GB/s) single block, 1.91 GH/s (122.54 GB/s) continuous.
 
-| Workload                         | AVX-512    | SHA-NI    |
-| -------------------------------- | ---------- | --------- |
-| SingleBlock/Anubis               | 3.387 GH/s | 2.09 GH/s |
-| DoubleBlock (mCaptcha edge case) | 1.861 GH/s | 1.64 GH/s |
-| go-away (32 bytes)               | 3.826 GH/s | 3.15 GH/s |
-| Cerberus (BLAKE3)                | 8.874 GH/s | N/A       |
+| Workload                | AVX-512    | SHA-NI    |
+| ----------------------- | ---------- | --------- |
+| SingleBlock/Anubis      | 3.387 GH/s | 2.09 GH/s |
+| DoubleBlock (edge case) | 1.861 GH/s | 1.64 GH/s |
+| go-away (32 bytes)      | 3.826 GH/s | 3.15 GH/s |
+| Cerberus (BLAKE3) [^5]  | 8.874 GH/s | N/A       |
+
+##### Zen 5
+
+These are done on AMD (R) Ryzen 9 9950X.
+
+| Workload                | AVX-512    | SHA-NI      | Vendor Official on Chromium [^4] |
+| ----------------------- | ---------- | ----------- | -------------------------------- |
+| SingleBlock/Anubis      | 2.655 GH/s | 1.100 GH/s  | ~785kH/s                         |
+| DoubleBlock (edge case) | 1.461 GH/s | 607.99 MH/s | ?                                |
+| go-away (32 bytes)      | 2.848 GH/s | 1.349 GH/s  | ?                                |
+| Cerberus (BLAKE3) [^5]  | 6.138 GH/s | N/A         | 220MH/s                          |
 
 ## Security Implications and Responsible Reporting
 
