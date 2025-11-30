@@ -9,15 +9,35 @@
         }
 
         if (anubisChallenge.rules.algorithm === "fast" || anubisChallenge.rules.algorithm === "slow") {
+            if (window.location.pathname.indexOf("/.within.website/x/cmd/anubis/") !== -1) {
+                console.error("Already in anubis challenge, exiting to prevent infinite loop");
+                myPort.disconnect();
+                return;
+            }
             const begin = performance.now();
             myPort.onMessage.addListener((result) => {
                 const end = performance.now();
                 const duration = end - begin;
                 console.log("received message from background script: ", result);
 
+                let basePrefix = "";
+                try {
+                    const basePrefixElement = document.getElementById('anubis_base_prefix');
+                    if (basePrefixElement) {
+                        let parsed = JSON.parse(basePrefixElement.textContent);
+                        if (parsed && typeof parsed === 'string' && parsed.startsWith('/') && !parsed.startsWith('//')) {
+                            parsed = parsed.trim().replace(/\/+$/, '');
+                            console.log('Setting base prefix to: ', parsed);
+                            basePrefix = parsed;
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error getting base prefix: ', error);
+                }
+
                 if (result.type === "solution") {
                     const { response, nonce } = result.solution;
-                    let finalUrl = "/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime=" + duration + "&response=" + response + "&nonce=" + nonce;
+                    let finalUrl = basePrefix + "/.within.website/x/cmd/anubis/api/pass-challenge?elapsedTime=" + duration + "&response=" + response + "&nonce=" + nonce;
                     if (anubisChallenge.challenge && anubisChallenge.challenge.id) {
                         finalUrl += "&id=" + encodeURIComponent(anubisChallenge.challenge.id)
                     }

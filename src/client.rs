@@ -9,8 +9,33 @@ use crate::{
     solver::{SOLVE_TYPE_GT, SOLVE_TYPE_MASK, Solver},
 };
 
-static SELECTOR_META_REFRESH: LazyLock<scraper::Selector> =
-    LazyLock::new(|| scraper::Selector::parse("meta[http-equiv='refresh' i]").unwrap());
+struct Selectors {
+    meta_refresh: scraper::Selector,
+    anubis_base_prefix: scraper::Selector,
+    anubis_challenge: scraper::Selector,
+    challenge_script: scraper::Selector,
+}
+
+static SELECTORS: LazyLock<Selectors> = LazyLock::new(|| Selectors {
+    meta_refresh: scraper::Selector::parse("meta[http-equiv='refresh' i]")
+        .map_err(|_| SolveError::ScrapeElementNotFound("meta[http-equiv='refresh' i]"))
+        .unwrap(),
+    anubis_base_prefix: scraper::Selector::parse("script#anubis_base_prefix")
+        .map_err(|_| SolveError::ScrapeElementNotFound("anubis_base_prefix"))
+        .unwrap(),
+    anubis_challenge: scraper::Selector::parse("script#anubis_challenge")
+        .map_err(|_| SolveError::ScrapeElementNotFound("anubis_challenge"))
+        .unwrap(),
+    challenge_script: scraper::Selector::parse(
+        "script[src^='/.within.website/x/cmd/anubis/static/js/main.mjs']",
+    )
+    .map_err(|_| {
+        SolveError::ScrapeElementNotFound(
+            "script[src^='/.within.website/x/cmd/anubis/static/js/main.mjs']",
+        )
+    })
+    .unwrap(),
+});
 
 static DEFAULT_USER_AGENT_VALUE_BUF_LEN: ([u8; 256], usize) = {
     let mut buf = [0u8; 256];
@@ -383,27 +408,9 @@ pub async fn solve_anubis_ex(
     base_url: &str,
     time_iowait: &mut u32,
 ) -> Result<String, SolveError> {
-    struct Selectors {
-        anubis_challenge: scraper::Selector,
-        challenge_script: scraper::Selector,
-    }
-    static SELECTORS: LazyLock<Selectors> = LazyLock::new(|| Selectors {
-        anubis_challenge: scraper::Selector::parse("script#anubis_challenge")
-            .map_err(|_| SolveError::ScrapeElementNotFound("anubis_challenge"))
-            .unwrap(),
-        challenge_script: scraper::Selector::parse(
-            "script[src^='/.within.website/x/cmd/anubis/static/js/main.mjs']",
-        )
-        .map_err(|_| {
-            SolveError::ScrapeElementNotFound(
-                "script[src^='/.within.website/x/cmd/anubis/static/js/main.mjs']",
-            )
-        })
-        .unwrap(),
-    });
-
     #[derive(Debug)]
     struct DocumentPresentation {
+        base_prefix: Option<String>,
         meta_refresh: Option<String>,
         anubis_challenge: Option<String>,
     }
@@ -450,31 +457,40 @@ pub async fn solve_anubis_ex(
         .next()
         .map(|s| s.to_string());
 
+    let selectors = &*SELECTORS;
+
     let document_presentation = if let Some(refresh_header) = response
         .headers()
         .get("refresh")
         .and_then(|refresh| refresh.to_str().ok())
     {
         DocumentPresentation {
+            base_prefix: None,
             meta_refresh: Some(refresh_header.to_string()),
             anubis_challenge: None,
         }
     } else {
         let text = response.text().await?;
         let document = scraper::Html::parse_document(&text);
+        let base_prefix = document
+            .select(&selectors.anubis_base_prefix)
+            .next()
+            .map(|element| serde_json::from_str(&element.text().collect::<String>()))
+            .transpose()?;
+
         let meta_refresh = document
-            .select(&SELECTOR_META_REFRESH)
+            .select(&selectors.meta_refresh)
             .next()
             .and_then(|meta| meta.attr("content"))
             .map(|s| s.to_string());
         let anubis_challenge = document
-            .select(&SELECTORS.anubis_challenge)
+            .select(&selectors.anubis_challenge)
             .next()
             .map(|element| element.text().collect::<String>());
         if meta_refresh.is_none()
             && anubis_challenge.is_none()
             && document
-                .select(&SELECTORS.challenge_script)
+                .select(&selectors.challenge_script)
                 .next()
                 .is_none()
         {
@@ -486,6 +502,7 @@ pub async fn solve_anubis_ex(
         }
 
         DocumentPresentation {
+            base_prefix,
             meta_refresh,
             anubis_challenge,
         }
@@ -522,6 +539,7 @@ pub async fn solve_anubis_ex(
             (url_parsed.join(url)?, dur_int as u64 * 900)
         }
         DocumentPresentation {
+            base_prefix,
             anubis_challenge: json_text,
             meta_refresh: None,
         } => {
@@ -580,6 +598,9 @@ pub async fn solve_anubis_ex(
             );
             if let Some(port) = url_parsed.port() {
                 write!(final_url, ":{}", port).unwrap();
+            }
+            if let Some(base_prefix) = base_prefix {
+                write!(final_url, "{}", base_prefix.trim_end_matches('/')).unwrap();
             }
             write!(
                 final_url,

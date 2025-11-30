@@ -242,7 +242,23 @@
                                     finalUrl += "&id=" + encodeURIComponent(jsonParsed.challenge.id)
                                 }
                                 finalUrl += "&redir=";
-                                passChallengeScriptEl.value = `window.location.replace(${JSON.stringify(finalUrl)} + encodeURIComponent(window.location.href));`;
+                                passChallengeScriptEl.value = `(() => {
+    let basePrefix = "";
+    try {
+        const basePrefixElement = document.getElementById('anubis_base_prefix');
+        if (basePrefixElement) {
+            let parsed = JSON.parse(basePrefixElement.textContent);
+            if (parsed && typeof parsed === 'string' && parsed.startsWith('/') && !parsed.startsWith('//')) {
+                parsed = parsed.trim().replace(/\\/+$/, '');
+                console.log('Setting base prefix to: ', parsed);
+                basePrefix = parsed;
+            }
+        }
+    } catch (error) {
+        console.error('Error getting base prefix: ', error);
+    }
+    window.location.replace(basePrefix + ${JSON.stringify(finalUrl)} + encodeURIComponent(window.location.href));
+})();`;
                                 nonceEl.innerText = result.nonce;
                                 attemptedNoncesEl.innerText = result.attempted_nonces;
                             } else if (result.subtype === "cerberus") {

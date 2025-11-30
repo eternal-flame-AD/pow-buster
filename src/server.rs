@@ -877,10 +877,25 @@ async fn solve_anubis(
         .unwrap();
     }
 
-    output.extend_from_slice(b"\r\nwindow.location.replace(");
+    output.extend_from_slice(b"\r\n(() => {");
+    output.extend_from_slice(br#"
+    let basePrefix = "";
+    try {
+        const basePrefixElement = document.getElementById('anubis_base_prefix');
+        if (basePrefixElement) {
+            const parsed = JSON.parse(basePrefixElement.textContent);
+            if (parsed && typeof parsed === 'string' && parsed.startsWith('/') && !parsed.startsWith('//')) {
+                console.log('Setting base prefix to: ', parsed);
+                basePrefix = parsed;
+                }
+            }
+    } catch (error) {
+        console.error('Error getting base prefix: ', error);
+        }
+        window.location.replace(basePrefix + "#);
     // This only fails for non trivial types, for string it is infallible
     serde_json::to_writer(&mut output, &final_url).unwrap();
-    output.extend_from_slice(b" + encodeURIComponent(window.location.href));");
+    output.extend_from_slice(b" + encodeURIComponent(window.location.href));\n})();");
 
     Ok(String::from_utf8(output).unwrap())
 }
