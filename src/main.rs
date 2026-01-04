@@ -962,7 +962,8 @@ fn main() {
             };
 
             if timeout > 0 {
-                app = app.layer(tower_http::timeout::TimeoutLayer::new(
+                app = app.layer(tower_http::timeout::TimeoutLayer::with_status_code(
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
                     std::time::Duration::from_millis(timeout),
                 ));
             }
