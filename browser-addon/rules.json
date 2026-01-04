@@ -13,8 +13,7 @@
             "image",
             "imageset",
             "media",
-            "font",
-            "other"
+            "font"
         ]
     },
     {
@@ -31,8 +30,7 @@
             "image",
             "imageset",
             "media",
-            "font",
-            "other"
+            "font"
         ]
     },
     {
@@ -46,6 +44,20 @@
         },
         "resourceTypes": [
             "xmlhttprequest"
+        ]
+    },
+    {
+        "id": 4,
+        "priority": 2,
+        "action": {
+            "type": "allow"
+        },
+        "condition": {
+            "urlFilter": "|*/.within.website/x/cmd/anubis/api/pass-challenge"
+        },
+        "resourceTypes": [
+            "xmlhttprequest",
+            "sub_frame"
         ]
     }
 ]
