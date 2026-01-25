@@ -141,7 +141,25 @@
             }
         });
         myPort.postMessage({ type: "challenge", challenge: JSON.stringify(challengeJSON), multithreaded: true });
-    } else {
+    } else if (document.querySelector("script[type='module'][src*='/challenge/js-pow-sha256/script.mjs']")) {
+        console.log("No challenge found, cleaning up...");
+        exportFunction(function (challenge) {
+            return new window.Promise((resolve, reject) => {
+                myPort.onMessage.addListener((result) => {
+                    console.log("received message from background script: ", result);
+                    if (result.type === "solution") {
+                        resolve(cloneInto(result.solution, window));
+                    } else if (result.type === "script") {
+                        eval(result.script);
+                    }
+                });
+                myPort.postMessage({ type: "challenge", challenge: JSON.stringify(challenge) });
+            });
+        }, window, {
+            defineAs: "powbuster",
+        })
+    }
+    else {
         console.log("No challenge found, cleaning up...");
         myPort.disconnect();
     }

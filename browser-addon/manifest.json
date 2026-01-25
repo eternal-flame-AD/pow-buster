@@ -41,7 +41,8 @@
     "page": "background/index.html"
   },
   "web_accessible_resources": [
-    "pkg/*"
+    "pkg/*",
+    "public/*"
   ],
   "applications": {
     "gecko": {

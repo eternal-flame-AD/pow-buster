@@ -37,6 +37,19 @@
         "id": 3,
         "priority": 2,
         "action": {
+            "type": "redirect",
+            "redirect": {
+                "extensionPath": "/public/go-away/challenge/js-pow-sha256/static/load.mjs"
+            }
+        },
+        "condition": {
+            "urlFilter": "|*/challenge/js-pow-sha256/static/load.mjs"
+        }
+    },
+    {
+        "id": 4,
+        "priority": 2,
+        "action": {
             "type": "allow"
         },
         "condition": {
@@ -47,7 +60,7 @@
         ]
     },
     {
-        "id": 4,
+        "id": 5,
         "priority": 2,
         "action": {
             "type": "allow"

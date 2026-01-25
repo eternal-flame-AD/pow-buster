@@ -12,10 +12,10 @@ use crate::{
 /// GoAway "js-pow-sha256" PoW challenge configuration.
 pub struct GoAwayConfig {
     /// The challenge. (JSON key: `challenge`)
-    challenge: String,
+    pub challenge: String,
     /// The target. (JSON key: `target`)
     // target: String,
-    difficulty: core::num::NonZeroU8,
+    pub difficulty: core::num::NonZeroU8,
 }
 
 impl GoAwayConfig {

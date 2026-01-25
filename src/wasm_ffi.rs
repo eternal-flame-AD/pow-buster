@@ -48,6 +48,10 @@ pub fn solve_json(input: &str) -> Result<AnubisResponse, JsError> {
         serde_json::from_str::<crate::adapter::anubis::ChallengeDescriptor>(input)
     {
         return solve_anubis_json(&descriptor);
+    } else if let Ok(descriptor) =
+        serde_json::from_str::<crate::adapter::goaway::GoAwayConfig>(input)
+    {
+        return solve_goaway_json(&descriptor);
     } else {
         return Err(JsError::new("invalid descriptor"));
     };
@@ -132,4 +136,39 @@ fn solve_cerberus_json(
     }
 
     Err(JsError::new("search exhausted"))
+}
+
+fn solve_goaway_json(
+    descriptor: &crate::adapter::goaway::GoAwayConfig,
+) -> Result<AnubisResponse, JsError> {
+    let (result, attempted_nonces) = descriptor.solve();
+    let Some((nonce, _result)) = result else {
+        return Err(JsError::new("solver failed"));
+    };
+
+    let mut response = descriptor.challenge.as_bytes().to_vec();
+    for b in nonce.to_be_bytes() {
+        let high = b >> 4;
+        let low = b & 0x0f;
+        response.extend([
+            if high < 10 {
+                b'0' + high
+            } else {
+                b'a' + high - 10
+            },
+            if low < 10 {
+                b'0' + low
+            } else {
+                b'a' + low - 10
+            },
+        ]);
+    }
+
+    Ok(AnubisResponse {
+        subtype: "goaway",
+        delay: 0,
+        nonce,
+        response: unsafe { alloc::string::String::from_utf8_unchecked(response.to_vec()) },
+        attempted_nonces,
+    })
 }
