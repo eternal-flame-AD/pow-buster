@@ -445,7 +445,7 @@ pub async fn solve_anubis_ex(
         .headers()
         .iter()
         .filter(|(k, _)| k.as_str().eq_ignore_ascii_case("set-cookie"))
-        .filter_map(|(_, v)| v.to_str().unwrap().split(';').next())
+        .filter_map(|(_, v)| v.to_str().ok())
         .filter(|v| {
             (v.contains("-cookie-verification") || v.contains("if-you-block-this"))
                 && !v.ends_with("=")
