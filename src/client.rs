@@ -315,7 +315,8 @@ pub async fn solve_mcaptcha_ex(
     site_key: &str,
     time_iowait: &mut u32,
 ) -> Result<String, SolveError> {
-    let url_get_work = format!("{}/api/v1/pow/config", base_url);
+    let base_url_parsed = url::Url::parse(base_url)?;
+    let url_get_work = base_url_parsed.join(adapter::mcaptcha::API_POW_CONFIG)?;
     let iotime = std::time::Instant::now();
     let res = client
         .post(url_get_work)
@@ -365,12 +366,7 @@ pub async fn solve_mcaptcha_ex(
         nonce,
         key: site_key,
     };
-    let url_send_work = format!("{}/api/v1/pow/verify", base_url);
-
-    #[derive(Clone, serde::Deserialize, Debug)]
-    struct TokenResponse {
-        token: String,
-    }
+    let url_send_work = base_url_parsed.join(adapter::mcaptcha::API_POW_VERIFY)?;
 
     let iotime = std::time::Instant::now();
     let res = client
@@ -386,7 +382,7 @@ pub async fn solve_mcaptcha_ex(
         let body = res.text().await?;
         return Err(SolveError::UnexpectedStatusSend(status, body));
     }
-    let token: TokenResponse = res.json().await?;
+    let token: adapter::mcaptcha::TokenResponse = res.json().await?;
 
     Ok(token.token)
 }

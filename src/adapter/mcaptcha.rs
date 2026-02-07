@@ -2,6 +2,11 @@
 
 use alloc::string::String;
 
+/// The API endpoint for getting a mCaptcha PoW configuration.
+pub const API_POW_CONFIG: &str = "api/v1/pow/config";
+/// The API endpoint for verifying a mCaptcha PoW.
+pub const API_POW_VERIFY: &str = "api/v1/pow/verify";
+
 #[derive(Clone, serde::Serialize, serde::Deserialize, Debug)]
 /// mCaptcha PoW configuration
 pub struct PoWConfig {
@@ -24,4 +29,11 @@ pub struct Work<'a> {
     pub nonce: u64,
     /// the key
     pub key: &'a str,
+}
+
+#[derive(Clone, serde::Deserialize, Debug)]
+/// mCaptcha PoW response token.
+pub struct TokenResponse {
+    /// the token
+    pub token: String,
 }
