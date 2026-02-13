@@ -1,10 +1,11 @@
-use std::{fmt::Write, sync::LazyLock};
+use std::{fmt::Write, num::NonZeroU8, sync::LazyLock};
 
 use reqwest::Client;
+use scraper::Element;
 use url::form_urlencoded;
 
 use crate::{
-    Align16, adapter, compute_mask_goaway, compute_target_mcaptcha,
+    Align16, adapter, compute_mask_anubis, compute_mask_goaway, compute_target_mcaptcha,
     message::{DecimalMessage, GoAwayMessage},
     solver::{SOLVE_TYPE_GT, SOLVE_TYPE_MASK, Solver},
 };
@@ -832,6 +833,144 @@ pub async fn solve_cerberus_ex(
         .to_string();
 
     Ok(auth_cookie)
+}
+
+/// Solve a haphash PoW.
+///
+/// Supports both vanilla haphash (IP based) and Debian's Varnish variant (cookie based)
+#[cfg_attr(feature = "tracing", tracing::instrument(level = "info", skip(client)))]
+pub async fn solve_haphash(client: &Client, base_url: &str) -> Result<String, SolveError> {
+    let base_url = url::Url::parse(base_url)?;
+    let mut response = client
+        .get(base_url.clone())
+        .header("Accept", "text/html")
+        .header("Sec-Gpc", "1")
+        .send()
+        .await?;
+
+    let mut redirects = 5u32;
+    while response.status().is_redirection() && redirects > 0 {
+        redirects -= 1;
+        let location = response
+            .headers()
+            .get("Location")
+            .and_then(|location| location.to_str().ok())
+            .ok_or(SolveError::BrokenRedirect)?;
+        let location = base_url.join(location)?;
+        response = client
+            .get(location)
+            .header("Accept", "text/html")
+            .header("Sec-Gpc", "1")
+            .send()
+            .await?;
+    }
+    if response.status().is_redirection() {
+        return Err(SolveError::BrokenRedirect);
+    }
+
+    let salt = response
+        .headers()
+        .iter()
+        .filter(|(k, _)| k.as_str().eq_ignore_ascii_case("set-cookie"))
+        .filter_map(|(_, v)| v.to_str().ok())
+        .find(|v| v.starts_with("pow_challenge="))
+        .map(ToString::to_string);
+
+    let cookie_response = salt.is_some();
+
+    let mut difficulty = NonZeroU8::new(4).unwrap();
+    let mut ts = 0u64;
+
+    let mut salt = match salt {
+        Some(mut salt) => {
+            let semicolon_index = salt.find(';');
+            if let Some(semicolon_index) = semicolon_index {
+                salt.truncate(semicolon_index + 1);
+            } else {
+                salt.push(';');
+            }
+            salt
+        }
+        None => {
+            let text = response.text().await?;
+            let document = scraper::Html::parse_document(&text);
+
+            static ELEMENT_FORM_CHALLENGE: LazyLock<scraper::Selector> =
+                LazyLock::new(|| scraper::Selector::parse("form[action='/_challenge']").unwrap());
+
+            let form = document.select(&ELEMENT_FORM_CHALLENGE).next().ok_or(
+                SolveError::ScrapeElementNotFound("form[action='/_challenge']"),
+            )?;
+
+            let mut salt = String::new();
+            let input = "input".into();
+            form.child_elements().for_each(|c| {
+                if c.has_local_name(&input) {
+                    match c.attr("name") {
+                        Some("diff") => {
+                            difficulty = c
+                                .attr("value")
+                                .and_then(|v| v.parse().ok())
+                                .unwrap_or(difficulty);
+                        }
+                        Some("ts") => {
+                            ts = c.attr("value").and_then(|v| v.parse().ok()).unwrap_or(ts);
+                        }
+                        Some("ip") => {
+                            c.attr("value").map(|t| salt.push_str(&t));
+                            salt.push(';');
+                        }
+                        _ => {}
+                    }
+                }
+            });
+
+            if let Some(host) = base_url.host_str() {
+                salt.push_str(host);
+                salt.push(';');
+            }
+
+            write!(salt, "{};", ts).unwrap();
+
+            salt
+        }
+    };
+
+    #[cfg(feature = "tracing")]
+    tracing::debug!("salt: {}", salt);
+
+    let msg =
+        DecimalMessage::new(salt.as_bytes(), 0).ok_or(SolveError::UnexpectedChallengeFormat)?;
+
+    let mut solver = crate::DecimalSolver::from(msg);
+
+    let nonce = tokio::task::block_in_place(|| {
+        solver
+            .solve_nonce_only::<{ SOLVE_TYPE_MASK }>(0, compute_mask_anubis(difficulty))
+            .ok_or(SolveError::SolverFailed)
+    })?;
+
+    if cookie_response {
+        write!(salt, " pow_nonce={}", nonce).unwrap();
+        return Ok(salt);
+    }
+
+    let golden_request = client
+        .post(base_url.join("/_challenge")?)
+        .header("Accept", "text/html")
+        .header("Sec-Gpc", "1")
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(format!("tries={}&ts={}", nonce, ts))
+        .send()
+        .await?;
+
+    if golden_request.status().is_client_error() || golden_request.status().is_server_error() {
+        let status = golden_request.status();
+        let body = golden_request.text().await?;
+        return Err(SolveError::UnexpectedStatusRequest(status, body));
+    }
+
+    Ok(String::new())
 }
 
 /// Solve a GoAway "js-pow-sha256" PoW.

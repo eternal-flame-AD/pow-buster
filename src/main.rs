@@ -181,6 +181,12 @@ enum SubCommand {
         #[clap(long, default_value = "http://localhost:8080/")]
         url: String,
     },
+    /// Solve a Haphash PoW with a real URL
+    #[cfg(feature = "client")]
+    Haphash {
+        #[clap(long, default_value = "http://localhost:8080/")]
+        url: String,
+    },
     /// Live throughput test using multiple workers
     #[cfg(feature = "live-throughput-test")]
     Live {
@@ -773,6 +779,22 @@ fn main() {
                     .await
                     .unwrap();
                 println!("cookie: {}", response);
+            });
+        }
+        #[cfg(feature = "client")]
+        SubCommand::Haphash { url } => {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async move {
+                let client = pow_buster::client::build_client().build().unwrap();
+                let response = pow_buster::client::solve_haphash(&client, &url)
+                    .await
+                    .unwrap();
+                if !response.is_empty() {
+                    println!("cookie: {}", response);
+                }
             });
         }
         #[cfg(feature = "live-throughput-test")]

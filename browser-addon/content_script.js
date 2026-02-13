@@ -18,7 +18,7 @@
             myPort.onMessage.addListener((result) => {
                 const end = performance.now();
                 const duration = end - begin;
-                console.log("received message from background script: ", result);
+                console.log("received message from background script: ", cloneInto(result, window));
 
                 let basePrefix = "";
                 try {
@@ -80,7 +80,7 @@
             console.error("Failed to get cerberus version: ", error);
         }
         myPort.onMessage.addListener((result) => {
-            console.log("received message from background script: ", result);
+            console.log("received message from background script: ", cloneInto(result, window));
             if (result.type === "solution") {
                 ((hash, nonce) => {
                     function createAnswerForm(hash, solution, baseURL, nonce, ts, signature) {
@@ -146,7 +146,7 @@
         exportFunction(function (challenge) {
             return new window.Promise((resolve, reject) => {
                 myPort.onMessage.addListener((result) => {
-                    console.log("received message from background script: ", result);
+                    console.log("received message from background script: ", cloneInto(result, window));
                     if (result.type === "solution") {
                         resolve(cloneInto(result.solution, window));
                     } else if (result.type === "script") {
@@ -158,6 +158,39 @@
         }, window, {
             defineAs: "powbuster",
         })
+    } else if (location.pathname === "/challenge.html") {
+        let salt = "";
+        if (salt = document.cookie.match(/pow_challenge=([^;]+)/)) {
+            console.log("pow_challenge found: ", salt[1]);
+            const params = new URLSearchParams(window.location.search);
+            const originalUrl = params.get("original") || "/";
+            if (window.crypto && window.crypto.subtle && window.crypto.subtle.digest) {
+                exportFunction(function () {
+                    return new window.Promise(() => { });
+                }, window.crypto.subtle, {
+                    defineAs: "digest",
+                })
+            }
+            myPort.onMessage.addListener((result) => {
+                console.log("received message from background script: ", cloneInto(result, window));
+                if (result.type === "solution") {
+                    document.cookie = "pow_nonce=" + result.solution.nonce + "; path=/; max-age=3000";
+                } else if (result.type === "script") {
+                    const nonce = result.script.match(/nonce=([0-9]+)/)[1];
+                    document.cookie = "pow_nonce=" + nonce + "; path=/; max-age=3000";
+                }
+                window.location.href = originalUrl;
+            });
+            myPort.postMessage({
+                type: "challenge", challenge: JSON.stringify({
+                    challenge: salt[1] + ";",
+                    rules: {
+                        algorithm: "fast",
+                        difficulty: 4,
+                    },
+                })
+            });
+        }
     }
     else {
         console.log("No challenge found, cleaning up...");
