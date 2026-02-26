@@ -242,6 +242,7 @@ impl CerberusSolver {
 }
 
 impl crate::solver::Solver for CerberusSolver {
+    type Output = [u32; 8];
     fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }

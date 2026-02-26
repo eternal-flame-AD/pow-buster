@@ -34,6 +34,7 @@ macro_rules! impl_decimal_solver {
         }
 
         impl crate::solver::Solver for $decimal_solver {
+            type Output = [u32; 8];
             fn set_limit(&mut self, limit: u64) {
                 match self {
                     Self::SingleBlock(solver) => solver.set_limit(limit),

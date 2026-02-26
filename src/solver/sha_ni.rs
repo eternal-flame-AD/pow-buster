@@ -60,6 +60,7 @@ impl From<SingleBlockMessage> for SingleBlockSolver {
 }
 
 impl crate::solver::Solver for SingleBlockSolver {
+    type Output = [u32; 8];
     fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
@@ -495,6 +496,7 @@ impl From<DoubleBlockMessage> for DoubleBlockSolver {
 }
 
 impl crate::solver::Solver for DoubleBlockSolver {
+    type Output = [u32; 8];
     fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
@@ -729,6 +731,7 @@ impl GoAwaySolver {
 }
 
 impl crate::solver::Solver for GoAwaySolver {
+    type Output = [u32; 8];
     fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }

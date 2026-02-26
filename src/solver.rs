@@ -64,9 +64,11 @@ impl<T: CpuIDToken, M, S: Solver + From<M>, F: Solver + From<M>> From<M>
     }
 }
 
-impl<T: CpuIDToken, M, S: Solver + From<M>, F: Solver + From<M>> Solver
-    for SolverRouter<T, M, S, F>
+impl<O: Copy, T: CpuIDToken, M, S: Solver<Output = O> + From<M>, F: Solver<Output = O> + From<M>>
+    Solver for SolverRouter<T, M, S, F>
 {
+    type Output = O;
+
     fn set_limit(&mut self, limit: u64) {
         match self {
             #[cfg(feature = "runtime-dispatch")]
@@ -92,7 +94,7 @@ impl<T: CpuIDToken, M, S: Solver + From<M>, F: Solver + From<M>> Solver
     }
 
     #[inline]
-    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])> {
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, Self::Output)> {
         match self {
             #[cfg(feature = "runtime-dispatch")]
             Self::Taken { solver, .. } => solver.solve::<TYPE>(target, mask),
@@ -103,6 +105,9 @@ impl<T: CpuIDToken, M, S: Solver + From<M>, F: Solver + From<M>> Solver
 
 /// A generic solver trait
 pub trait Solver {
+    /// The output type
+    type Output: Copy;
+
     /// Returns a valid nonce and its corresponding hash value.
     ///
     /// Supported schemes:
@@ -117,7 +122,7 @@ pub trait Solver {
     ///
     /// Failure is usually because the key space is exhausted (or presumed exhausted).
     /// It should by design happen extremely rarely for common difficulty settings.
-    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, [u32; 8])>;
+    fn solve<const TYPE: u8>(&mut self, target: u64, mask: u64) -> Option<(u64, Self::Output)>;
 
     /// Returns a valid nonce without the actual hash.
     ///
@@ -136,15 +141,20 @@ pub trait Solver {
 
 /// A dyn-dispatching wrapper for Solver
 pub trait SolverDyn {
+    /// The output type
+    type Output: Copy;
+
     /// A dynamic dispatching wrapper for solve
-    fn solve_dyn(&mut self, target: u64, ty: u8, mask: u64) -> Option<(u64, [u32; 8])>;
+    fn solve_dyn(&mut self, target: u64, ty: u8, mask: u64) -> Option<(u64, Self::Output)>;
     /// A dynamic dispatching wrapper for solve_nonce_only
     fn solve_nonce_only_dyn(&mut self, target: u64, ty: u8, mask: u64) -> Option<u64>;
 }
 
 impl<S: Solver> SolverDyn for S {
+    type Output = S::Output;
+
     // A dynamic dispatching wrapper for solve
-    fn solve_dyn(&mut self, target: u64, ty: u8, mask: u64) -> Option<(u64, [u32; 8])> {
+    fn solve_dyn(&mut self, target: u64, ty: u8, mask: u64) -> Option<(u64, Self::Output)> {
         match ty {
             SOLVE_TYPE_LT => self.solve::<SOLVE_TYPE_LT>(target, mask),
             SOLVE_TYPE_GT => self.solve::<SOLVE_TYPE_GT>(target, mask),
@@ -184,7 +194,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn test_decimal_validator<
-        S: Solver,
+        S: Solver<Output = [u32; 8]>,
         F: for<'a> FnMut(&'a [u8], u32) -> Option<S>,
     >(
         mut factory: F,
@@ -333,7 +343,10 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn test_binary_validator<S: Solver, F: for<'a> FnMut(&'a [u8], NonZeroU8) -> S>(
+    pub(crate) fn test_binary_validator<
+        S: Solver<Output = [u32; 8]>,
+        F: for<'a> FnMut(&'a [u8], NonZeroU8) -> S,
+    >(
         mut factory: F,
     ) {
         for nonce_byte_count in [4, 5, 8] {
@@ -372,7 +385,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn test_decimal_validator_f64_safe<
-        S: Solver,
+        S: Solver<Output = [u32; 8]>,
         F: for<'a> FnMut(&'a [u8], u32) -> Option<(S, Option<IEEE754LosslessFixupPrefix>)>,
     >(
         mut factory: F,
@@ -428,7 +441,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn test_cerberus_decimal_validator<
-        S: Solver,
+        S: Solver<Output = [u32; 8]>,
         F: for<'a> FnMut(&'a [u8]) -> Option<S>,
     >(
         mut factory: F,
@@ -489,7 +502,7 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn test_cerberus_binary_validator<
-        S: Solver,
+        S: Solver<Output = [u32; 8]>,
         F: for<'a> FnMut(&'a [u8]) -> Option<S>,
     >(
         mut factory: F,
@@ -540,7 +553,10 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn test_goaway_validator<S: Solver, F: for<'a> FnMut(&'a [u8; 32]) -> S>(
+    pub(crate) fn test_goaway_validator<
+        S: Solver<Output = [u32; 8]>,
+        F: for<'a> FnMut(&'a [u8; 32]) -> S,
+    >(
         mut factory: F,
     ) {
         const DIFFICULTY: NonZeroU8 = NonZeroU8::new(10).unwrap();
