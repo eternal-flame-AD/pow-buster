@@ -6,10 +6,6 @@ pub mod avx512;
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 pub mod avx2;
 
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-/// SHA-NI solver
-pub mod sha_ni;
-
 /// SIMD128 solver
 #[cfg(target_arch = "wasm32")]
 pub mod simd128;
@@ -182,6 +178,7 @@ pub(crate) mod tests {
     use core::num::NonZeroU8;
     use std::io::Write;
 
+    use pbkdf2::hmac::Hmac;
     use sha2::{Digest, Sha256};
 
     mod pow_sha256;
@@ -620,6 +617,7 @@ pub(crate) mod tests {
     >(
         mut factory: F,
     ) {
+        // known answer tests
         let msg = crate::message::AltchaMessage {
             nonce: [
                 0xf0, 0xc5, 0x9c, 0x5f, 0x4b, 0x3a, 0xeb, 0x1f, 0xf3, 0x4d, 0x44, 0xab, 0xd1, 0x5f,
@@ -674,5 +672,65 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(nonce, 128);
         assert_eq!(hash, expected_derived);
+
+        for q in 0..5 {
+            for r in 0..5 {
+                for pbkdf2 in [false, true] {
+                    let msg = crate::message::AltchaMessage {
+                        nonce: [
+                            q, 0xc5, 0x9c, 0x5f, 0x4b, 0x3a, 0xeb, 0x1f, 0xf3, 0x4d, 0x44, 0xab,
+                            0xd1, 0x5f, 0x0f, 0x15,
+                        ],
+                        salt: [
+                            r, 0x49, 0x8a, 0x9e, 0xb9, 0x4b, 0xb8, 0x4f, 0x3c, 0xc2, 0xa6, 0xb4,
+                            0x8b, 0x6e, 0xe6, 0x14,
+                        ],
+                        cost: 64.try_into().unwrap(),
+                        pbkdf2,
+                        key_length: 32.try_into().unwrap(),
+                    };
+
+                    let mut solver = factory(msg.clone()).unwrap();
+                    let mask = crate::compute_mask_anubis(3.try_into().unwrap());
+                    let (nonce, hash) = solver
+                        .solve::<{ crate::solver::SOLVE_TYPE_MASK }>(0, mask)
+                        .unwrap();
+                    assert_eq!(nonce >> 32, 0);
+                    let nonce = nonce as u32;
+                    assert_eq!(hash[0] & (mask >> 32) as u32, 0);
+
+                    let mut expected_hash = [0; 32];
+                    if pbkdf2 {
+                        let mut password = [0; 16 + 4];
+                        password[..16].copy_from_slice(&msg.nonce);
+                        password[16..16 + 4].copy_from_slice(&nonce.to_be_bytes());
+                        ::pbkdf2::pbkdf2::<Hmac<Sha256>>(
+                            &password,
+                            &msg.salt,
+                            64,
+                            &mut expected_hash,
+                        )
+                        .unwrap();
+                    } else {
+                        let mut password = [0; 16 * 2 + 4];
+                        password[..16].copy_from_slice(&msg.salt);
+                        password[16..32].copy_from_slice(&msg.nonce);
+                        password[32..32 + 4].copy_from_slice(&nonce.to_be_bytes());
+                        let mut data = password.as_slice();
+                        let mut digest;
+                        for _ in 0..64 {
+                            digest = ::sha2::Sha256::digest(data);
+                            data = digest.as_slice();
+                        }
+                        expected_hash = data.try_into().unwrap();
+                    }
+
+                    let expected_hash_u32 = core::array::from_fn(|i| {
+                        u32::from_be_bytes(expected_hash[i * 4..][..4].try_into().unwrap())
+                    });
+                    assert_eq!(hash, expected_hash_u32);
+                }
+            }
+        }
     }
 }

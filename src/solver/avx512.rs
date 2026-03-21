@@ -71,6 +71,7 @@ mod static_asserts {
         [(); (LANE_ID_STR_COMBINED_LE_HI.0[123] == u32::from_be_bytes(*b"321\x00")) as usize];
 }
 
+#[cfg(feature = "compare-64bit")]
 const INDEX_REMAP_PUNPCKLDQ: [usize; 16] = [0, 1, 4, 5, 8, 9, 12, 13, 2, 3, 6, 7, 10, 11, 14, 15];
 
 #[inline(always)]
@@ -1708,7 +1709,7 @@ impl crate::solver::Solver for CerberusSolver {
     }
 }
 
-/// Safe Altcha SHA-256 solver
+/// AVX-512 Altcha SHA-256 solver
 pub struct AltchaSha256Solver {
     pub(super) message: AltchaMessage,
     pub(super) attempted_nonces: u64,
@@ -1811,32 +1812,25 @@ impl AltchaSha256Solver {
                     ];
                 }
 
-                let test_target = _mm512_set1_epi64(target as _);
-                let s0 = _mm512_unpacklo_epi32(blocks[1], blocks[0]);
-                let s1 = _mm512_unpackhi_epi32(blocks[1], blocks[0]);
-                let cmp64_fn = |x: __m512i, y: __m512i| {
+                let cmp_fn = |x: __m512i, y: __m512i| {
                     if TYPE == crate::solver::SOLVE_TYPE_GT {
-                        _mm512_cmpgt_epu64_mask(x, y)
+                        _mm512_cmpgt_epu32_mask(x, y)
                     } else if TYPE == crate::solver::SOLVE_TYPE_LT {
-                        _mm512_cmplt_epu64_mask(x, y)
+                        _mm512_cmplt_epu32_mask(x, y)
                     } else {
-                        _mm512_cmpeq_epu64_mask(
-                            _mm512_and_si512(x, _mm512_set1_epi64(mask as _)),
+                        _mm512_cmpeq_epu32_mask(
+                            _mm512_and_si512(x, _mm512_set1_epi32((mask >> 32) as _)),
                             y,
                         )
                     }
                 };
-                let (met_target_high, met_target_lo) = {
-                    let ab_met_target_lo = cmp64_fn(s0, test_target) as u16;
-                    let ab_met_target_high = cmp64_fn(s1, test_target) as u16;
-                    (ab_met_target_high, ab_met_target_lo)
-                };
-                if met_target_high != 0 || met_target_lo != 0 {
+
+                let met_target = cmp_fn(blocks[0], _mm512_set1_epi32((target >> 32) as _));
+
+                if met_target != 0 {
                     crate::unlikely();
-                    let success_lane_idx = INDEX_REMAP_PUNPCKLDQ
-                        [(met_target_high << 8 | met_target_lo).trailing_zeros() as usize];
-                    let perm =
-                        _mm512_set1_epi32(INDEX_REMAP_PUNPCKLDQ[success_lane_idx as usize] as _);
+                    let success_lane_idx = met_target.trailing_zeros() as usize;
+                    let perm = _mm512_set1_epi32(success_lane_idx as _);
                     for i in 0..8 {
                         blocks[i] = _mm512_permutexvar_epi32(perm, blocks[i]);
                     }
@@ -1993,35 +1987,26 @@ impl AltchaSha256Solver {
                     }
                 }
 
-                let test_target = _mm512_set1_epi64(target as _);
-                let s0 = _mm512_unpacklo_epi32(result[1], result[0]);
-                let s1 = _mm512_unpackhi_epi32(result[1], result[0]);
-
-                let cmp64_fn = |x: __m512i, y: __m512i| {
+                let cmp_fn = |x: __m512i, y: __m512i| {
                     if TYPE == crate::solver::SOLVE_TYPE_GT {
-                        _mm512_cmpgt_epu64_mask(x, y)
+                        _mm512_cmpgt_epu32_mask(x, y)
                     } else if TYPE == crate::solver::SOLVE_TYPE_LT {
-                        _mm512_cmplt_epu64_mask(x, y)
+                        _mm512_cmplt_epu32_mask(x, y)
                     } else {
-                        _mm512_cmpeq_epu64_mask(
-                            _mm512_and_si512(x, _mm512_set1_epi64(mask as _)),
+                        _mm512_cmpeq_epu32_mask(
+                            _mm512_and_si512(x, _mm512_set1_epi32((mask >> 32) as _)),
                             y,
                         )
                     }
                 };
 
-                let (met_target_high, met_target_lo) = {
-                    let ab_met_target_lo = cmp64_fn(s0, test_target) as u16;
-                    let ab_met_target_high = cmp64_fn(s1, test_target) as u16;
-                    (ab_met_target_high, ab_met_target_lo)
-                };
-                if met_target_high != 0 || met_target_lo != 0 {
+                let met_target = cmp_fn(result[0], _mm512_set1_epi32((target >> 32) as _));
+
+                if met_target != 0 {
                     crate::unlikely();
 
-                    let success_lane_idx = INDEX_REMAP_PUNPCKLDQ
-                        [(met_target_high << 8 | met_target_lo).trailing_zeros() as usize];
-                    let perm =
-                        _mm512_set1_epi32(INDEX_REMAP_PUNPCKLDQ[success_lane_idx as usize] as _);
+                    let success_lane_idx = met_target.trailing_zeros() as usize;
+                    let perm = _mm512_set1_epi32(success_lane_idx as _);
                     for i in 0..8 {
                         result[i] = _mm512_permutexvar_epi32(perm, result[i]);
                     }

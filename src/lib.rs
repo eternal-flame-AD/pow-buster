@@ -164,48 +164,57 @@ const SWAP_DWORD_BYTE_ORDER: [usize; 64] = {
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 cfg_if::cfg_if! {
     if #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))] {
+        /// Altcha SHA-256 solver
+        pub type AltchaSha256Solver = crate::solver::avx512::AltchaSha256Solver;
+    } else {
+        /// Altcha SHA-256 solver
+        pub type AltchaSha256Solver = crate::solver::SolverRouter<
+            crate::solver::avx512::RequiredFeatures,
+            crate::message::AltchaMessage,
+            crate::solver::avx512::AltchaSha256Solver,
+            crate::solver::safe::AltchaSha256Solver,
+        >;
+    }
+}
+
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+cfg_if::cfg_if! {
+    if #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))] {
         /// Single block solver
         pub type SingleBlockSolver = crate::solver::avx512::SingleBlockSolver;
         /// Double block solver
         pub type DoubleBlockSolver = crate::solver::avx512::DoubleBlockSolver;
         /// Dynamic dispatching Decimal solver
         pub type DecimalSolver = crate::solver::avx512::DecimalSolver;
-        /// Go away solver
-        pub type GoAwaySolver = crate::solver::avx512::GoAwaySolver;
         /// Binary solver
         pub type BinarySolver = crate::solver::avx512::BinarySolver;
-        /// Altcha SHA-256 solver
-        pub type AltchaSha256Solver = crate::solver::avx512::AltchaSha256Solver;
+        /// Go Away Solver
+        pub type GoAwaySolver = crate::solver::avx512::GoAwaySolver;
+        /// Cerberus solver
+        pub type CerberusSolver = crate::solver::avx512::CerberusSolver;
         /// Solver name
         pub const SOLVER_NAME: &str = "AVX-512";
-    } else if #[cfg(target_feature = "sha")] {
+    } else if #[cfg(target_feature = "avx2")] {
         /// Single block solver
         pub type SingleBlockSolver = crate::solver::SolverRouter<
             crate::solver::avx512::RequiredFeatures,
             crate::message::SingleBlockMessage,
             crate::solver::avx512::SingleBlockSolver,
-            crate::solver::sha_ni::SingleBlockSolver,
+            crate::solver::avx2::SingleBlockSolver,
         >;
         /// Double block solver
         pub type DoubleBlockSolver = crate::solver::SolverRouter<
             crate::solver::avx512::RequiredFeatures,
             crate::message::DoubleBlockMessage,
             crate::solver::avx512::DoubleBlockSolver,
-            crate::solver::sha_ni::DoubleBlockSolver,
+            crate::solver::avx2::DoubleBlockSolver,
         >;
         /// Dynamic dispatching Decimal solver
         pub type DecimalSolver = crate::solver::SolverRouter<
             crate::solver::avx512::RequiredFeatures,
             crate::message::DecimalMessage,
             crate::solver::avx512::DecimalSolver,
-            crate::solver::sha_ni::DecimalSolver,
-        >;
-        /// Go away solver
-        pub type GoAwaySolver = crate::solver::SolverRouter<
-            crate::solver::avx512::RequiredFeatures,
-            crate::message::GoAwayMessage,
-            crate::solver::avx512::GoAwaySolver,
-            crate::solver::sha_ni::GoAwaySolver,
+            crate::solver::avx2::DecimalSolver,
         >;
         /// Binary solver
         pub type BinarySolver = crate::solver::SolverRouter<
@@ -214,15 +223,22 @@ cfg_if::cfg_if! {
             crate::solver::avx512::BinarySolver,
             crate::solver::safe::BinarySolver,
         >;
-        /// Altcha SHA-256 solver
-        pub type AltchaSha256Solver = crate::solver::SolverRouter<
+        /// Go away solver
+        pub type GoAwaySolver = crate::solver::SolverRouter<
             crate::solver::avx512::RequiredFeatures,
-            crate::message::AltchaMessage,
-            crate::solver::avx512::AltchaSha256Solver,
-            crate::solver::safe::AltchaSha256Solver,
+            crate::message::GoAwayMessage,
+            crate::solver::avx512::GoAwaySolver,
+            crate::solver::avx2::GoAwaySolver,
+        >;
+        /// Cerberus solver
+        pub type CerberusSolver = crate::solver::SolverRouter<
+            crate::solver::avx512::RequiredFeatures,
+            crate::message::CerberusMessage,
+            crate::solver::avx512::CerberusSolver,
+            crate::solver::avx2::CerberusSolver,
         >;
         /// Solver name
-        pub const SOLVER_NAME: &str = "SHA-NI";
+        pub const SOLVER_NAME: &str = "AVX2";
     } else {
         /// Single block solver
         pub type SingleBlockSolver = crate::solver::SolverRouter<
@@ -230,9 +246,9 @@ cfg_if::cfg_if! {
             crate::message::SingleBlockMessage,
             crate::solver::avx512::SingleBlockSolver,
             crate::solver::SolverRouter<
-                crate::solver::sha_ni::RequiredFeatures,
+                crate::solver::avx2::RequiredFeatures,
                 crate::message::SingleBlockMessage,
-                crate::solver::sha_ni::SingleBlockSolver,
+                crate::solver::avx2::SingleBlockSolver,
                 crate::solver::safe::SingleBlockSolver,
             >,
         >;
@@ -242,9 +258,9 @@ cfg_if::cfg_if! {
             crate::message::DoubleBlockMessage,
             crate::solver::avx512::DoubleBlockSolver,
             crate::solver::SolverRouter<
-                crate::solver::sha_ni::RequiredFeatures,
+                crate::solver::avx2::RequiredFeatures,
                 crate::message::DoubleBlockMessage,
-                crate::solver::sha_ni::DoubleBlockSolver,
+                crate::solver::avx2::DoubleBlockSolver,
                 crate::solver::safe::DoubleBlockSolver,
             >,
         >;
@@ -254,22 +270,10 @@ cfg_if::cfg_if! {
             crate::message::DecimalMessage,
             crate::solver::avx512::DecimalSolver,
             crate::solver::SolverRouter<
-                crate::solver::sha_ni::RequiredFeatures,
+                crate::solver::avx2::RequiredFeatures,
                 crate::message::DecimalMessage,
-                crate::solver::sha_ni::DecimalSolver,
+                crate::solver::avx2::DecimalSolver,
                 crate::solver::safe::DecimalSolver,
-            >,
-        >;
-        /// Go away solver
-        pub type GoAwaySolver = crate::solver::SolverRouter<
-            crate::solver::avx512::RequiredFeatures,
-            crate::message::GoAwayMessage,
-            crate::solver::avx512::GoAwaySolver,
-            crate::solver::SolverRouter<
-                crate::solver::sha_ni::RequiredFeatures,
-                crate::message::GoAwayMessage,
-                crate::solver::sha_ni::GoAwaySolver,
-                crate::solver::safe::GoAwaySolver,
             >,
         >;
         /// Binary solver
@@ -279,39 +283,20 @@ cfg_if::cfg_if! {
             crate::solver::avx512::BinarySolver,
             crate::solver::safe::BinarySolver,
         >;
-        /// Altcha SHA-256 solver
-        pub type AltchaSha256Solver = crate::solver::SolverRouter<
+        /// Go away solver
+        pub type GoAwaySolver = crate::solver::SolverRouter<
             crate::solver::avx512::RequiredFeatures,
-            crate::message::AltchaMessage,
-            crate::solver::avx512::AltchaSha256Solver,
-            crate::solver::safe::AltchaSha256Solver,
+            crate::message::GoAwayMessage,
+            crate::solver::avx512::GoAwaySolver,
+            crate::solver::SolverRouter<
+                crate::solver::avx2::RequiredFeatures,
+                crate::message::GoAwayMessage,
+                crate::solver::avx2::GoAwaySolver,
+                crate::solver::safe::GoAwaySolver,
+            >,
         >;
-        /// Solver name
-        pub const SOLVER_NAME: &str = "Fallback";
-    }
-}
-
-#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
-cfg_if::cfg_if! {
-    if #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))] {
-        /// Cerberus solver
-        pub type CerberusSolver = crate::solver::avx512::CerberusSolver;
-        /// Blake3 solver name
-        pub const BLAKE3_SOLVER_NAME: &str = "AVX-512";
-    } else if #[cfg(target_feature = "avx2")] {
         /// Cerberus solver
         pub type CerberusSolver = crate::solver::SolverRouter<
-            crate::solver::avx512::RequiredFeatures,
-            crate::message::CerberusMessage,
-            crate::solver::avx512::CerberusSolver,
-            crate::solver::avx2::CerberusSolver,
-        >;
-        /// Blake3 solver name
-        pub const BLAKE3_SOLVER_NAME: &str = "AVX2";
-    } else {
-        /// Cerberus solver
-        pub type CerberusSolver =
-        crate::solver::SolverRouter<
             crate::solver::avx512::RequiredFeatures,
             crate::message::CerberusMessage,
             crate::solver::avx512::CerberusSolver,
@@ -322,8 +307,8 @@ cfg_if::cfg_if! {
                 crate::solver::safe::CerberusSolver,
             >,
         >;
-        /// Blake3 solver name
-        pub const BLAKE3_SOLVER_NAME: &str = "Fallback";
+        /// Solver name
+        pub const SOLVER_NAME: &str = "Fallback";
     }
 }
 

@@ -9,6 +9,7 @@ pub mod mcaptcha;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(align(8))]
+/// A fixed length hex string
 pub struct FixedHexString<const N: usize>(pub [u8; N]);
 
 impl<const N: usize> Deref for FixedHexString<N> {

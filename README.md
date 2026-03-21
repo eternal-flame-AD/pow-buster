@@ -27,7 +27,7 @@
   - [Contributing / Wishlist](#contributing--wishlist)
   - [License and Acknowledgments](#license-and-acknowledgments)
 
-A fast, data-parallel, adversarially [^3] implemented mCaptcha/Anubis/Cerberus/go-away/Cap.js PoW solver, targeting AVX-512/SHA-NI/simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features, without wasting energy in the browser.
+A fast, data-parallel, adversarially [^3] implemented mCaptcha/Anubis/Cerberus/go-away/Cap.js PoW solver, targeting AVX-512/AVX2/WASM simd128. Can be used for computing solutions to these systems without disabling privacy-enhancing features, without wasting energy in the browser.
 
 [^3]: Adversarial refers to challenges are solved using the path-of-least-resistance, sometimes involving massaging nonce space into favorable conditions or partially inverting hash images into lower-latency internal states. Most schemes supported do not have explicit specifications and depend on the cryptographic guarantees of the hash function, which I did not break (at least not in a previously unknown way). This code follows the original code to the letter of the law and sometimes emit awkward but computationally or statistically favorable solutions (such as `10000000073377131`, `-10.00000141128212`, etc.)
 
@@ -58,7 +58,7 @@ See [MOTIVATION.md](MOTIVATION.md) for more details.
 
 MSRV: Rust 1.89+.
 
-Requires AVX-512 (cpuid: `avx512f`) or SHA-NI+SSE4.1 (cpuid: `sha`, `sse4_1`) CPU or SIMD128 on WASM. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard). There is a pure Rust scalar fallback that should make the code compile and work regardless.
+Requires AVX-512 (cpuid: `avx512f`) or AVX2 (cpuid: `avx2`) CPU or SIMD128 on WASM. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard). There is a pure Rust scalar fallback that should make the code compile and work regardless.
 
 Recommended CPU feature flags in order of preference (Tagged releases will have Linux musl builds):
 
