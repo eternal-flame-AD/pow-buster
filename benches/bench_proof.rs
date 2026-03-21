@@ -134,6 +134,7 @@ pub fn bench_proof(c: &mut Criterion) {
     for difficulty in [50_000, 100_000, 1_000_000, 4_000_000, 10_000_000] {
         group.throughput(Throughput::Elements(difficulty as u64));
         let target = compute_target_mcaptcha(difficulty as u64);
+        let target_5000x_easier = compute_target_mcaptcha(difficulty as u64 / 5000);
         group.bench_with_input(
             BenchmarkId::new(
                 "proof",
@@ -277,6 +278,80 @@ pub fn bench_proof(c: &mut Criterion) {
         );
         group.bench_with_input(
             BenchmarkId::new(
+                "proof (altcha nested)",
+                ProofKey {
+                    difficulty,
+                    solver_type: "native",
+                },
+            ),
+            &difficulty,
+            |b, &_difficulty| {
+                b.iter(|| {
+                    let mut prefix: [u8; 64] = [0; 64];
+                    static COUNTER: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    prefix[..8].copy_from_slice(
+                        &COUNTER
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                            .to_ne_bytes(),
+                    );
+                    let msg = pow_buster::message::AltchaMessage {
+                        nonce: (COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u128)
+                            .to_ne_bytes(),
+                        salt: (COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u128)
+                            .to_ne_bytes(),
+                        cost: 5000.try_into().unwrap(),
+                        pbkdf2: false,
+                        key_length: 32.try_into().unwrap(),
+                    };
+                    let mut solver = pow_buster::AltchaSha256Solver::from(msg);
+                    core::hint::black_box(
+                        solver
+                            .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target_5000x_easier, !0)
+                            .expect("solver failed"),
+                    );
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new(
+                "proof (altcha pbkdf2)",
+                ProofKey {
+                    difficulty,
+                    solver_type: "native",
+                },
+            ),
+            &difficulty,
+            |b, &_difficulty| {
+                b.iter(|| {
+                    let mut prefix: [u8; 64] = [0; 64];
+                    static COUNTER: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(0);
+                    prefix[..8].copy_from_slice(
+                        &COUNTER
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                            .to_ne_bytes(),
+                    );
+                    let msg = pow_buster::message::AltchaMessage {
+                        nonce: (COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u128)
+                            .to_ne_bytes(),
+                        salt: (COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed) as u128)
+                            .to_ne_bytes(),
+                        cost: 2500.try_into().unwrap(),
+                        pbkdf2: true,
+                        key_length: 32.try_into().unwrap(),
+                    };
+                    let mut solver = pow_buster::AltchaSha256Solver::from(msg);
+                    core::hint::black_box(
+                        solver
+                            .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target_5000x_easier, !0)
+                            .expect("solver failed"),
+                    );
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new(
                 "proof",
                 ProofKey {
                     difficulty,
@@ -321,6 +396,7 @@ pub fn bench_proof_multi_threaded(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(15));
 
     let target = compute_target_mcaptcha(2_000_000);
+    let target_5000x_easier = compute_target_mcaptcha(2_000_000 / 5000);
     let num_threads = num_cpus::get();
     let work_count = num_threads * 32;
     group.throughput(Throughput::Elements(work_count as u64 * 2_000_000));
@@ -438,6 +514,108 @@ pub fn bench_proof_multi_threaded(c: &mut Criterion) {
                             core::hint::black_box(
                                 solver
                                     .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(target, !0)
+                                    .expect("solver failed"),
+                            );
+                        }
+
+                        barrier.wait();
+                    });
+                }
+
+                barrier.wait();
+                let begin = std::time::Instant::now();
+                barrier.wait();
+                begin.elapsed()
+            })
+        });
+    });
+
+    group.bench_function("proof_multi_threaded (altcha nested)", |b| {
+        b.iter_custom(|iters| {
+            let work_ctr = std::sync::atomic::AtomicUsize::new(0);
+            let barrier = std::sync::Barrier::new(num_threads + 1);
+            std::thread::scope(|s| {
+                let work_ctr = &work_ctr;
+                let barrier = &barrier;
+
+                for _ in 0..num_threads {
+                    s.spawn(move || {
+                        use pow_buster::{AltchaSha256Solver, message::AltchaMessage};
+                        barrier.wait();
+
+                        loop {
+                            let this_work =
+                                work_ctr.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if this_work >= work_count * iters as usize {
+                                break;
+                            }
+                            let mut prefix = [0; 64];
+                            prefix[..8].copy_from_slice(&this_work.to_le_bytes());
+                            let msg = AltchaMessage {
+                                nonce: (this_work as u128).to_ne_bytes(),
+                                salt: (this_work as u128).to_ne_bytes(),
+                                cost: 5000.try_into().unwrap(),
+                                pbkdf2: false,
+                                key_length: 32.try_into().unwrap(),
+                            };
+                            let mut solver = AltchaSha256Solver::from(msg);
+                            core::hint::black_box(
+                                solver
+                                    .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(
+                                        target_5000x_easier,
+                                        !0,
+                                    )
+                                    .expect("solver failed"),
+                            );
+                        }
+
+                        barrier.wait();
+                    });
+                }
+
+                barrier.wait();
+                let begin = std::time::Instant::now();
+                barrier.wait();
+                begin.elapsed()
+            })
+        });
+    });
+
+    group.bench_function("proof_multi_threaded (altcha pbkdf2)", |b| {
+        b.iter_custom(|iters| {
+            let work_ctr = std::sync::atomic::AtomicUsize::new(0);
+            let barrier = std::sync::Barrier::new(num_threads + 1);
+            std::thread::scope(|s| {
+                let work_ctr = &work_ctr;
+                let barrier = &barrier;
+
+                for _ in 0..num_threads {
+                    s.spawn(move || {
+                        use pow_buster::{AltchaSha256Solver, message::AltchaMessage};
+                        barrier.wait();
+
+                        loop {
+                            let this_work =
+                                work_ctr.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            if this_work >= work_count * iters as usize {
+                                break;
+                            }
+                            let mut prefix = [0; 64];
+                            prefix[..8].copy_from_slice(&this_work.to_le_bytes());
+                            let msg = AltchaMessage {
+                                nonce: (this_work as u128).to_ne_bytes(),
+                                salt: (this_work as u128).to_ne_bytes(),
+                                cost: 2500.try_into().unwrap(),
+                                pbkdf2: true,
+                                key_length: 32.try_into().unwrap(),
+                            };
+                            let mut solver = AltchaSha256Solver::from(msg);
+                            core::hint::black_box(
+                                solver
+                                    .solve::<{ pow_buster::solver::SOLVE_TYPE_GT }>(
+                                        target_5000x_easier,
+                                        !0,
+                                    )
                                     .expect("solver failed"),
                             );
                         }

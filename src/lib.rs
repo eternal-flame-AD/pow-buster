@@ -174,6 +174,8 @@ cfg_if::cfg_if! {
         pub type GoAwaySolver = crate::solver::avx512::GoAwaySolver;
         /// Binary solver
         pub type BinarySolver = crate::solver::avx512::BinarySolver;
+        /// Altcha SHA-256 solver
+        pub type AltchaSha256Solver = crate::solver::avx512::AltchaSha256Solver;
         /// Solver name
         pub const SOLVER_NAME: &str = "AVX-512";
     } else if #[cfg(target_feature = "sha")] {
@@ -211,6 +213,13 @@ cfg_if::cfg_if! {
             crate::message::BinaryMessage,
             crate::solver::avx512::BinarySolver,
             crate::solver::safe::BinarySolver,
+        >;
+        /// Altcha SHA-256 solver
+        pub type AltchaSha256Solver = crate::solver::SolverRouter<
+            crate::solver::avx512::RequiredFeatures,
+            crate::message::AltchaMessage,
+            crate::solver::avx512::AltchaSha256Solver,
+            crate::solver::safe::AltchaSha256Solver,
         >;
         /// Solver name
         pub const SOLVER_NAME: &str = "SHA-NI";
@@ -269,6 +278,13 @@ cfg_if::cfg_if! {
             crate::message::BinaryMessage,
             crate::solver::avx512::BinarySolver,
             crate::solver::safe::BinarySolver,
+        >;
+        /// Altcha SHA-256 solver
+        pub type AltchaSha256Solver = crate::solver::SolverRouter<
+            crate::solver::avx512::RequiredFeatures,
+            crate::message::AltchaMessage,
+            crate::solver::avx512::AltchaSha256Solver,
+            crate::solver::safe::AltchaSha256Solver,
         >;
         /// Solver name
         pub const SOLVER_NAME: &str = "Fallback";

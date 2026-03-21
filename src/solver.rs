@@ -24,6 +24,11 @@ pub const SOLVE_TYPE_GT: u8 = 2;
 /// Mask test (such as Cap.js)
 pub const SOLVE_TYPE_MASK: u8 = 4;
 
+pub(crate) const HMAC_IPAD: u8 = 0x36;
+pub(crate) const HMAC_IPAD32: u32 = u32::from_be_bytes([HMAC_IPAD; 4]);
+pub(crate) const HMAC_OPAD: u8 = 0x5c;
+pub(crate) const HMAC_OPAD32: u32 = u32::from_be_bytes([HMAC_OPAD; 4]);
+
 /// A token for checking CPU features
 pub trait CpuIDToken: Default + Copy + Clone + 'static {
     /// Get the CPU feature status
@@ -607,5 +612,67 @@ pub(crate) mod tests {
                 core::any::type_name::<S>()
             );
         }
+    }
+
+    pub(crate) fn test_altcha_validator<
+        S: Solver<Output = [u32; 8]>,
+        F: for<'a> FnMut(crate::message::AltchaMessage) -> Option<S>,
+    >(
+        mut factory: F,
+    ) {
+        let msg = crate::message::AltchaMessage {
+            nonce: [
+                0xf0, 0xc5, 0x9c, 0x5f, 0x4b, 0x3a, 0xeb, 0x1f, 0xf3, 0x4d, 0x44, 0xab, 0xd1, 0x5f,
+                0x0f, 0x15,
+            ],
+            salt: [
+                0x7f, 0x49, 0x8a, 0x9e, 0xb9, 0x4b, 0xb8, 0x4f, 0x3c, 0xc2, 0xa6, 0xb4, 0x8b, 0x6e,
+                0xe6, 0x14,
+            ],
+            cost: 2000.try_into().unwrap(),
+            pbkdf2: true,
+            key_length: 32.try_into().unwrap(),
+        };
+        let expected_derived = [
+            0x0058b155, 0x1f526b2e, 0xa17487e5, 0xf6f7edd0, 0x35ca3847, 0x8030a59d, 0x7b7bee49,
+            0xb090c58e,
+        ];
+
+        let mut solver = factory(msg.clone()).unwrap();
+        let (nonce, hash) = solver
+            .solve::<{ crate::solver::SOLVE_TYPE_MASK }>(
+                0,
+                crate::compute_mask_anubis(2.try_into().unwrap()),
+            )
+            .unwrap();
+        assert_eq!(nonce, 78);
+        assert_eq!(hash, expected_derived);
+
+        let msg = crate::message::AltchaMessage {
+            nonce: [
+                0xd9, 0x8d, 0x4a, 0x93, 0x45, 0x8a, 0x69, 0x7d, 0x4c, 0xc0, 0xe8, 0x29, 0x6b, 0x0d,
+                0x73, 0xc2,
+            ],
+            salt: [
+                0xdd, 0xd2, 0x93, 0x34, 0xb7, 0x49, 0xfd, 0x0a, 0xd5, 0x4d, 0x6d, 0x00, 0xc5, 0xcc,
+                0x48, 0x0a,
+            ],
+            cost: 2000.try_into().unwrap(),
+            pbkdf2: false,
+            key_length: 32.try_into().unwrap(),
+        };
+        let expected_derived = [
+            0x00641b3e, 0x3f8db108, 0xd345552e, 0x8d9f78fe, 0x67a7d0ae, 0x0faa2ea0, 0x701a0432,
+            0x0c407bb7,
+        ];
+        let mut solver = factory(msg.clone()).unwrap();
+        let (nonce, hash) = solver
+            .solve::<{ crate::solver::SOLVE_TYPE_MASK }>(
+                0,
+                crate::compute_mask_anubis(2.try_into().unwrap()),
+            )
+            .unwrap();
+        assert_eq!(nonce, 128);
+        assert_eq!(hash, expected_derived);
     }
 }

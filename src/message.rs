@@ -1,6 +1,7 @@
 #![allow(clippy::inconsistent_digit_grouping)]
 #![allow(clippy::collapsible_if)]
 use core::num::NonZeroU8;
+use std::num::NonZeroU32;
 
 use crate::{Align16, Align64, blake3, sha256};
 
@@ -963,6 +964,35 @@ impl CapJSEmitter {
             target_state = capjs_lfsr(target_state);
             *d = target_state;
         });
+    }
+}
+
+#[derive(Debug, Clone)]
+/// A message in the altcha (v2) format
+
+pub struct AltchaMessage {
+    /// the nonce. always 16 bytes
+    pub nonce: [u8; 16],
+    /// the salt. always 16 bytes
+    pub salt: [u8; 16],
+    /// the cost. always a non-zero value
+    pub cost: NonZeroU32,
+    /// whether the pbkdf2 algorithm is used
+    pub pbkdf2: bool,
+    /// the key length. always a non-zero value
+    pub key_length: NonZeroU32,
+}
+
+#[cfg(feature = "adapter")]
+impl From<crate::adapter::altcha::ChallengeDescriptor> for AltchaMessage {
+    fn from(descriptor: crate::adapter::altcha::ChallengeDescriptor) -> Self {
+        Self {
+            nonce: descriptor.nonce.0,
+            salt: descriptor.salt.0,
+            cost: descriptor.cost.into(),
+            pbkdf2: descriptor.algorithm == crate::adapter::altcha::Algorithm::SHA256Pbkdf2,
+            key_length: descriptor.key_length.into(),
+        }
     }
 }
 
