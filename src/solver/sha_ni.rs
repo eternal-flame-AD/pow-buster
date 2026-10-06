@@ -101,26 +101,36 @@ impl SingleBlockSolver {
         macro_rules! dispatch {
             ($idx0_0:literal, $idx0_1:literal, $idx0_2:literal, $lane_id_1_word_idx_inc:literal) => {
                 unsafe {
+                    // Mirror the AVX-512 reduced-radix path for large Anubis-style searches:
+                    // digits 1-8 are valid decimal while cheap to generate from a base-8 counter.
+                    let use_octal =
+                        !NO_TRAILING_ZEROS && self.message.approx_working_set_count.get() >= 100;
                     if self.message.digit_index % 4 == 2 {
+                        if use_octal {
+                            self.solve_inner::<
+                                                { $idx0_0 }, { $idx0_1 }, { $idx0_2 },
+                                                { $lane_id_1_word_idx_inc }, TYPE,
+                                                NO_TRAILING_ZEROS, true, true,
+                                            >(target, mask)
+                        } else {
+                            self.solve_inner::<
+                                                { $idx0_0 }, { $idx0_1 }, { $idx0_2 },
+                                                { $lane_id_1_word_idx_inc }, TYPE,
+                                                NO_TRAILING_ZEROS, true, false,
+                                            >(target, mask)
+                        }
+                    } else if use_octal {
                         self.solve_inner::<
-                                                            { $idx0_0 },
-                                                            { $idx0_1 },
-                                                            { $idx0_2 },
-                                                            { $lane_id_1_word_idx_inc },
-                                                            TYPE,
-                                                            NO_TRAILING_ZEROS,
-                                                            true,
-                                                        >(target, mask)
+                                            { $idx0_0 }, { $idx0_1 }, { $idx0_2 },
+                                            { $lane_id_1_word_idx_inc }, TYPE,
+                                            NO_TRAILING_ZEROS, false, true,
+                                        >(target, mask)
                     } else {
                         self.solve_inner::<
-                                                            { $idx0_0 },
-                                                            { $idx0_1 },
-                                                            { $idx0_2 },
-                                                            { $lane_id_1_word_idx_inc },
-                                                            TYPE,
-                                                            NO_TRAILING_ZEROS,
-                                                            false,
-                                                        >(target, mask)
+                                            { $idx0_0 }, { $idx0_1 }, { $idx0_2 },
+                                            { $lane_id_1_word_idx_inc }, TYPE,
+                                            NO_TRAILING_ZEROS, false, false,
+                                        >(target, mask)
                     }
                 }
             };
@@ -167,11 +177,19 @@ impl SingleBlockSolver {
         const TYPE: u8,
         const NO_TRAILING_ZEROS: bool,
         const ON_REGISTER_BOUNDARY: bool,
+        const OCTAL: bool,
     >(
         &mut self,
         target: u64,
         mask: u64,
     ) -> Option<u64> {
+        if OCTAL {
+            let message = decompose_blocks_mut(&mut self.message.message);
+            for i in (self.message.digit_index + 2..).take(7) {
+                message[SWAP_DWORD_BYTE_ORDER[i]] = b'1';
+            }
+        }
+
         let mut partial_state = Align16(self.message.prefix_state);
         crate::sha256::ingest_message_prefix::<{ DIGIT_WORD_IDX0_DIV_4_TIMES_4 }>(
             &mut partial_state,
@@ -192,7 +210,9 @@ impl SingleBlockSolver {
                 _mm_shuffle_epi32(lows, 0b01001010)
             };
 
-            for nonce_prefix_start in (10u32..=96).step_by(4) {
+            let prefix_start = if OCTAL { 0u32 } else { 10u32 };
+            let prefix_end = if OCTAL { 92u32 } else { 96u32 };
+            for nonce_prefix_start in (prefix_start..=prefix_end).step_by(4) {
                 const fn to_ascii_u32(input: u32) -> u32 {
                     let high_digit = input / 10;
                     let low_digit = input % 10;
@@ -326,14 +346,17 @@ impl SingleBlockSolver {
                 }
 
                 #[cfg(target_feature = "avx2")]
-                let mut itoa_buf = if NO_TRAILING_ZEROS && ON_REGISTER_BOUNDARY {
+                let mut itoa_buf = if OCTAL {
+                    Align16(*b"1111\x80111")
+                } else if NO_TRAILING_ZEROS && ON_REGISTER_BOUNDARY {
                     Align16(*b"0000\x80100")
                 } else {
                     Align16(*b"0000\x80000")
                 };
 
                 let mut next_inner_key = if NO_TRAILING_ZEROS { 2 } else { 1 };
-                while next_inner_key <= 10_000_000 {
+                let inner_iteration_end = if OCTAL { 0o10_000_000 } else { 10_000_000 };
+                while next_inner_key <= inner_iteration_end {
                     let mut state0 = prepared_state;
                     let mut state1 = prepared_state;
                     let mut state2 = prepared_state;
@@ -396,11 +419,23 @@ impl SingleBlockSolver {
                         }
 
                         let mut prev_inner_key = next_inner_key - 1;
-                        if NO_TRAILING_ZEROS && prev_inner_key % 10 == 0 {
-                            prev_inner_key -= 1;
-                        }
+                        let decimal_inner_key = if OCTAL {
+                            let mut value = 0u64;
+                            let mut key_octal = prev_inner_key;
+                            for m in (0..7u32).map(|i| 10u64.pow(i)) {
+                                let output = (key_octal % 8) + 1;
+                                key_octal /= 8;
+                                value += output as u64 * m;
+                            }
+                            value
+                        } else {
+                            if NO_TRAILING_ZEROS && prev_inner_key % 10 == 0 {
+                                prev_inner_key -= 1;
+                            }
+                            prev_inner_key as u64
+                        };
 
-                        return Some(nonce_prefix as u64 * 10u64.pow(7) + prev_inner_key);
+                        return Some(nonce_prefix as u64 * 10u64.pow(7) + decimal_inner_key);
                     }
 
                     if NO_TRAILING_ZEROS && next_inner_key % 10 == 0 {
@@ -410,21 +445,37 @@ impl SingleBlockSolver {
                     #[cfg(target_feature = "avx2")]
                     {
                         if ON_REGISTER_BOUNDARY {
-                            crate::strings::simd_itoa8::<7, true, 0x80>(
-                                self.message
-                                    .message
-                                    .as_mut_ptr()
-                                    .add(DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 + 1)
-                                    .cast::<Align16<[u8; 8]>>()
-                                    .as_mut()
-                                    .unwrap(),
-                                next_inner_key as u32,
-                            );
+                            let out = self
+                                .message
+                                .message
+                                .as_mut_ptr()
+                                .add(DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 + 1)
+                                .cast::<Align16<[u8; 8]>>()
+                                .as_mut()
+                                .unwrap();
+                            if OCTAL {
+                                crate::strings::to_octal_7::<true, 0x80, 1>(
+                                    out,
+                                    next_inner_key as u32,
+                                );
+                            } else {
+                                crate::strings::simd_itoa8::<7, true, 0x80>(
+                                    out,
+                                    next_inner_key as u32,
+                                );
+                            }
                         } else {
-                            crate::strings::simd_itoa8::<7, false, 0x80>(
-                                &mut itoa_buf,
-                                next_inner_key as u32,
-                            );
+                            if OCTAL {
+                                crate::strings::to_octal_7::<false, 0x80, 1>(
+                                    &mut itoa_buf,
+                                    next_inner_key as u32,
+                                );
+                            } else {
+                                crate::strings::simd_itoa8::<7, false, 0x80>(
+                                    &mut itoa_buf,
+                                    next_inner_key as u32,
+                                );
+                            }
                             for i in 0..7 {
                                 let message_bytes = decompose_blocks_mut(&mut self.message.message);
                                 *message_bytes.get_unchecked_mut(
@@ -442,8 +493,15 @@ impl SingleBlockSolver {
                             let message_bytes = decompose_blocks_mut(&mut self.message.message);
 
                             for i in (0..7).rev() {
-                                let output = key_copy % 10;
-                                key_copy /= 10;
+                                let output = if OCTAL {
+                                    let digit = key_copy % 8;
+                                    key_copy /= 8;
+                                    digit + 1
+                                } else {
+                                    let digit = key_copy % 10;
+                                    key_copy /= 10;
+                                    digit
+                                };
                                 *message_bytes.get_unchecked_mut(
                                     *SWAP_DWORD_BYTE_ORDER
                                         .get_unchecked(self.message.digit_index + i + 2),
@@ -855,6 +913,7 @@ impl GoAwaySolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::solver::Solver;
 
     #[test]
     fn test_solve_decimal() {
@@ -865,6 +924,35 @@ mod tests {
                 DoubleBlockMessage::new(prefix, search_space).map(Into::into)
             }
         });
+    }
+
+    #[test]
+    fn test_anubis_octal_nonce_path() {
+        use core::num::NonZeroU8;
+        use std::io::Write;
+
+        use sha2::Digest;
+
+        let prefix = [b'a'; 128];
+        let message = SingleBlockMessage::new(&prefix, 0).expect("single-block message");
+        assert!(message.approx_working_set_count.get() >= 100);
+
+        let mut solver = SingleBlockSolver::from(message);
+        solver.set_limit(4_000_000);
+        let mask = crate::compute_mask_anubis(NonZeroU8::new(4).unwrap());
+        let (nonce, hash) = solver
+            .solve::<{ crate::solver::SOLVE_TYPE_MASK }>(0, mask)
+            .expect("octal SHA-NI path should find an Anubis solution");
+
+        let mut input = prefix.to_vec();
+        write!(input, "{nonce}").unwrap();
+        let expected = sha2::Sha256::digest(&input);
+        let actual: Vec<u8> = hash.into_iter().flat_map(u32::to_be_bytes).collect();
+        assert_eq!(actual, expected.as_slice());
+        assert_eq!(
+            u64::from_be_bytes(actual[..8].try_into().unwrap()) & mask,
+            0
+        );
     }
 
     #[test]
