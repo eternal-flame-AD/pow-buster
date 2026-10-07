@@ -190,7 +190,7 @@ impl SingleBlockSolver {
                 inner_iteration_end = self
                     .limit
                     .saturating_sub(self.attempted_nonces)
-                    .div_ceil(16)
+                    .div_ceil(8)
                     .min(inner_iteration_end as u64) as u32;
 
                 // soft pipeline this to compute the new message after the hash
@@ -251,7 +251,7 @@ impl SingleBlockSolver {
                     let mut state =
                         core::array::from_fn(|i| _mm256_set1_epi32(partial_state[i] as _));
 
-                    // do 16-way SHA-256 without feedback so as not to force the compiler to save 8 registers
+                    // do 8-way SHA-256 without feedback so as not to force the compiler to save 8 registers
                     // we already have them in scalar form, this allows more registers to be reused in the next iteration
                     crate::sha256::avx2::multiway_arx::<DIGIT_WORD_IDX0>(&mut state, &mut blocks);
 
@@ -340,7 +340,7 @@ impl SingleBlockSolver {
                             dump.0.iter().position(|x| *x != 0).unwrap()
                         }];
 
-                        let nonce_prefix = 16 * prefix_set_index + success_lane_idx + 10;
+                        let nonce_prefix = 8 * prefix_set_index + success_lane_idx + 10;
 
                         if MUTATION_TYPE & MUTATION_TYPE_ALIGNED != 0 {
                             self.message.message[DIGIT_WORD_IDX0 + 1] =
@@ -380,7 +380,6 @@ impl SingleBlockSolver {
                         return Some(nonce_prefix as u64 * 10u64.pow(7) + decimal_inner_key);
                     }
 
-                    self.attempted_nonces += 8;
 
                     if MUTATION_TYPE == MUTATION_TYPE_ALIGNED_OCTAL {
                         crate::strings::to_octal_7::<true, 0x80, 1>(
@@ -739,7 +738,7 @@ impl DoubleBlockSolver {
                             dump.0.iter().position(|x| *x != 0).unwrap()
                         }];
 
-                        let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
+                        let nonce_prefix = 10 + 8 * prefix_set_index + success_lane_idx;
 
                         self.message.message[14] = cum0;
                         self.message.message[15] = cum1;
@@ -1746,6 +1745,37 @@ mod tests {
     use crate::message::{CerberusBinaryMessage, CerberusDecimalMessage};
 
     use super::*;
+    #[test]
+    fn test_decimal_lane_prefix_mapping() {
+        for prefix_set_index in 0..11 {
+            for lane in 0..8 {
+                let table_index = prefix_set_index * 8 + lane;
+                let expected = u64::from(LANE_ID_MSB_STR[table_index] - u32::from(b'0')) * 10
+                    + u64::from(LANE_ID_LSB_STR[table_index] - u32::from(b'0'));
+                assert_eq!(
+                    (10 + 8 * prefix_set_index + lane) as u64,
+                    expected,
+                    "prefix set {prefix_set_index}, lane {lane}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_single_block_attempt_accounting() {
+        use crate::solver::Solver as _;
+
+        let message = SingleBlockMessage::new(&[b'a'; 64], 0).expect("single block");
+        let mut solver = SingleBlockSolver::from(message);
+        solver.set_limit(8);
+        assert!(
+            solver
+                .solve::<{ crate::solver::SOLVE_TYPE_LT }>(0, u64::MAX)
+                .is_none()
+        );
+        assert_eq!(solver.get_attempted_nonces(), 8);
+    }
+
     #[test]
     fn test_solve_decimal() {
         crate::solver::tests::test_decimal_validator::<DecimalSolver, _>(|prefix, search_space| {
