@@ -5,9 +5,8 @@ use core::arch::x86_64::*;
 use core::arch::x86::*;
 
 use crate::{
-    decompose_blocks_mut,
+    Align16, SWAP_DWORD_BYTE_ORDER, decompose_blocks_mut,
     message::{DecimalMessage, DoubleBlockMessage, GoAwayMessage, SingleBlockMessage},
-    Align16, SWAP_DWORD_BYTE_ORDER,
 };
 
 cpufeatures::new!(sse41sha, "sha", "sse4.1");
@@ -103,11 +102,11 @@ impl SingleBlockSolver {
             ($idx0_0:literal, $idx0_1:literal, $idx0_2:literal, $lane_id_1_word_idx_inc:literal) => {
                 unsafe {
                     // Mirror the AVX-512 reduced-radix path for large Anubis-style searches:
-                    // digits 1-8 are valid decimal while cheap to generate from a base-8 counter.
-                    let use_octal =
+                    // digits 0-7 are valid decimal and form a 3-bit alphabet, enabling one-bit Gray-code mutations.
+                    let use_reduced_radix =
                         !NO_TRAILING_ZEROS && self.message.approx_working_set_count.get() >= 100;
                     if self.message.digit_index % 4 == 2 {
-                        if use_octal {
+                        if use_reduced_radix {
                             self.solve_inner::<
                                                 { $idx0_0 }, { $idx0_1 }, { $idx0_2 },
                                                 { $lane_id_1_word_idx_inc }, TYPE,
@@ -120,7 +119,7 @@ impl SingleBlockSolver {
                                                 NO_TRAILING_ZEROS, true, false,
                                             >(target, mask)
                         }
-                    } else if use_octal {
+                    } else if use_reduced_radix {
                         self.solve_inner::<
                                             { $idx0_0 }, { $idx0_1 }, { $idx0_2 },
                                             { $lane_id_1_word_idx_inc }, TYPE,
@@ -178,13 +177,13 @@ impl SingleBlockSolver {
         const TYPE: u8,
         const NO_TRAILING_ZEROS: bool,
         const ON_REGISTER_BOUNDARY: bool,
-        const OCTAL: bool,
+        const REDUCED_RADIX: bool,
     >(
         &mut self,
         target: u64,
         mask: u64,
     ) -> Option<u64> {
-        if OCTAL {
+        if REDUCED_RADIX {
             let message = decompose_blocks_mut(&mut self.message.message);
             for i in (self.message.digit_index + 2..).take(7) {
                 message[SWAP_DWORD_BYTE_ORDER[i]] = b'0';
@@ -219,8 +218,8 @@ impl SingleBlockSolver {
                 _mm_shuffle_epi32(lows, 0b01001010)
             };
 
-            let prefix_start = if OCTAL { 0u32 } else { 10u32 };
-            let prefix_end = if OCTAL { 92u32 } else { 96u32 };
+            let prefix_start = if REDUCED_RADIX { 0u32 } else { 10u32 };
+            let prefix_end = if REDUCED_RADIX { 92u32 } else { 96u32 };
             for nonce_prefix_start in (prefix_start..=prefix_end).step_by(4) {
                 const fn to_ascii_u32(input: u32) -> u32 {
                     let high_digit = input / 10;
@@ -257,11 +256,11 @@ impl SingleBlockSolver {
                 }
 
                 impl<
-                        'a,
-                        const DIGIT_WORD_IDX0_DIV_4: usize,
-                        const DIGIT_WORD_IDX0_MOD_4: usize,
-                        const DIGIT_WORD_IDX1_INC: bool,
-                    >
+                    'a,
+                    const DIGIT_WORD_IDX0_DIV_4: usize,
+                    const DIGIT_WORD_IDX0_MOD_4: usize,
+                    const DIGIT_WORD_IDX1_INC: bool,
+                >
                     LaneIdPlucker<
                         'a,
                         DIGIT_WORD_IDX0_DIV_4,
@@ -284,11 +283,11 @@ impl SingleBlockSolver {
                 }
 
                 impl<
-                        'a,
-                        const DIGIT_WORD_IDX0_DIV_4: usize,
-                        const DIGIT_WORD_IDX0_MOD_4: usize,
-                        const DIGIT_WORD_IDX1_INC: bool,
-                    > crate::sha256::sha_ni::Plucker
+                    'a,
+                    const DIGIT_WORD_IDX0_DIV_4: usize,
+                    const DIGIT_WORD_IDX0_MOD_4: usize,
+                    const DIGIT_WORD_IDX1_INC: bool,
+                > crate::sha256::sha_ni::Plucker
                     for LaneIdPlucker<
                         'a,
                         DIGIT_WORD_IDX0_DIV_4,
@@ -355,7 +354,7 @@ impl SingleBlockSolver {
                 }
 
                 #[cfg(target_feature = "avx2")]
-                let mut itoa_buf = if OCTAL {
+                let mut itoa_buf = if REDUCED_RADIX {
                     Align16(*b"1111\x80111")
                 } else if NO_TRAILING_ZEROS && ON_REGISTER_BOUNDARY {
                     Align16(*b"0000\x80100")
@@ -364,7 +363,7 @@ impl SingleBlockSolver {
                 };
 
                 let mut next_inner_key = if NO_TRAILING_ZEROS { 2 } else { 1 };
-                let inner_iteration_end = if OCTAL { 0o10_000_000 } else { 10_000_000 };
+                let inner_iteration_end = if REDUCED_RADIX { 1 << 21 } else { 10_000_000 };
                 while next_inner_key <= inner_iteration_end {
                     let mut state0 = prepared_state;
                     let mut state1 = prepared_state;
@@ -428,15 +427,15 @@ impl SingleBlockSolver {
                         }
 
                         let mut prev_inner_key = next_inner_key - 1;
-                        let decimal_inner_key = if OCTAL {
+                        let decimal_inner_key = if REDUCED_RADIX {
                             let mut value = 0u64;
-                            let mut key_octal = {
+                            let mut reduced_key = {
                                 let ordinal = (next_inner_key - 1) as u32;
                                 ordinal ^ (ordinal >> 1)
                             };
                             for m in (0..7u32).map(|i| 10u64.pow(i)) {
-                                let output = key_octal % 8;
-                                key_octal /= 8;
+                                let output = reduced_key % 8;
+                                reduced_key /= 8;
                                 value += output as u64 * m;
                             }
                             value
@@ -450,7 +449,7 @@ impl SingleBlockSolver {
                         return Some(nonce_prefix as u64 * 10u64.pow(7) + decimal_inner_key);
                     }
 
-                    if OCTAL {
+                    if REDUCED_RADIX {
                         let step = next_inner_key as u32;
                         let (word_index, xor_mask) =
                             *gray_ops.get_unchecked(step.trailing_zeros().min(20) as usize);
@@ -921,7 +920,7 @@ mod tests {
     }
 
     #[test]
-    fn test_anubis_octal_nonce_path() {
+    fn test_anubis_reduced_radix_nonce_path() {
         use core::num::NonZeroU8;
         use std::io::Write;
 
@@ -936,7 +935,7 @@ mod tests {
         let mask = crate::compute_mask_anubis(NonZeroU8::new(4).unwrap());
         let (nonce, hash) = solver
             .solve::<{ crate::solver::SOLVE_TYPE_MASK }>(0, mask)
-            .expect("octal SHA-NI path should find an Anubis solution");
+            .expect("reduced-radix SHA-NI path should find an Anubis solution");
 
         let mut input = prefix.to_vec();
         write!(input, "{nonce}").unwrap();
@@ -958,9 +957,11 @@ mod tests {
         let mut solver = SingleBlockSolver::from(message);
         const INNER_STATES: u64 = 1 << 21;
         solver.set_limit(INNER_STATES * 4);
-        assert!(solver
-            .solve::<{ crate::solver::SOLVE_TYPE_LT }>(0, u64::MAX)
-            .is_none());
+        assert!(
+            solver
+                .solve::<{ crate::solver::SOLVE_TYPE_LT }>(0, u64::MAX)
+                .is_none()
+        );
         assert_eq!(solver.get_attempted_nonces(), INNER_STATES * 4);
 
         let message = decompose_blocks_mut(&mut solver.message.message);

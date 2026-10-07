@@ -380,7 +380,6 @@ impl SingleBlockSolver {
                         return Some(nonce_prefix as u64 * 10u64.pow(7) + decimal_inner_key);
                     }
 
-
                     if MUTATION_TYPE == MUTATION_TYPE_ALIGNED_OCTAL {
                         crate::strings::to_octal_7::<true, 0x80, 1>(
                             &mut inner_key_buf,
