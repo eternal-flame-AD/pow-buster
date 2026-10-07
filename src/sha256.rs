@@ -4,6 +4,9 @@ pub mod avx512;
 #[cfg(target_arch = "x86_64")]
 pub mod avx2;
 
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+pub mod sha_ni;
+
 #[cfg(target_arch = "wasm32")]
 pub mod simd128;
 

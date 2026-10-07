@@ -6,6 +6,10 @@ pub mod avx512;
 #[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
 pub mod avx2;
 
+#[cfg(any(target_arch = "x86_64", target_arch = "x86"))]
+/// SHA-NI solver
+pub mod sha_ni;
+
 /// SIMD128 solver
 #[cfg(target_arch = "wasm32")]
 pub mod simd128;
