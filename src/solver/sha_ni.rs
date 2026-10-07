@@ -5,8 +5,9 @@ use core::arch::x86_64::*;
 use core::arch::x86::*;
 
 use crate::{
-    Align16, SWAP_DWORD_BYTE_ORDER, decompose_blocks_mut,
+    decompose_blocks_mut,
     message::{DecimalMessage, DoubleBlockMessage, GoAwayMessage, SingleBlockMessage},
+    Align16, SWAP_DWORD_BYTE_ORDER,
 };
 
 cpufeatures::new!(sse41sha, "sha", "sse4.1");
@@ -186,7 +187,7 @@ impl SingleBlockSolver {
         if OCTAL {
             let message = decompose_blocks_mut(&mut self.message.message);
             for i in (self.message.digit_index + 2..).take(7) {
-                message[SWAP_DWORD_BYTE_ORDER[i]] = b'1';
+                message[SWAP_DWORD_BYTE_ORDER[i]] = b'0';
             }
         }
 
@@ -198,6 +199,14 @@ impl SingleBlockSolver {
         let prepared_state = crate::sha256::sha_ni::prepare_state(&partial_state);
         let lane_id_0_byte_idx = self.message.digit_index % 4;
         let lane_id_1_byte_idx = (self.message.digit_index + 1) % 4;
+        let gray_ops: [(usize, u32); 21] = core::array::from_fn(|bit| {
+            let group = bit / 3;
+            let logical_digit = 6 - group;
+            let byte_index = self.message.digit_index + logical_digit + 2;
+            let word_index = byte_index / 4;
+            let shift = (3 - byte_index % 4) * 8;
+            (word_index, (1u32 << (bit % 3)) << shift)
+        });
 
         // move AB into position for feedback
         unsafe {
@@ -248,11 +257,11 @@ impl SingleBlockSolver {
                 }
 
                 impl<
-                    'a,
-                    const DIGIT_WORD_IDX0_DIV_4: usize,
-                    const DIGIT_WORD_IDX0_MOD_4: usize,
-                    const DIGIT_WORD_IDX1_INC: bool,
-                >
+                        'a,
+                        const DIGIT_WORD_IDX0_DIV_4: usize,
+                        const DIGIT_WORD_IDX0_MOD_4: usize,
+                        const DIGIT_WORD_IDX1_INC: bool,
+                    >
                     LaneIdPlucker<
                         'a,
                         DIGIT_WORD_IDX0_DIV_4,
@@ -275,11 +284,11 @@ impl SingleBlockSolver {
                 }
 
                 impl<
-                    'a,
-                    const DIGIT_WORD_IDX0_DIV_4: usize,
-                    const DIGIT_WORD_IDX0_MOD_4: usize,
-                    const DIGIT_WORD_IDX1_INC: bool,
-                > crate::sha256::sha_ni::Plucker
+                        'a,
+                        const DIGIT_WORD_IDX0_DIV_4: usize,
+                        const DIGIT_WORD_IDX0_MOD_4: usize,
+                        const DIGIT_WORD_IDX1_INC: bool,
+                    > crate::sha256::sha_ni::Plucker
                     for LaneIdPlucker<
                         'a,
                         DIGIT_WORD_IDX0_DIV_4,
@@ -421,9 +430,12 @@ impl SingleBlockSolver {
                         let mut prev_inner_key = next_inner_key - 1;
                         let decimal_inner_key = if OCTAL {
                             let mut value = 0u64;
-                            let mut key_octal = prev_inner_key;
+                            let mut key_octal = {
+                                let ordinal = (next_inner_key - 1) as u32;
+                                ordinal ^ (ordinal >> 1)
+                            };
                             for m in (0..7u32).map(|i| 10u64.pow(i)) {
-                                let output = (key_octal % 8) + 1;
+                                let output = key_octal % 8;
                                 key_octal /= 8;
                                 value += output as u64 * m;
                             }
@@ -438,36 +450,28 @@ impl SingleBlockSolver {
                         return Some(nonce_prefix as u64 * 10u64.pow(7) + decimal_inner_key);
                     }
 
-                    if NO_TRAILING_ZEROS && next_inner_key % 10 == 0 {
-                        next_inner_key += 1;
-                    }
-
-                    #[cfg(target_feature = "avx2")]
-                    {
-                        if ON_REGISTER_BOUNDARY {
-                            let out = self
-                                .message
-                                .message
-                                .as_mut_ptr()
-                                .add(DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 + 1)
-                                .cast::<Align16<[u8; 8]>>()
-                                .as_mut()
-                                .unwrap();
-                            if OCTAL {
-                                crate::strings::to_octal_7::<true, 0x80, 1>(
-                                    out,
-                                    next_inner_key as u32,
-                                );
-                            } else {
+                    if OCTAL {
+                        let step = next_inner_key as u32;
+                        let (word_index, xor_mask) =
+                            *gray_ops.get_unchecked(step.trailing_zeros().min(20) as usize);
+                        *self.message.message.get_unchecked_mut(word_index) ^= xor_mask;
+                    } else {
+                        if NO_TRAILING_ZEROS && next_inner_key % 10 == 0 {
+                            next_inner_key += 1;
+                        }
+                        #[cfg(target_feature = "avx2")]
+                        {
+                            if ON_REGISTER_BOUNDARY {
+                                let out = self
+                                    .message
+                                    .message
+                                    .as_mut_ptr()
+                                    .add(DIGIT_WORD_IDX0_DIV_4 * 4 + DIGIT_WORD_IDX0_MOD_4 + 1)
+                                    .cast::<Align16<[u8; 8]>>()
+                                    .as_mut()
+                                    .unwrap();
                                 crate::strings::simd_itoa8::<7, true, 0x80>(
                                     out,
-                                    next_inner_key as u32,
-                                );
-                            }
-                        } else {
-                            if OCTAL {
-                                crate::strings::to_octal_7::<false, 0x80, 1>(
-                                    &mut itoa_buf,
                                     next_inner_key as u32,
                                 );
                             } else {
@@ -475,37 +479,27 @@ impl SingleBlockSolver {
                                     &mut itoa_buf,
                                     next_inner_key as u32,
                                 );
-                            }
-                            for i in 0..7 {
-                                let message_bytes = decompose_blocks_mut(&mut self.message.message);
-                                *message_bytes.get_unchecked_mut(
-                                    *SWAP_DWORD_BYTE_ORDER
-                                        .get_unchecked(self.message.digit_index + i + 2),
-                                ) = itoa_buf[i];
+                                for i in 0..7 {
+                                    let message_bytes =
+                                        decompose_blocks_mut(&mut self.message.message);
+                                    *message_bytes.get_unchecked_mut(
+                                        *SWAP_DWORD_BYTE_ORDER
+                                            .get_unchecked(self.message.digit_index + i + 2),
+                                    ) = itoa_buf[i];
+                                }
                             }
                         }
-                    }
-
-                    #[cfg(not(target_feature = "avx2"))]
-                    {
-                        let mut key_copy = next_inner_key;
+                        #[cfg(not(target_feature = "avx2"))]
                         {
+                            let mut key_copy = next_inner_key;
                             let message_bytes = decompose_blocks_mut(&mut self.message.message);
-
                             for i in (0..7).rev() {
-                                let output = if OCTAL {
-                                    let digit = key_copy % 8;
-                                    key_copy /= 8;
-                                    digit + 1
-                                } else {
-                                    let digit = key_copy % 10;
-                                    key_copy /= 10;
-                                    digit
-                                };
+                                let digit = key_copy % 10;
+                                key_copy /= 10;
                                 *message_bytes.get_unchecked_mut(
                                     *SWAP_DWORD_BYTE_ORDER
                                         .get_unchecked(self.message.digit_index + i + 2),
-                                ) = output as u8 + b'0';
+                                ) = digit as u8 + b'0';
                             }
                         }
                     }
@@ -953,6 +947,26 @@ mod tests {
             u64::from_be_bytes(actual[..8].try_into().unwrap()) & mask,
             0
         );
+    }
+
+    #[test]
+    fn test_anubis_reduced_radix_wraps_cleanly() {
+        let prefix = [b'a'; 128];
+        let message = SingleBlockMessage::new(&prefix, 0).expect("single-block message");
+        assert!(message.approx_working_set_count.get() >= 100);
+
+        let mut solver = SingleBlockSolver::from(message);
+        const INNER_STATES: u64 = 1 << 21;
+        solver.set_limit(INNER_STATES * 4);
+        assert!(solver
+            .solve::<{ crate::solver::SOLVE_TYPE_LT }>(0, u64::MAX)
+            .is_none());
+        assert_eq!(solver.get_attempted_nonces(), INNER_STATES * 4);
+
+        let message = decompose_blocks_mut(&mut solver.message.message);
+        for logical in (solver.message.digit_index + 2..).take(7) {
+            assert_eq!(message[SWAP_DWORD_BYTE_ORDER[logical]], b'0');
+        }
     }
 
     #[test]
