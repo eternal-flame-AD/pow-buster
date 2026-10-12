@@ -1,4 +1,5 @@
-use std::ops::Deref;
+use alloc::format;
+use core::ops::Deref;
 
 pub mod altcha;
 pub mod anubis;
@@ -14,7 +15,7 @@ pub struct FixedHexString<const N: usize>(pub [u8; N]);
 
 impl<const N: usize> Deref for FixedHexString<N> {
     type Target = [u8; N];
-    fn deref(&self) -> &Self::Target {
+    fn deref(&self) -> &[u8; N] {
         &self.0
     }
 }
@@ -28,7 +29,7 @@ impl<'de, const N: usize> serde::Deserialize<'de> for FixedHexString<N> {
         impl<'de, const N: usize> serde::de::Visitor<'de> for Visitor<N> {
             type Value = FixedHexString<N>;
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut alloc::fmt::Formatter) -> alloc::fmt::Result {
                 formatter.write_str(&format!("a hex string of length {}", N * 2))
             }
 

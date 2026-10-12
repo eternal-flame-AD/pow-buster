@@ -5,7 +5,7 @@ use scraper::Element;
 use url::form_urlencoded;
 
 use crate::{
-    Align16, adapter, compute_mask_anubis, compute_mask_goaway, compute_target_mcaptcha,
+    Align16, adapter, compute_mask_bits, compute_mask_nibbles, compute_target_mcaptcha,
     message::{DecimalMessage, GoAwayMessage},
     solver::{SOLVE_TYPE_GT, SOLVE_TYPE_MASK, Solver},
 };
@@ -127,6 +127,12 @@ pub enum SolveError {
     #[error("solver failed")]
     /// solver failed
     SolverFailed,
+    #[error("out of band challenge extension error: {0}")]
+    /// out of band challenge extension error
+    OutOfBandChallengeExtensionError(&'static str),
+    #[error(transparent)]
+    /// tokio task join error
+    TokioTaskJoin(#[from] tokio::task::JoinError),
     #[error("cross origin redirect")]
     /// cross origin redirect
     CrossOriginRedirect,
@@ -456,18 +462,69 @@ pub async fn solve_anubis_ex(
 
     let selectors = &*SELECTORS;
 
-    let document_presentation = if let Some(refresh_header) = response
+    let mut extension_tasks = tokio::task::JoinSet::new();
+
+    let refresh_header = response
         .headers()
         .get("refresh")
         .and_then(|refresh| refresh.to_str().ok())
+        .map(|s| s.to_string());
+
+    let text = response.text().await?;
+
+    if let Some(start_idx) = text
+        .as_str()
+        .find(r#""/.within.website/x/cmd/anubis/ext/css-load/"#)
     {
+        let rest = &text[start_idx + 1..];
+        let end_idx = rest
+            .find('"')
+            .ok_or(SolveError::OutOfBandChallengeExtensionError(
+                "Anubis css-load: no end quote",
+            ))?;
+
+        let mut css_load_url = format!(
+            "{}://{}",
+            url_parsed.scheme(),
+            url_parsed.host_str().unwrap(),
+        );
+        if let Some(port) = url_parsed.port() {
+            write!(css_load_url, ":{}", port).unwrap();
+        }
+        let url = url::Url::parse(&css_load_url)
+            .ok()
+            .and_then(|url| url.join(&rest[..end_idx]).ok())
+            .ok_or(SolveError::OutOfBandChallengeExtensionError(
+                "Anubis css-load: invalid CSS load URL",
+            ))?;
+
+        let client = client.clone();
+
+        #[cfg(feature = "tracing")]
+        {
+            tracing::info!("loading CSS challenge extension from {}", url);
+        }
+
+        extension_tasks.spawn(async move {
+            client
+                .get(url)
+                .header("Accept", "text/css")
+                .send()
+                .await
+                .map(core::mem::drop)
+                .map_err(|_| {
+                    SolveError::OutOfBandChallengeExtensionError("Anubis css-load: request failed")
+                })
+        });
+    }
+
+    let document_presentation = if let Some(refresh_header) = refresh_header {
         DocumentPresentation {
             base_prefix: None,
-            meta_refresh: Some(refresh_header.to_string()),
+            meta_refresh: Some(refresh_header),
             anubis_challenge: None,
         }
     } else {
-        let text = response.text().await?;
         let document = scraper::Html::parse_document(&text);
         let base_prefix = document
             .select(&selectors.anubis_base_prefix)
@@ -574,19 +631,21 @@ pub async fn solve_anubis_ex(
 
             let (nonce, result) = result.ok_or(SolveError::SolverFailed)?;
 
+            let plausible_time = crate::compute_plausible_time_sha256(attempted_nonces) + 10;
+
+            let mut response_hex = [0u8; 64];
+            crate::encode_hex(&mut response_hex, result);
+            let response_hex_str = unsafe { std::str::from_utf8_unchecked(&response_hex) };
+
             #[cfg(feature = "tracing")]
             {
                 tracing::info!(
                     nonce = nonce,
                     attempted_nonces = attempted_nonces,
+                    response_hex = response_hex_str,
                     "solver finished",
                 );
             }
-
-            let plausible_time = crate::compute_plausible_time_sha256(attempted_nonces) + 10;
-
-            let mut response_hex = [0u8; 64];
-            crate::encode_hex(&mut response_hex, result);
 
             let mut final_url = format!(
                 "{}://{}",
@@ -638,6 +697,9 @@ pub async fn solve_anubis_ex(
     }
 
     let iotime = std::time::Instant::now();
+    while let Some(result) = extension_tasks.join_next().await {
+        result??;
+    }
     let mut golden_request = client.get(final_url);
     if let Some(cookie) = return_cookie.clone() {
         golden_request = golden_request.header("Cookie", cookie);
@@ -946,7 +1008,7 @@ pub async fn solve_haphash(client: &Client, base_url: &str) -> Result<String, So
 
     let nonce = tokio::task::block_in_place(|| {
         solver
-            .solve_nonce_only::<{ SOLVE_TYPE_MASK }>(0, compute_mask_anubis(difficulty))
+            .solve_nonce_only::<{ SOLVE_TYPE_MASK }>(0, compute_mask_nibbles(difficulty))
             .ok_or(SolveError::SolverFailed)
     })?;
 
@@ -997,7 +1059,7 @@ pub async fn solve_goaway_js_pow_sha256(
     }
     let config: adapter::goaway::GoAwayConfig = res.json().await?;
 
-    let mask = compute_mask_goaway(config.difficulty());
+    let mask = compute_mask_bits(config.difficulty());
 
     let estimated_workload = 1u64 << config.difficulty().get();
 

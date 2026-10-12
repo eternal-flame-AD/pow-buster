@@ -128,7 +128,7 @@ pub(crate) fn bcst_multiway_arx<const LEAD_ZEROES: usize>(
 #[cfg(target_feature = "avx512f")]
 #[cfg(test)]
 mod tests {
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
 
     use super::*;
 

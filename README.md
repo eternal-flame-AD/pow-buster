@@ -22,7 +22,6 @@
       - [Single Threaded](#single-threaded)
       - [Multi Threaded](#multi-threaded)
   - [Security Implications and Responsible Reporting](#security-implications-and-responsible-reporting)
-  - [Future Work (i.e. Okay, so what would be a good PoW then?)](#future-work-ie-okay-so-what-would-be-a-good-pow-then)
   - [Conflict of Interest Disclosure](#conflict-of-interest-disclosure)
   - [Contributing / Wishlist](#contributing--wishlist)
   - [License and Acknowledgments](#license-and-acknowledgments)
@@ -44,6 +43,7 @@ See [MOTIVATION.md](MOTIVATION.md) for more details.
 ## Features
 
 - SHA-2 and BLAKE3 hotstarting with round-level precomputation granularity
+- HashX vectorized JIT for AVX512DQ
 - Structure of Array hashing backed by register-resident SIMD.
 - 3 searching modes: Prefix greater than (mCaptcha), prefix less than (Anubis/go-away), mask test (Cerberus/Cap.js)
 - Greedy padding logic with 64-bit integer and floating point nonce stretching
@@ -56,7 +56,7 @@ See [MOTIVATION.md](MOTIVATION.md) for more details.
 
 ## Building
 
-MSRV: Rust 1.89+.
+MSRV: Rust 1.92+.
 
 Requires AVX-512 (cpuid: `avx512f`) or AVX2 (cpuid: `avx2`) CPU or SIMD128 on WASM. If you don't have any of these advanced instruction support, sorry, some "solutions" have "changed the way" of "security" (by paying with energy and battery life and making browsing on budget hardware hard). There is a pure Rust scalar fallback that should make the code compile and work regardless.
 
@@ -342,12 +342,13 @@ On EPYC 9634 with better thermals, OpenSSL has 598.28 MH/s (38.29 GB/s) single b
 
 These are done on AMD (R) Ryzen 9 9950X.
 
-| Workload                | AVX-512    | SHA-NI      | Vendor Official on Chromium [^4] |
-| ----------------------- | ---------- | ----------- | -------------------------------- |
-| SingleBlock/Anubis      | 2.655 GH/s | 1.100 GH/s  | ~785kH/s                         |
-| DoubleBlock (edge case) | 1.461 GH/s | 607.99 MH/s | ?                                |
-| go-away (32 bytes)      | 2.848 GH/s | 1.349 GH/s  | ?                                |
-| Cerberus (BLAKE3) [^5]  | 6.138 GH/s | N/A         | 220MH/s                          |
+| Workload                | AVX-512     | SHA-NI      | Vendor Official on Chromium [^4] |
+| ----------------------- | ----------- | ----------- | -------------------------------- |
+| SingleBlock/Anubis      | 2.655 GH/s  | 1.100 GH/s  | 19.32 MH/s                       |
+| Anubis (hashx)          | 991.26 MH/s | N/A         | 4.91 MH/s                        |
+| DoubleBlock (edge case) | 1.461 GH/s  | 607.99 MH/s | ?                                |
+| go-away (32 bytes)      | 2.848 GH/s  | 1.349 GH/s  | ?                                |
+| Cerberus (BLAKE3) [^5]  | 6.138 GH/s  | N/A         | 220 MH/s                         |
 
 ## Security Implications and Responsible Reporting
 
@@ -377,10 +378,6 @@ All load tests were performed using the `live` command with the following method
 - Supplementary features that are irrelevant to this study such as traditional IP rate-limiting were disabled.
 - These tests were performed on a 32-core AMD Ryzen 9 7950X, actual ratio/capacity may vary depending on server capacity and topology.
 - "difficulty inversion" was defined as a the server not being able to fully load all 32-cores at at least 1:1 latency (as reported by `http_wait` metric at cutoff 50%) or 1:1 CPU usage to `pow-buster`'s throughput.
-
-## Future Work (i.e. Okay, so what would be a good PoW then?)
-
-[See FUTURE.md](FUTURE.md)
 
 ## Conflict of Interest Disclosure
 

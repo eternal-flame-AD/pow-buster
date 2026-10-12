@@ -11,7 +11,6 @@ use pow_buster::{
     solver::Solver,
 };
 use sha2::Digest;
-use sha2::digest::generic_array::sequence::GenericSequence;
 
 struct ProofKey {
     difficulty: u32,
@@ -82,17 +81,12 @@ pub fn bench_sha2_crate_single(c: &mut Criterion) {
                 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
                 0x5be0cd19,
             ];
-            sha2::compress256(
-                &mut state_base,
-                &[sha2::digest::generic_array::GenericArray::generate(|i| {
-                    i as u8
-                })],
-            );
-            let mut tmp = sha2::digest::generic_array::GenericArray::default();
+            sha2::block_api::compress256(&mut state_base, &[core::array::from_fn(|i| i as u8)]);
+            let mut tmp = [0u8; 64];
             for i in 0..iters {
                 let mut state = state_base.clone();
                 tmp[..8].copy_from_slice(&i.to_ne_bytes());
-                sha2::compress256(&mut state, &[tmp]);
+                sha2::block_api::compress256(&mut state, &[tmp]);
                 core::hint::black_box(state);
             }
             start.elapsed()

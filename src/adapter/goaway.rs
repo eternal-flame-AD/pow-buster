@@ -3,7 +3,7 @@
 use alloc::string::String;
 
 use crate::{
-    compute_mask_goaway,
+    compute_mask_bits,
     message::GoAwayMessage,
     solver::{SOLVE_TYPE_MASK, Solver},
 };
@@ -41,7 +41,7 @@ impl GoAwayConfig {
 
     /// Solve a GoAway "js-pow-sha256" PoW with a limit.
     pub fn solve_with_limit(&self, limit: u64) -> (Option<(u64, [u32; 8])>, u64) {
-        let mask = compute_mask_goaway(self.difficulty);
+        let mask = compute_mask_bits(self.difficulty);
 
         let Some(mut message) = self
             .challenge

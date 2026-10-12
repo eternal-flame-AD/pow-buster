@@ -190,7 +190,7 @@ impl SingleBlockSolver {
                 inner_iteration_end = self
                     .limit
                     .saturating_sub(self.attempted_nonces)
-                    .div_ceil(16)
+                    .div_ceil(8)
                     .min(inner_iteration_end as u64) as u32;
 
                 // soft pipeline this to compute the new message after the hash
@@ -251,7 +251,7 @@ impl SingleBlockSolver {
                     let mut state =
                         core::array::from_fn(|i| _mm256_set1_epi32(partial_state[i] as _));
 
-                    // do 16-way SHA-256 without feedback so as not to force the compiler to save 8 registers
+                    // do 8-way SHA-256 without feedback so as not to force the compiler to save 8 registers
                     // we already have them in scalar form, this allows more registers to be reused in the next iteration
                     crate::sha256::avx2::multiway_arx::<DIGIT_WORD_IDX0>(&mut state, &mut blocks);
 
@@ -340,7 +340,7 @@ impl SingleBlockSolver {
                             dump.0.iter().position(|x| *x != 0).unwrap()
                         }];
 
-                        let nonce_prefix = 16 * prefix_set_index + success_lane_idx + 10;
+                        let nonce_prefix = 8 * prefix_set_index + success_lane_idx + 10;
 
                         if MUTATION_TYPE & MUTATION_TYPE_ALIGNED != 0 {
                             self.message.message[DIGIT_WORD_IDX0 + 1] =
@@ -739,7 +739,7 @@ impl DoubleBlockSolver {
                             dump.0.iter().position(|x| *x != 0).unwrap()
                         }];
 
-                        let nonce_prefix = 10 + 16 * prefix_set_index + success_lane_idx;
+                        let nonce_prefix = 10 + 8 * prefix_set_index + success_lane_idx;
 
                         self.message.message[14] = cum0;
                         self.message.message[15] = cum1;

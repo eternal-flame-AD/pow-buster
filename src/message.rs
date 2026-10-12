@@ -1,7 +1,6 @@
 #![allow(clippy::inconsistent_digit_grouping)]
 #![allow(clippy::collapsible_if)]
-use core::num::NonZeroU8;
-use std::num::NonZeroU32;
+use core::num::{NonZeroU8, NonZeroU32};
 
 use crate::{Align16, Align64, blake3, sha256};
 

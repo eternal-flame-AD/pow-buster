@@ -169,7 +169,7 @@ pub mod dev {
 // utility function to get u128 difficulty factor from u32
 // javacript isn't capable of represnting u128 so
 fn get_difficulty(difficulty_factor: u32) -> u128 {
-    u128::max_value() - u128::max_value() / difficulty_factor as u128
+    u128::MAX - u128::MAX / difficulty_factor as u128
 }
 
 #[cfg(test)]

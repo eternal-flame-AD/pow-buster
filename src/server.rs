@@ -4,18 +4,17 @@ use std::sync::Arc;
 use axum::{
     Form, Json, Router,
     body::Body,
-    extract::{Request, State},
-    http::{HeaderValue, header::ACCEPT_ENCODING},
+    extract::{FromRequestParts, Request, State},
+    http::{HeaderValue, header::ACCEPT_ENCODING, request},
     middleware::Next,
     response::{Html, IntoResponse, Response},
     routing::{get, post},
 };
 use axum_extra::response::JavaScript;
-use headers::Header;
 use tokio::sync::Semaphore;
 
 use crate::{
-    Align16, CerberusSolver, DecimalSolver, adapter, compute_mask_anubis,
+    Align16, CerberusSolver, DecimalSolver, adapter, compute_mask_nibbles,
     compute_plausible_time_sha256,
     message::DecimalMessage,
     solver::{SOLVE_TYPE_MASK, Solver},
@@ -75,16 +74,14 @@ impl AcceptEncoding {
     }
 }
 
-impl Header for AcceptEncoding {
-    fn name() -> &'static headers::HeaderName {
-        &ACCEPT_ENCODING
-    }
+impl<S: Sync> FromRequestParts<S> for AcceptEncoding {
+    type Rejection = ();
 
-    fn decode<'i, I>(values: &mut I) -> Result<Self, headers::Error>
-    where
-        Self: Sized,
-        I: Iterator<Item = &'i HeaderValue>,
-    {
+    async fn from_request_parts(
+        parts: &mut request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        let values = parts.headers.get_all(ACCEPT_ENCODING);
         let mut mask = 0;
         for value in values {
             let Ok(value) = value.to_str() else {
@@ -100,19 +97,12 @@ impl Header for AcceptEncoding {
         }
         Ok(AcceptEncoding(mask))
     }
-
-    fn encode<E>(&self, _values: &mut E)
-    where
-        E: Extend<HeaderValue>,
-    {
-        unimplemented!()
-    }
 }
 
 #[cfg(feature = "server-wasm")]
 async fn serve_wasm(
     axum::extract::Path(mut file): axum::extract::Path<String>,
-    axum_extra::TypedHeader(accept): axum_extra::TypedHeader<AcceptEncoding>,
+    accept: AcceptEncoding,
 ) -> Response {
     use assets::{StaticFile, WasmAssets};
     use axum::http::HeaderName;
@@ -310,7 +300,6 @@ impl IntoResponse for SolveError {
 
 async fn solve_generic(
     remote_addr: axum::extract::ConnectInfo<std::net::SocketAddr>,
-    x_forwarded_for: axum_extra::TypedHeader<XForwardedFor>,
     state: State<AppState>,
     form: Form<SolveForm>,
 ) -> Result<Response, SolveError> {
@@ -325,26 +314,26 @@ async fn solve_generic(
     let challenge = &form.challenge[left_strip..right_strip];
 
     if let Ok(config) = serde_json::from_str(challenge) {
-        return solve_anubis(remote_addr, x_forwarded_for, state, config)
+        return solve_anubis(remote_addr, state, config)
             .await
             .map(IntoResponse::into_response);
     }
 
     // Cerberus challenge format is a subtype of go-away, so it has to come before it
     if let Ok(config) = serde_json::from_str(challenge) {
-        return solve_cerberus(remote_addr, x_forwarded_for, state, config)
+        return solve_cerberus(remote_addr, state, config)
             .await
             .map(IntoResponse::into_response);
     }
 
     if let Ok(config) = serde_json::from_str(challenge) {
-        return solve_goaway(remote_addr, x_forwarded_for, state, config)
+        return solve_goaway(remote_addr, state, config)
             .await
             .map(IntoResponse::into_response);
     }
 
     if let Ok(config) = serde_json::from_str(challenge) {
-        return solve_capjs(remote_addr, x_forwarded_for, state, config)
+        return solve_capjs(remote_addr, state, config)
             .await
             .map(IntoResponse::into_response);
     }
@@ -355,7 +344,6 @@ async fn solve_generic(
 #[tracing::instrument(skip(state, config), name = "solve_cerberus")]
 async fn solve_cerberus(
     remote_addr: axum::extract::ConnectInfo<std::net::SocketAddr>,
-    x_forwarded_for: axum_extra::TypedHeader<XForwardedFor>,
     State(state): State<AppState>,
     config: adapter::cerberus::ChallengeDescriptor,
 ) -> Result<String, SolveError> {
@@ -495,7 +483,6 @@ async fn solve_cerberus(
 #[tracing::instrument(skip(state, config), name = "solve_capjs")]
 async fn solve_capjs(
     remote_addr: axum::extract::ConnectInfo<std::net::SocketAddr>,
-    x_forwarded_for: axum_extra::TypedHeader<XForwardedFor>,
     State(state): State<AppState>,
     config: adapter::capjs::ChallengeDescriptor,
 ) -> Result<Json<adapter::capjs::SolveCapJsResponse>, SolveError> {
@@ -533,7 +520,6 @@ async fn solve_capjs(
 
 async fn solve_goaway(
     remote_addr: axum::extract::ConnectInfo<std::net::SocketAddr>,
-    x_forwarded_for: axum_extra::TypedHeader<XForwardedFor>,
     State(state): State<AppState>,
     config: adapter::goaway::GoAwayConfig,
 ) -> Result<String, SolveError> {
@@ -686,7 +672,7 @@ async fn anubis_offload_api(
         });
     }
 
-    let mask = compute_mask_anubis(form.difficulty.try_into().unwrap());
+    let mask = compute_mask_nibbles(form.difficulty.try_into().unwrap());
 
     let ((result, attempted_nonces), elapsed) = if form.difficulty <= 4
     /* 65536, takes more cycles to acquire the semaphore than just get the result */
@@ -786,7 +772,6 @@ async fn anubis_offload_api(
 #[tracing::instrument(skip(state, descriptor), name = "solve_anubis")]
 async fn solve_anubis(
     remote_addr: axum::extract::ConnectInfo<std::net::SocketAddr>,
-    x_forwarded_for: axum_extra::TypedHeader<XForwardedFor>,
     State(state): State<AppState>,
     descriptor: adapter::anubis::ChallengeDescriptor,
 ) -> Result<String, SolveError> {
@@ -983,41 +968,4 @@ async fn check_origin(
         return SolveError::UnexpectedOrigin.into_response();
     }
     next.run(req).await
-}
-
-#[derive(Debug)]
-#[allow(dead_code)]
-struct XForwardedFor(Vec<std::net::IpAddr>);
-
-impl headers::Header for XForwardedFor {
-    fn name() -> &'static headers::HeaderName {
-        static NAME: headers::HeaderName = headers::HeaderName::from_static("x-forwarded-for");
-        &NAME
-    }
-
-    fn decode<'i, I>(values: &mut I) -> Result<Self, headers::Error>
-    where
-        Self: Sized,
-        I: Iterator<Item = &'i HeaderValue>,
-    {
-        let mut result = Vec::new();
-        for value in values {
-            let Ok(value) = value.to_str() else {
-                return Err(headers::Error::invalid());
-            };
-            result.extend(
-                value
-                    .split(',')
-                    .filter_map(|x| x.trim().parse::<std::net::IpAddr>().ok()),
-            );
-        }
-        Ok(XForwardedFor(result))
-    }
-
-    fn encode<E>(&self, _values: &mut E)
-    where
-        E: Extend<HeaderValue>,
-    {
-        unimplemented!()
-    }
 }

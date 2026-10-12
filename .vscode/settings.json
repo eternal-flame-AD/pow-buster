@@ -7,7 +7,9 @@
         "live-throughput-test",
         "cli",
         "rayon",
-        "compare-64bit"
+        "compare-64bit",
+        "hashx",
+        "jit-infra"
     ],
     "rust-analyzer.cargo.cfgs": [
         "debug_assertions",
@@ -17,6 +19,6 @@
     "rust-analyzer.cargo.extraEnv": {
         //"RUSTFLAGS": "-C target-feature=+simd128",
         //"RUSTFLAGS": "-C target-feature=+sha,+sse4_1"
-        "RUSTFLAGS": "-Ctarget-cpu=x86-64-v3"
+        "RUSTFLAGS": "-Ctarget-cpu=native"
     }
 }

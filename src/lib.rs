@@ -20,6 +20,14 @@ pub mod client;
 /// Server for end-to-end PoW solving
 pub mod server;
 
+#[cfg(feature = "hashx")]
+/// HashX support
+pub mod hashx;
+
+#[cfg(feature = "jit-infra")]
+/// JIT infrastructure
+pub mod jit;
+
 #[cfg(all(target_arch = "wasm32", feature = "adapter"))]
 mod wasm_ffi;
 
@@ -143,6 +151,66 @@ impl<T> core::ops::Deref for Align64<T> {
 }
 
 impl<T> core::ops::DerefMut for Align64<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+#[repr(align(128))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Align to 128 bytes
+pub struct Align128<T>(pub T);
+
+unsafe impl<T> AlignerTo<T> for Align128<T> {
+    type Alignment = U64;
+    type Output = T;
+    fn create_layout() -> core::alloc::Layout {
+        core::alloc::Layout::new::<Align64<T>>()
+    }
+}
+
+impl<T> From<T> for Align128<T> {
+    fn from(value: T) -> Self {
+        Align128(value)
+    }
+}
+
+// Ref downcast to Align16
+impl<'a, T> From<&'a Align128<T>> for &'a Align16<T> {
+    fn from(this: &'a Align128<T>) -> &'a Align16<T> {
+        unsafe { core::mem::transmute(this) }
+    }
+}
+
+// Ref downcast to Align16
+impl<'a, T> From<&'a mut Align128<T>> for &'a mut Align16<T> {
+    fn from(this: &'a mut Align128<T>) -> &'a mut Align16<T> {
+        unsafe { core::mem::transmute(this) }
+    }
+}
+
+// Ref downcast to Align64
+impl<'a, T> From<&'a Align128<T>> for &'a Align64<T> {
+    fn from(this: &'a Align128<T>) -> &'a Align64<T> {
+        unsafe { core::mem::transmute(this) }
+    }
+}
+
+// Ref downcast to Align16
+impl<'a, T> From<&'a mut Align128<T>> for &'a mut Align64<T> {
+    fn from(this: &'a mut Align128<T>) -> &'a mut Align64<T> {
+        unsafe { core::mem::transmute(this) }
+    }
+}
+
+impl<T> core::ops::Deref for Align128<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> core::ops::DerefMut for Align128<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
@@ -381,14 +449,23 @@ pub const fn compute_target_mcaptcha(difficulty_factor: u64) -> u64 {
     u64::MAX - u64::MAX / difficulty_factor
 }
 
-/// Compute the mask for an Anubis PoW (mask & (V\[0] << 32 | V\[1]) == 0)
-pub const fn compute_mask_anubis(difficulty_factor: NonZeroU8) -> u64 {
+/// Compute the mask for leading nibbles (mask & (V\[0] << 32 | V\[1]) == 0)
+pub const fn compute_mask_nibbles(difficulty_factor: NonZeroU8) -> u64 {
     !(!0u64 >> (difficulty_factor.get() * 4))
 }
 
-/// Compute the mask for a GoAway PoW (mask & (V\[0] << 32) == 0)
-pub const fn compute_mask_goaway(difficulty_factor: NonZeroU8) -> u64 {
+/// Compute the mask for leading bits (mask & (V\[0] << 32) == 0)
+pub const fn compute_mask_bits(difficulty_factor: NonZeroU8) -> u64 {
     !(!0u64 >> (difficulty_factor.get()))
+}
+
+/// Compute the mask for hashx byte output leading bits
+pub const fn compute_mask_hashx(difficulty_factor: NonZeroU8) -> u64 {
+    let difficulty_bytes = difficulty_factor.get() / 8;
+    let difficulty_bits = difficulty_factor.get() % 8;
+    let final_byte = 255 & (255 << (8 - difficulty_bits));
+    let bytes = !(!0u64 << (difficulty_bytes * 8));
+    bytes | (final_byte << (difficulty_bytes * 8))
 }
 
 /// Compute a mask for a Cerberus PoW (mask & (V\[0] << 32) == 0)
@@ -483,17 +560,17 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_mask_anubis() {
+    fn test_compute_mask_nibbles() {
         assert_eq!(
-            compute_mask_anubis(NonZeroU8::new(1).unwrap()),
+            compute_mask_nibbles(NonZeroU8::new(1).unwrap()),
             0xfu64.reverse_bits(),
         );
         assert_eq!(
-            compute_mask_anubis(NonZeroU8::new(2).unwrap()),
+            compute_mask_nibbles(NonZeroU8::new(2).unwrap()),
             0xffu64.reverse_bits(),
         );
         assert_eq!(
-            compute_mask_anubis(NonZeroU8::new(3).unwrap()),
+            compute_mask_nibbles(NonZeroU8::new(3).unwrap()),
             0xfffu64.reverse_bits(),
         );
     }
@@ -506,6 +583,14 @@ mod tests {
         let mut official = Vec::new();
         build_prefix_official(&mut official, string, "z").unwrap();
         assert_eq!(homegrown, official);
+    }
+
+    #[test]
+    fn test_compute_mask_hashx() {
+        assert_eq!(compute_mask_hashx(NonZeroU8::new(1).unwrap()), 0x80);
+        assert_eq!(compute_mask_hashx(NonZeroU8::new(2).unwrap()), 0xc0);
+        assert_eq!(compute_mask_hashx(NonZeroU8::new(8).unwrap()), 0xff);
+        assert_eq!(compute_mask_hashx(NonZeroU8::new(9).unwrap()), 0x80ff);
     }
 
     #[test]

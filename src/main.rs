@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use pow_buster::{
     Align16, BinarySolver, CerberusSolver, DecimalSolver, DoubleBlockSolver, GoAwaySolver,
-    SingleBlockSolver, compute_mask_anubis, compute_mask_cerberus, compute_mask_goaway,
+    SingleBlockSolver, compute_mask_bits, compute_mask_cerberus, compute_mask_nibbles,
     compute_target_mcaptcha,
     message::{
         BinaryMessage, CerberusBinaryMessage, CerberusDecimalMessage, CerberusMessage,
@@ -205,6 +205,9 @@ enum SubCommand {
         #[clap(short, long)]
         n_threads: Option<u32>,
     },
+    /// Dump HashX data
+    #[cfg(feature = "hashx")]
+    HashxDump { data: String },
 }
 
 fn main() {
@@ -510,7 +513,7 @@ fn main() {
             let (target, mask, estimated_work) = match scheme {
                 Scheme::Anubis => (
                     0,
-                    compute_mask_anubis(difficulty.try_into().expect("difficulty out of range")),
+                    compute_mask_nibbles(difficulty.try_into().expect("difficulty out of range")),
                     16u64.saturating_pow(difficulty.get().try_into().unwrap()),
                 ),
                 Scheme::Mcaptcha => (
@@ -530,7 +533,7 @@ fn main() {
                 ),
                 Scheme::GoAway => (
                     0,
-                    compute_mask_goaway(difficulty.try_into().expect("difficulty out of range")),
+                    compute_mask_bits(difficulty.try_into().expect("difficulty out of range")),
                     2u64.saturating_pow(difficulty.get().try_into().unwrap()),
                 ),
             };
@@ -1004,6 +1007,33 @@ fn main() {
                 .await
                 .unwrap();
             });
+        }
+        #[cfg(feature = "hashx")]
+        SubCommand::HashxDump { data } => {
+            let data = data.as_bytes();
+            let hash = pow_buster::hashx::hashx_vendor::HashX::new(data).unwrap();
+            #[cfg(feature = "jit-infra")]
+            {
+                use pow_buster::jit::exec_map::ExecMap;
+
+                let mut map =
+                    ExecMap::new(pow_buster::hashx::hashx_avx512dq::CompiledSifter::WANTED_SIZE)
+                        .unwrap();
+                let mut data = Box::<pow_buster::hashx::hashx_avx512dq::DataBuffer>::new_uninit();
+                unsafe {
+                    data.assume_init_mut().fill(0);
+                }
+                let mut data = unsafe { data.assume_init() };
+                let compiled = pow_buster::hashx::hashx_avx512dq::CompiledSifter::new_ex(
+                    &mut map,
+                    &mut data,
+                    &hash,
+                    pow_buster::hashx::TestMode::LessThan,
+                    false,
+                );
+                let mut output = std::io::stdout();
+                compiled.disas(&mut output);
+            }
         }
     }
 }

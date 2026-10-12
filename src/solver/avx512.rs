@@ -1,5 +1,3 @@
-use sha2::digest::generic_array::GenericArray;
-
 use crate::{
     Align16, Align64, SWAP_DWORD_BYTE_ORDER, decompose_blocks_mut,
     message::{
@@ -1065,7 +1063,7 @@ impl crate::solver::Solver for BinarySolver {
         }
 
         let salt = &self.message.salt_residual[..self.message.salt_residual_len];
-        let mut blocks = [GenericArray::default(); 2];
+        let mut blocks = [[0; _]; 2];
         blocks[0][..salt.len()].copy_from_slice(salt);
         let mut ptr = salt.len();
         let mut cur_block = 0;
@@ -1121,7 +1119,7 @@ impl crate::solver::Solver for BinarySolver {
                                 used_blocks[0][self.message.salt_residual_len + i] =
                                     nonce.to_le_bytes()[i];
                             }
-                            sha2::compress256(&mut final_sha_state, &used_blocks);
+                            sha2::block_api::compress256(&mut final_sha_state, &used_blocks);
                             return Some((nonce, final_sha_state.0));
                         }
                     } else {
@@ -1139,7 +1137,7 @@ impl crate::solver::Solver for BinarySolver {
                                 used_blocks[0][self.message.salt_residual_len + i] =
                                     nonce.to_le_bytes()[i];
                             }
-                            sha2::compress256(&mut final_sha_state, &used_blocks);
+                            sha2::block_api::compress256(&mut final_sha_state, &used_blocks);
                             return Some((nonce, final_sha_state.0));
                         }
                     }
